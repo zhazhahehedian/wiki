@@ -1,0 +1,54 @@
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+)
+
+type Handlers struct {
+	KB    *KBHandler
+	Doc   *DocumentHandler
+	Chunk *ChunkHandler
+}
+
+func NewRouter(h Handlers) http.Handler {
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(CORS)
+
+	r.Get("/healthz", healthz)
+	r.Get("/api/healthz", healthz)
+
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Post("/kbs", h.KB.Create)
+		r.Get("/kbs", h.KB.List)
+		r.Get("/kbs/{id}", h.KB.Get)
+		r.Delete("/kbs/{id}", h.KB.Delete)
+
+		r.Post("/kbs/{id}/docs", h.Doc.Upload)
+		r.Get("/kbs/{id}/docs", h.Doc.ListByKB)
+		r.Get("/docs/{id}", h.Doc.Get)
+		r.Delete("/docs/{id}", h.Doc.Delete)
+
+		r.Get("/docs/{id}/chunks", h.Chunk.ListByDoc)
+	})
+
+	return r
+}
+
+func healthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "ok",
+		"time":   time.Now().UTC().Format(time.RFC3339),
+	})
+}
