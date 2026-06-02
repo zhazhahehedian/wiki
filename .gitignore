@@ -1,0 +1,56 @@
+# ─── env / secrets ─────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+
+# ─── editor / OS ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.recommended.json
+*.swp
+*~
+
+# ─── logs ──────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Go (backend/) ─────────────────────────────────────────
+backend/bin/
+backend/dist/
+backend/vendor/
+backend/coverage.out
+backend/coverage.html
+backend/*.test
+
+# ─── sqlc generated code is checked in by convention
+# (don't add it to .gitignore — we want it versioned)
+
+# ─── Node / Next.js (frontend/) ────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.turbo/
+frontend/.pnpm-store/
+frontend/coverage/
+frontend/.env*.local
+
+# ─── Docker / data volumes (do NOT commit local data) ──────
+data/
+.minio-data/
+.postgres-data/
+.cache/
+.superpowers/
+*.tsbuildinfo
+
+# ─── upload sample dumps ───────────────────────────────────
+uploads/
+tmp/
