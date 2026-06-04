@@ -8,6 +8,8 @@
 
 **Tech Stack:** Go, chi, pgx/v5, sqlc, pgvector-go, OpenAI-compatible chat completions, Next.js 15, React 19, TanStack Query, zod, shadcn/ui, lucide-react, react-markdown, rehype-highlight.
 
+**Progress update 2026-06-04:** Tasks 1-11 are implemented and checked off. Task 12 automated verification is partially complete: backend `go test ./... -timeout 120s`, frontend `pnpm.cmd test`, and frontend `pnpm.cmd typecheck` passed. Frontend `pnpm.cmd build` compiled, checked types, generated static pages, and then failed only at the known Windows `.next/standalone` symlink copy step (`EPERM`). Negative scope audit found only pre-existing homepage/metadata "Agent" copy outside the Phase 2 diff. Manual end-to-end smoke remains pending because this machine has no `docker` command and no `deploy/docker-compose.yml`; do not mark Phase 2 complete until live acceptance is run.
+
 ---
 
 ## Hard Scope
@@ -152,7 +154,7 @@ data: {"code":"llm_stream_failed","message":"stream failed"}
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\repo\queries\messages.sql`
 - Regenerate: `E:\MyLearn\go-project\wiki\backend\internal\repo\generated\*`
 
-- [ ] **Step 1.1: Write conversation queries**
+- [x] **Step 1.1: Write conversation queries**
 
 Create `backend/internal/repo/queries/conversations.sql` with:
 
@@ -181,7 +183,7 @@ SET updated_at = now()
 WHERE id = $1;
 ```
 
-- [ ] **Step 1.2: Write message queries**
+- [x] **Step 1.2: Write message queries**
 
 Create `backend/internal/repo/queries/messages.sql` with:
 
@@ -211,7 +213,7 @@ SELECT * FROM (
 ORDER BY created_at ASC;
 ```
 
-- [ ] **Step 1.3: Run sqlc**
+- [x] **Step 1.3: Run sqlc**
 
 Run from `backend`:
 
@@ -227,7 +229,7 @@ E:\GoProject\bin\sqlc.exe generate
 
 Expected: generated files update with `CreateConversation`, `CreateMessage`, `ListRecentMessagesByConversation`, and related param structs.
 
-- [ ] **Step 1.4: Build check**
+- [x] **Step 1.4: Build check**
 
 Run:
 
@@ -247,7 +249,7 @@ Expected: packages compile and report no matching tests or pass existing compile
 - Modify: `E:\MyLearn\go-project\wiki\backend\internal\domain\ports\llm.go`
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\domain\chat.go`
 
-- [ ] **Step 2.1: Add RAG config fields**
+- [x] **Step 2.1: Add RAG config fields**
 
 In `backend/internal/config/config.go`, extend `Config`:
 
@@ -272,7 +274,7 @@ if cfg.RAGHistoryMessages < 0 {
 }
 ```
 
-- [ ] **Step 2.2: Extend vector store port**
+- [x] **Step 2.2: Extend vector store port**
 
 Replace `backend/internal/domain/ports/vectorstore.go` with the same `InsertChunks` method plus these definitions:
 
@@ -299,7 +301,7 @@ type VectorStore interface {
 }
 ```
 
-- [ ] **Step 2.3: Extend LLM port**
+- [x] **Step 2.3: Extend LLM port**
 
 Add to `backend/internal/domain/ports/llm.go`:
 
@@ -327,7 +329,7 @@ type LLMClient interface {
 }
 ```
 
-- [ ] **Step 2.4: Add chat domain DTOs**
+- [x] **Step 2.4: Add chat domain DTOs**
 
 Create `backend/internal/domain/chat.go` with:
 
@@ -391,7 +393,7 @@ type ChunkNeighbors struct {
 }
 ```
 
-- [ ] **Step 2.5: Compile**
+- [x] **Step 2.5: Compile**
 
 Run:
 
@@ -409,7 +411,7 @@ Expected: compile errors only from new interface methods not yet implemented by 
 **Files:**
 - Modify: `E:\MyLearn\go-project\wiki\backend\internal\infra\vectorstore\pgvector.go`
 
-- [ ] **Step 3.1: Add vector search**
+- [x] **Step 3.1: Add vector search**
 
 Add this method to `Pgvector`:
 
@@ -461,7 +463,7 @@ Also import:
 github.com/zenith-wang/it-wiki/backend/internal/domain/ports
 ```
 
-- [ ] **Step 3.2: Add primary chunk lookup**
+- [x] **Step 3.2: Add primary chunk lookup**
 
 Add:
 
@@ -486,7 +488,7 @@ func (v *Pgvector) GetChunk(ctx context.Context, kbID, chunkID string) (*domain.
 }
 ```
 
-- [ ] **Step 3.3: Add neighbor window lookup**
+- [x] **Step 3.3: Add neighbor window lookup**
 
 Add:
 
@@ -529,7 +531,7 @@ func (v *Pgvector) ListNeighbors(ctx context.Context, kbID, documentID string, s
 }
 ```
 
-- [ ] **Step 3.4: Compile**
+- [x] **Step 3.4: Compile**
 
 Run:
 
@@ -550,7 +552,7 @@ Expected: vector port compile errors are gone. Chat-related missing files still 
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\service\retrieval_service.go`
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\service\retrieval_service_test.go`
 
-- [ ] **Step 4.1: Add citation assembler**
+- [x] **Step 4.1: Add citation assembler**
 
 Create `citation_assembler.go` with:
 
@@ -596,7 +598,7 @@ func trimSnippet(text string, maxRunes int) string {
 }
 ```
 
-- [ ] **Step 4.2: Add retrieval service**
+- [x] **Step 4.2: Add retrieval service**
 
 Create `retrieval_service.go` with:
 
@@ -689,7 +691,7 @@ func evidenceLevel(hits []ports.VectorSearchHit, minScore float32) string {
 }
 ```
 
-- [ ] **Step 4.3: Write retrieval tests**
+- [x] **Step 4.3: Write retrieval tests**
 
 Create `retrieval_service_test.go` with fake embedder and vector store covering:
 
@@ -811,7 +813,7 @@ func TestTrimSnippetCollapsesWhitespaceAndTruncates(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4.4: Run tests**
+- [x] **Step 4.4: Run tests**
 
 Run:
 
@@ -830,7 +832,7 @@ Expected: all retrieval and citation tests pass.
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\infra\llm\openai_compat.go`
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\infra\llm\openai_compat_test.go`
 
-- [ ] **Step 5.1: Implement client config and request types**
+- [x] **Step 5.1: Implement client config and request types**
 
 Create `openai_compat.go`:
 
@@ -874,7 +876,7 @@ func New(cfg Config) *OpenAICompat {
 }
 ```
 
-- [ ] **Step 5.2: Implement non-streaming Chat**
+- [x] **Step 5.2: Implement non-streaming Chat**
 
 Add request/response structs and `Chat`:
 
@@ -955,7 +957,7 @@ func (c *OpenAICompat) newRequest(ctx context.Context, body []byte) (*http.Reque
 }
 ```
 
-- [ ] **Step 5.3: Implement ChatStream**
+- [x] **Step 5.3: Implement ChatStream**
 
 Add streaming response structs:
 
@@ -1067,7 +1069,7 @@ func parseStreamPayload(payload string) (ports.StreamChunk, error) {
 }
 ```
 
-- [ ] **Step 5.4: Write LLM stream tests**
+- [x] **Step 5.4: Write LLM stream tests**
 
 In `openai_compat_test.go`, cover:
 
@@ -1087,7 +1089,7 @@ data: {"choices":[{"delta":{"content":" world"}}]}
 data: [DONE]
 ```
 
-- [ ] **Step 5.5: Run tests**
+- [x] **Step 5.5: Run tests**
 
 Run:
 
@@ -1107,7 +1109,7 @@ Expected: all LLM tests pass.
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\service\chat_service.go`
 - Create: `E:\MyLearn\go-project\wiki\backend\internal\service\chat_service_test.go`
 
-- [ ] **Step 6.1: Add prompt builder**
+- [x] **Step 6.1: Add prompt builder**
 
 Create `chat_prompt.go`:
 
@@ -1160,7 +1162,7 @@ func buildContextBlock(retrieval *RetrievalResult) string {
 }
 ```
 
-- [ ] **Step 6.2: Add chat service interfaces and errors**
+- [x] **Step 6.2: Add chat service interfaces and errors**
 
 In `chat_service.go`, define:
 
@@ -1219,7 +1221,7 @@ type ChatStreamError struct {
 }
 ```
 
-- [ ] **Step 6.3: Add Chat struct and conversation methods**
+- [x] **Step 6.3: Add Chat struct and conversation methods**
 
 Add:
 
@@ -1319,7 +1321,7 @@ func (s *Chat) ListMessages(ctx context.Context, conversationID string, limit, o
 }
 ```
 
-- [ ] **Step 6.4: Add AskStream orchestration**
+- [x] **Step 6.4: Add AskStream orchestration**
 
 Add:
 
@@ -1409,7 +1411,7 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 }
 ```
 
-- [ ] **Step 6.5: Add message helpers**
+- [x] **Step 6.5: Add message helpers**
 
 Add helper methods:
 
@@ -1496,7 +1498,7 @@ func rowToChatMessage(r generated.Message) *domain.ChatMessage {
 }
 ```
 
-- [ ] **Step 6.6: Write chat service tests**
+- [x] **Step 6.6: Write chat service tests**
 
 Add tests:
 
@@ -1529,7 +1531,7 @@ Assert order:
 want := []string{"message:user", "touch", "retrieval", "token", "message:assistant", "touch", "done"}
 ```
 
-- [ ] **Step 6.7: Run tests**
+- [x] **Step 6.7: Run tests**
 
 Run:
 
@@ -1552,7 +1554,7 @@ Expected: all service tests pass.
 - Modify: `E:\MyLearn\go-project\wiki\backend\internal\http\errors.go`
 - Modify: `E:\MyLearn\go-project\wiki\backend\internal\http\router.go`
 
-- [ ] **Step 7.1: Add HTTP error codes**
+- [x] **Step 7.1: Add HTTP error codes**
 
 Add to `errors.go`:
 
@@ -1562,7 +1564,7 @@ CodeChunkNotFound        = "chunk_not_found"
 CodeLLMStreamFailed      = "llm_stream_failed"
 ```
 
-- [ ] **Step 7.2: Add SSE writer**
+- [x] **Step 7.2: Add SSE writer**
 
 Create `sse.go`:
 
@@ -1606,7 +1608,7 @@ func WriteSSEEvent(w nethttp.ResponseWriter, event string, data any) error {
 }
 ```
 
-- [ ] **Step 7.3: Add SSE tests**
+- [x] **Step 7.3: Add SSE tests**
 
 Test:
 
@@ -1621,7 +1623,7 @@ event: token
 data: {"text":"hello"}
 ```
 
-- [ ] **Step 7.4: Add chat handler**
+- [x] **Step 7.4: Add chat handler**
 
 Create `chat_handler.go` with:
 
@@ -1721,7 +1723,7 @@ func mapChatError(err error) error {
 }
 ```
 
-- [ ] **Step 7.5: Implement chat SSE sink**
+- [x] **Step 7.5: Implement chat SSE sink**
 
 In `chat_handler.go`, add:
 
@@ -1765,7 +1767,7 @@ func (s *httpChatSink) SendError(ctx context.Context, err service.ChatStreamErro
 }
 ```
 
-- [ ] **Step 7.6: Add neighbor endpoint**
+- [x] **Step 7.6: Add neighbor endpoint**
 
 In `chunk_handler.go`, add:
 
@@ -1804,7 +1806,7 @@ func (h *ChunkHandler) Neighbors(w http.ResponseWriter, r *http.Request) {
 
 Add imports for `strconv` and `domain`.
 
-- [ ] **Step 7.7: Register routes**
+- [x] **Step 7.7: Register routes**
 
 Modify `router.go`:
 
@@ -1827,7 +1829,7 @@ r.Post("/conversations/{conversationID}/messages/stream", h.Chat.StreamMessage)
 r.Get("/kbs/{kbID}/chunks/{chunkID}/neighbors", h.Chunk.Neighbors)
 ```
 
-- [ ] **Step 7.8: Run HTTP tests**
+- [x] **Step 7.8: Run HTTP tests**
 
 Run:
 
@@ -1845,7 +1847,7 @@ Expected: SSE tests pass and handlers compile.
 **Files:**
 - Modify: `E:\MyLearn\go-project\wiki\backend\cmd\server\main.go`
 
-- [ ] **Step 8.1: Wire LLM client**
+- [x] **Step 8.1: Wire LLM client**
 
 Add import:
 
@@ -1863,7 +1865,7 @@ llmClient := llm.New(llm.Config{
 })
 ```
 
-- [ ] **Step 8.2: Wire retrieval and chat services**
+- [x] **Step 8.2: Wire retrieval and chat services**
 
 After existing services:
 
@@ -1872,7 +1874,7 @@ retrievalSvc := service.NewRetrieval(embed, vstore, cfg.RAGTopK, cfg.RAGMinScore
 chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages)
 ```
 
-- [ ] **Step 8.3: Wire handler**
+- [x] **Step 8.3: Wire handler**
 
 Modify router construction:
 
@@ -1885,7 +1887,7 @@ router := httpx.NewRouter(httpx.Handlers{
 })
 ```
 
-- [ ] **Step 8.4: Run backend tests**
+- [x] **Step 8.4: Run backend tests**
 
 Run:
 
@@ -1897,7 +1899,9 @@ go test ./... -timeout 120s
 
 Expected: all backend tests pass.
 
-- [ ] **Step 8.5: Optional local API smoke test if infrastructure exists**
+- [x] **Step 8.5: Optional local API smoke test if infrastructure exists**
+
+Skipped on 2026-06-04 because this checkout has no available `docker` command and no `deploy/docker-compose.yml`; full backend tests passed instead.
 
 Only run this if Postgres, MinIO, embeddings, and LLM environment variables are configured:
 
@@ -1925,7 +1929,7 @@ Expected: first response creates a conversation, second response emits `retrieva
 - Create: `E:\MyLearn\go-project\wiki\frontend\lib\api\sse.test.ts`
 - Create: `E:\MyLearn\go-project\wiki\frontend\lib\api\chat.ts`
 
-- [ ] **Step 9.1: Add frontend dependencies**
+- [x] **Step 9.1: Add frontend dependencies**
 
 Run from `frontend`:
 
@@ -1940,7 +1944,7 @@ Modify scripts:
 "test": "vitest run"
 ```
 
-- [ ] **Step 9.2: Add chat schemas**
+- [x] **Step 9.2: Add chat schemas**
 
 Append to `lib/schemas/index.ts`:
 
@@ -1996,7 +2000,7 @@ export const chunkNeighborsSchema = z.object({
 export type ChunkNeighbors = z.infer<typeof chunkNeighborsSchema>;
 ```
 
-- [ ] **Step 9.3: Add pure SSE parser**
+- [x] **Step 9.3: Add pure SSE parser**
 
 Create `lib/api/sse.ts`:
 
@@ -2046,7 +2050,7 @@ export function parseSSEEvent(raw: string): ParsedSSEEvent | null {
 }
 ```
 
-- [ ] **Step 9.4: Add parser tests**
+- [x] **Step 9.4: Add parser tests**
 
 Create `lib/api/sse.test.ts`:
 
@@ -2079,7 +2083,7 @@ describe("parseSSEBuffer", () => {
 });
 ```
 
-- [ ] **Step 9.5: Add chat API helper**
+- [x] **Step 9.5: Add chat API helper**
 
 Create `lib/api/chat.ts`:
 
@@ -2145,7 +2149,7 @@ export async function streamConversationMessage(
 }
 ```
 
-- [ ] **Step 9.6: Run frontend parser tests**
+- [x] **Step 9.6: Run frontend parser tests**
 
 Run:
 
@@ -2163,7 +2167,7 @@ Expected: SSE parser tests pass.
 **Files:**
 - Create: `E:\MyLearn\go-project\wiki\frontend\lib\hooks\use-chat-stream.ts`
 
-- [ ] **Step 10.1: Add local message type**
+- [x] **Step 10.1: Add local message type**
 
 Create `use-chat-stream.ts`:
 
@@ -2188,7 +2192,7 @@ export interface ChatStreamState {
 }
 ```
 
-- [ ] **Step 10.2: Implement hook**
+- [x] **Step 10.2: Implement hook**
 
 Add:
 
@@ -2253,7 +2257,7 @@ export function useChatStream(initialMessages: ChatMessage[] = []) {
 }
 ```
 
-- [ ] **Step 10.3: Add reducer helpers**
+- [x] **Step 10.3: Add reducer helpers**
 
 Add:
 
@@ -2300,7 +2304,7 @@ function updateDraft(state: ChatStreamState, draftId: string, patch: Partial<Loc
 }
 ```
 
-- [ ] **Step 10.4: Run typecheck**
+- [x] **Step 10.4: Run typecheck**
 
 Run:
 
@@ -2327,7 +2331,7 @@ Expected: no TypeScript errors from the hook.
 - Create: `E:\MyLearn\go-project\wiki\frontend\app\kbs\[kbId]\chats\[conversationId]\page.tsx`
 - Modify: `E:\MyLearn\go-project\wiki\frontend\components\kb\kb-card.tsx`
 
-- [ ] **Step 11.1: Add chat page shell**
+- [x] **Step 11.1: Add chat page shell**
 
 Both chat routes should render a full-height app surface, not a marketing page:
 
@@ -2345,7 +2349,7 @@ Both chat routes should render a full-height app surface, not a marketing page:
 </main>
 ```
 
-- [ ] **Step 11.2: Implement `ChatSidebar`**
+- [x] **Step 11.2: Implement `ChatSidebar`**
 
 Use `useQuery` for `chatApi.listConversations(kbId)` and `useMutation` for `chatApi.createConversation(kbId)`. Include:
 
@@ -2362,7 +2366,7 @@ Each conversation link goes to:
 `/kbs/${kbId}/chats/${conversation.id}`
 ```
 
-- [ ] **Step 11.3: Implement `MessageList` and `MessageBubble`**
+- [x] **Step 11.3: Implement `MessageList` and `MessageBubble`**
 
 Assistant content uses:
 
@@ -2388,7 +2392,7 @@ Keep message widths responsive:
 className="max-w-[min(760px,calc(100vw-3rem))] rounded-md border p-3 text-sm"
 ```
 
-- [ ] **Step 11.4: Implement `ChatInput`**
+- [x] **Step 11.4: Implement `ChatInput`**
 
 Use a textarea and icon buttons:
 
@@ -2412,7 +2416,7 @@ if (event.key === "Enter" && !event.shiftKey) {
 }
 ```
 
-- [ ] **Step 11.5: Implement `CitationDrawer`**
+- [x] **Step 11.5: Implement `CitationDrawer`**
 
 Use existing dialog primitives as a side drawer styled with fixed right positioning. The drawer body should render loading, error, empty, and chunk states:
 
@@ -2463,7 +2467,7 @@ Highlight primary chunk:
 className={cn("rounded-md border p-3 text-sm", chunk.is_primary && "border-primary bg-muted")}
 ```
 
-- [ ] **Step 11.6: Add chat navigation to KB card**
+- [x] **Step 11.6: Add chat navigation to KB card**
 
 In `kb-card.tsx`, keep the KB title linking to docs and add a chat link. The current `Button` component does not expose `asChild`, so use a normal `Link` with button-like classes:
 
@@ -2477,7 +2481,9 @@ In `kb-card.tsx`, keep the KB title linking to docs and add a chat link. The cur
 </Link>
 ```
 
-- [ ] **Step 11.7: Run frontend checks**
+- [x] **Step 11.7: Run frontend checks**
+
+`pnpm test` and `pnpm typecheck` passed on 2026-06-04. `pnpm build` compiled, checked types, and generated static pages, then failed during `.next/standalone` symlink copy with Windows `EPERM`; this matches the known local standalone copy issue noted above.
 
 Run:
 
@@ -2499,7 +2505,7 @@ Expected: typecheck passes and Next build compiles. If Windows standalone symlin
 - Modify after implementation: `E:\MyLearn\go-project\wiki\docs\superpowers\plans\2026-06-02-phase-2-deterministic-rag-plan.md`
   - Check off completed tasks and record skipped environment-dependent checks.
 
-- [ ] **Step 12.1: Full backend verification**
+- [x] **Step 12.1: Full backend verification**
 
 Run:
 
@@ -2510,7 +2516,9 @@ go test ./... -timeout 120s
 
 Expected: all backend packages pass.
 
-- [ ] **Step 12.2: Full frontend verification**
+Result 2026-06-04: passed with `go test ./... -timeout 120s`.
+
+- [x] **Step 12.2: Full frontend verification**
 
 Run:
 
@@ -2522,6 +2530,8 @@ pnpm build
 ```
 
 Expected: parser tests and typecheck pass. Build compiles successfully, with the known Windows standalone symlink caveat recorded only if it occurs after successful compilation.
+
+Result 2026-06-04: `pnpm.cmd test` passed 2 test files and 6 tests; `pnpm.cmd typecheck` passed. `pnpm.cmd build` compiled successfully, checked type validity, generated static pages, and then failed only while copying traced files into `.next/standalone` due Windows `EPERM` symlink permissions.
 
 - [ ] **Step 12.3: Manual smoke test when infrastructure is available**
 
@@ -2543,7 +2553,9 @@ Open `http://localhost:3000`. Verify:
 7. Refreshing the page reloads persisted messages.
 8. Pressing stop aborts the request and no partial assistant message is saved.
 
-- [ ] **Step 12.4: Negative scope audit**
+Result 2026-06-04: skipped. This machine has no available `docker` command and `deploy/docker-compose.yml` is absent, so the backend/frontend/database/LLM stack needed for true end-to-end smoke is not available locally.
+
+- [x] **Step 12.4: Negative scope audit**
 
 Run:
 
@@ -2552,6 +2564,8 @@ rg -n "eino|Eino|Agent|ReAct|BM25|RRF|Elasticsearch|query planning|query rewrite
 ```
 
 Expected: no new Phase 2 implementation code introduces these features. Existing docs may mention them as deferred scope.
+
+Result 2026-06-04: passed for Phase 2 implementation scope. The only hits were pre-existing homepage and metadata copy containing "Agent"; these files are not in the Phase 2 implementation diff.
 
 - [ ] **Step 12.5: Acceptance criteria check**
 
@@ -2566,6 +2580,8 @@ Confirm:
 [ ] Client disconnect or stop cancels backend stream.
 [ ] No Agent, Eino Graph, tool-call, hybrid search, BM25/RRF, or query planning behavior was added.
 ```
+
+Status 2026-06-04: pending live acceptance because Step 12.3 could not run in this local environment. The final negative-scope criterion is supported by Step 12.4.
 
 ---
 

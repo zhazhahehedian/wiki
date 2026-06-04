@@ -3,9 +3,11 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/vectorstore"
 	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
@@ -43,4 +45,42 @@ func (h *ChunkHandler) ListByDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteListResponse(w, total, chunks)
+}
+
+func (h *ChunkHandler) Neighbors(w http.ResponseWriter, r *http.Request) {
+	kbID := chi.URLParam(r, "kbID")
+	chunkID := chi.URLParam(r, "chunkID")
+
+	window := 2
+	if s := r.URL.Query().Get("window"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 || v > 10 {
+			WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "window must be int in [0,10]"))
+			return
+		}
+		window = v
+	}
+
+	primary, err := h.vstore.GetChunk(r.Context(), kbID, chunkID)
+	if err != nil {
+		WriteError(w, r, NewAPIError(http.StatusNotFound, CodeChunkNotFound, "chunk not found"))
+		return
+	}
+	chunks, err := h.vstore.ListNeighbors(r.Context(), kbID, primary.DocumentID, primary.Seq, window)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+
+	out := domain.ChunkNeighbors{PrimaryChunkID: primary.ID, Window: window}
+	for _, c := range chunks {
+		out.Chunks = append(out.Chunks, domain.NeighborChunk{
+			ID:         c.ID,
+			DocumentID: c.DocumentID,
+			Seq:        c.Seq,
+			Content:    c.Content,
+			IsPrimary:  c.ID == primary.ID,
+		})
+	}
+	WriteJSON(w, http.StatusOK, out)
 }

@@ -1,0 +1,132 @@
+package http
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/zenith-wang/it-wiki/backend/internal/service"
+)
+
+type ChatHandler struct {
+	svc *service.Chat
+}
+
+func NewChatHandler(svc *service.Chat) *ChatHandler {
+	return &ChatHandler{svc: svc}
+}
+
+func (h *ChatHandler) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	kbID := chi.URLParam(r, "kbID")
+	conv, err := h.svc.CreateConversation(r.Context(), kbID)
+	if err != nil {
+		WriteError(w, r, mapChatError(err))
+		return
+	}
+	WriteJSON(w, http.StatusCreated, conv)
+}
+
+func (h *ChatHandler) ListConversations(w http.ResponseWriter, r *http.Request) {
+	p, err := ParsePagination(r)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	kbID := chi.URLParam(r, "kbID")
+	items, total, err := h.svc.ListConversations(r.Context(), kbID, p.Limit, p.Offset)
+	if err != nil {
+		WriteError(w, r, mapChatError(err))
+		return
+	}
+	WriteListResponse(w, total, items)
+}
+
+func (h *ChatHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
+	p, err := ParsePagination(r)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	conversationID := chi.URLParam(r, "conversationID")
+	items, total, err := h.svc.ListMessages(r.Context(), conversationID, p.Limit, p.Offset)
+	if err != nil {
+		WriteError(w, r, mapChatError(err))
+		return
+	}
+	WriteListResponse(w, total, items)
+}
+
+type streamMessageRequest struct {
+	Content string `json:"content"`
+}
+
+func (h *ChatHandler) StreamMessage(w http.ResponseWriter, r *http.Request) {
+	var req streamMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "invalid JSON body"))
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "content is required"))
+		return
+	}
+
+	sink := &httpChatSink{w: w}
+	err := h.svc.AskStream(r.Context(), chi.URLParam(r, "conversationID"), req.Content, sink)
+	if err != nil && !sink.Started() {
+		WriteError(w, r, mapChatError(err))
+	}
+}
+
+func mapChatError(err error) error {
+	var convNotFound *service.ErrConversationNotFound
+	if errors.As(err, &convNotFound) {
+		return NewAPIError(http.StatusNotFound, CodeConversationNotFound, err.Error())
+	}
+	var kbNotFound *service.ErrKBNotFound
+	if errors.As(err, &kbNotFound) {
+		return NewAPIError(http.StatusNotFound, CodeKBNotFound, err.Error())
+	}
+	return err
+}
+
+type httpChatSink struct {
+	w       http.ResponseWriter
+	started bool
+}
+
+func (s *httpChatSink) ensureStarted() {
+	if !s.started {
+		WriteSSEHeaders(s.w)
+		s.started = true
+	}
+}
+
+func (s *httpChatSink) Started() bool { return s.started }
+
+func (s *httpChatSink) SendRetrieval(_ context.Context, result *service.RetrievalResult) error {
+	s.ensureStarted()
+	return WriteSSEEvent(s.w, "retrieval", map[string]any{
+		"evidence_level": result.EvidenceLevel,
+		"citations":      result.Citations,
+	})
+}
+
+func (s *httpChatSink) SendToken(_ context.Context, text string) error {
+	s.ensureStarted()
+	return WriteSSEEvent(s.w, "token", map[string]string{"text": text})
+}
+
+func (s *httpChatSink) SendDone(_ context.Context, done service.ChatDone) error {
+	s.ensureStarted()
+	return WriteSSEEvent(s.w, "done", done)
+}
+
+func (s *httpChatSink) SendError(_ context.Context, err service.ChatStreamError) error {
+	s.ensureStarted()
+	return WriteSSEEvent(s.w, "error", err)
+}

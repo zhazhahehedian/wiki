@@ -11,17 +11,31 @@ import (
 )
 
 type Querier interface {
+	CountConversationsByKB(ctx context.Context, arg CountConversationsByKBParams) (int64, error)
 	CountDocumentsByKB(ctx context.Context, arg CountDocumentsByKBParams) (int64, error)
 	CountKnowledgeBases(ctx context.Context) (int64, error)
+	CountMessagesByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
+	CountMessagesByConversationForUser(ctx context.Context, arg CountMessagesByConversationForUserParams) (int64, error)
+	CreateConversation(ctx context.Context, arg CreateConversationParams) (Conversation, error)
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error)
 	CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBaseParams) (KnowledgeBase, error)
+	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	DeleteDocument(ctx context.Context, id uuid.UUID) error
 	DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error
 	FindDocumentByChecksum(ctx context.Context, arg FindDocumentByChecksumParams) (Document, error)
+	GetConversation(ctx context.Context, id uuid.UUID) (Conversation, error)
+	GetConversationForUser(ctx context.Context, arg GetConversationForUserParams) (Conversation, error)
 	GetDocument(ctx context.Context, id uuid.UUID) (Document, error)
 	GetKnowledgeBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
+	ListConversationsByKB(ctx context.Context, arg ListConversationsByKBParams) ([]Conversation, error)
 	ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBParams) ([]Document, error)
 	ListKnowledgeBases(ctx context.Context, arg ListKnowledgeBasesParams) ([]KnowledgeBase, error)
+	ListMessagesByConversation(ctx context.Context, arg ListMessagesByConversationParams) ([]Message, error)
+	ListMessagesByConversationForUser(ctx context.Context, arg ListMessagesByConversationForUserParams) ([]Message, error)
+	ListRecentMessagesByConversation(ctx context.Context, arg ListRecentMessagesByConversationParams) ([]Message, error)
+	ListRecentMessagesByConversationForUser(ctx context.Context, arg ListRecentMessagesByConversationForUserParams) ([]Message, error)
+	TouchConversation(ctx context.Context, id uuid.UUID) error
+	TouchConversationForUser(ctx context.Context, arg TouchConversationForUserParams) error
 	UpdateDocumentStatus(ctx context.Context, arg UpdateDocumentStatusParams) error
 }
 

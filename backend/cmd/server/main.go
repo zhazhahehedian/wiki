@@ -20,6 +20,7 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/embedder"
+	"github.com/zenith-wang/it-wiki/backend/internal/infra/llm"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/parser"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/splitter"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/storage"
@@ -100,6 +101,11 @@ func run() error {
 		Dim:     cfg.EmbeddingDim,
 	})
 	vstore := vectorstore.New(pool)
+	llmClient := llm.New(llm.Config{
+		BaseURL: cfg.LLMBaseURL,
+		APIKey:  cfg.LLMAPIKey,
+		Model:   cfg.LLMModel,
+	})
 
 	ingestionWorker := worker.NewIngestionWorker(worker.WorkerDeps{
 		Pool: pool, Queries: queries, Storage: mc,
@@ -115,11 +121,14 @@ func run() error {
 	kbSvc := service.NewKB(queries, cfg.EmbeddingModel, cfg.EmbeddingDim)
 	docSvc := service.NewDocument(queries)
 	ingestionSvc := service.NewIngestion(queries, mc, rclient)
+	retrievalSvc := service.NewRetrieval(embed, vstore, cfg.RAGTopK, cfg.RAGMinScore)
+	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages)
 
 	router := httpx.NewRouter(httpx.Handlers{
 		KB:    httpx.NewKBHandler(kbSvc),
 		Doc:   httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),
 		Chunk: httpx.NewChunkHandler(vstore, docSvc),
+		Chat:  httpx.NewChatHandler(chatSvc),
 	})
 
 	runCtx, runCancel := context.WithCancel(context.Background())

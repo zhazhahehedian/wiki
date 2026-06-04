@@ -34,6 +34,10 @@ type Config struct {
 	EmbedBatchSize    int
 	UploadMaxBytes    int64
 	RiverMaxWorkers   int
+
+	RAGTopK            int
+	RAGMinScore        float32
+	RAGHistoryMessages int
 }
 
 func Load() (*Config, error) {
@@ -69,6 +73,16 @@ func Load() (*Config, error) {
 	maxMB, _ := strconv.ParseInt(getEnv("UPLOAD_MAX_MB", "50"), 10, 64)
 	cfg.UploadMaxBytes = maxMB * 1024 * 1024
 	cfg.RiverMaxWorkers, _ = strconv.Atoi(getEnv("RIVER_MAX_WORKERS", "4"))
+	cfg.RAGTopK, _ = strconv.Atoi(getEnv("RAG_TOP_K", "8"))
+	minScore, _ := strconv.ParseFloat(getEnv("RAG_MIN_SCORE", "0.0"), 32)
+	cfg.RAGMinScore = float32(minScore)
+	cfg.RAGHistoryMessages, _ = strconv.Atoi(getEnv("RAG_HISTORY_MESSAGES", "10"))
+	if cfg.RAGTopK < 1 {
+		cfg.RAGTopK = 8
+	}
+	if cfg.RAGHistoryMessages < 0 {
+		cfg.RAGHistoryMessages = 10
+	}
 
 	return cfg, nil
 }

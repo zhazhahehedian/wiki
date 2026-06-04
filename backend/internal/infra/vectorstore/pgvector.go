@@ -10,10 +10,17 @@ import (
 	"github.com/pgvector/pgvector-go"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
+type pgxDB interface {
+	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 type Pgvector struct {
-	pool *pgxpool.Pool
+	pool pgxDB
 }
 
 func New(pool *pgxpool.Pool) *Pgvector {
@@ -97,4 +104,101 @@ func (v *Pgvector) ListByDocument(ctx context.Context, docID string, limit, offs
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opts ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
+	topK := opts.TopK
+	if topK < 1 {
+		topK = 8
+	}
+
+	rows, err := v.pool.Query(ctx,
+		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
+		        1 - (c.embedding <=> $2) AS score, c.metadata
+		   FROM chunks c
+		   JOIN documents d ON d.id = c.document_id
+		  WHERE c.kb_id = $1
+		    AND d.status = 'ready'
+		  ORDER BY c.embedding <=> $2
+		  LIMIT $3`,
+		kbID, pgvector.NewVector(query), topK,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	defer rows.Close()
+
+	var hits []ports.VectorSearchHit
+	for rows.Next() {
+		var hit ports.VectorSearchHit
+		var metaJSON []byte
+		if err := rows.Scan(&hit.ChunkID, &hit.KBID, &hit.DocumentID, &hit.DocumentTitle, &hit.Seq, &hit.Content, &hit.Score, &metaJSON); err != nil {
+			return nil, fmt.Errorf("scan vector hit: %w", err)
+		}
+		hit.Metadata = decodeMetadata(metaJSON)
+		hits = append(hits, hit)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate vector hits: %w", err)
+	}
+	return hits, nil
+}
+
+func (v *Pgvector) GetChunk(ctx context.Context, kbID, chunkID string) (*domain.Chunk, error) {
+	var c domain.Chunk
+	var metaJSON []byte
+	err := v.pool.QueryRow(ctx,
+		`SELECT id, kb_id, document_id, seq, content, token_count, metadata, created_at
+		   FROM chunks
+		  WHERE kb_id = $1 AND id = $2`,
+		kbID, chunkID,
+	).Scan(&c.ID, &c.KBID, &c.DocumentID, &c.Seq, &c.Content, &c.TokenCount, &metaJSON, &c.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("get chunk: %w", err)
+	}
+	c.Metadata = decodeMetadata(metaJSON)
+	return &c, nil
+}
+
+func (v *Pgvector) ListNeighbors(ctx context.Context, kbID, documentID string, seq, window int) ([]domain.Chunk, error) {
+	if window < 0 {
+		window = 0
+	}
+
+	rows, err := v.pool.Query(ctx,
+		`SELECT id, kb_id, document_id, seq, content, token_count, metadata, created_at
+		   FROM chunks
+		  WHERE kb_id = $1
+		    AND document_id = $2
+		    AND seq BETWEEN $3 AND $4
+		  ORDER BY seq ASC`,
+		kbID, documentID, seq-window, seq+window,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list chunk neighbors: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Chunk
+	for rows.Next() {
+		var c domain.Chunk
+		var metaJSON []byte
+		if err := rows.Scan(&c.ID, &c.KBID, &c.DocumentID, &c.Seq, &c.Content, &c.TokenCount, &metaJSON, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan neighbor chunk: %w", err)
+		}
+		c.Metadata = decodeMetadata(metaJSON)
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate neighbor chunks: %w", err)
+	}
+	return out, nil
+}
+
+func decodeMetadata(metaJSON []byte) map[string]any {
+	metadata := map[string]any{}
+	if len(metaJSON) > 0 {
+		_ = json.Unmarshal(metaJSON, &metadata)
+	}
+	return metadata
 }

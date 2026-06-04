@@ -13,6 +13,7 @@ type Handlers struct {
 	KB    *KBHandler
 	Doc   *DocumentHandler
 	Chunk *ChunkHandler
+	Chat  *ChatHandler
 }
 
 func NewRouter(h Handlers) http.Handler {
@@ -39,6 +40,12 @@ func NewRouter(h Handlers) http.Handler {
 		r.Delete("/docs/{id}", h.Doc.Delete)
 
 		r.Get("/docs/{id}/chunks", h.Chunk.ListByDoc)
+
+		r.Get("/kbs/{kbID}/conversations", h.Chat.ListConversations)
+		r.Post("/kbs/{kbID}/conversations", h.Chat.CreateConversation)
+		r.Get("/conversations/{conversationID}/messages", h.Chat.ListMessages)
+		r.Post("/conversations/{conversationID}/messages/stream", h.Chat.StreamMessage)
+		r.Get("/kbs/{kbID}/chunks/{chunkID}/neighbors", h.Chunk.Neighbors)
 	})
 
 	return r

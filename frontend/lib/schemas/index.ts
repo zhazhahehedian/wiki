@@ -55,3 +55,53 @@ export const apiErrorSchema = z.object({
     details: z.record(z.string(), z.unknown()).optional(),
   }),
 });
+
+export const citationSchema = z.object({
+  id: z.string(),
+  chunk_id: z.string(),
+  document_id: z.string(),
+  document_title: z.string(),
+  seq: z.number(),
+  score: z.number(),
+  snippet: z.string(),
+});
+export type Citation = z.infer<typeof citationSchema>;
+
+export const conversationSchema = z.object({
+  id: z.string(),
+  kb_id: z.string(),
+  title: z.string(),
+  mode: z.literal("rag"),
+  user_id: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+export type Conversation = z.infer<typeof conversationSchema>;
+
+export const chatMessageSchema = z.object({
+  id: z.string(),
+  conversation_id: z.string(),
+  role: z.enum(["user", "assistant"]),
+  content: z.string(),
+  citations: z.array(citationSchema).default([]),
+  tool_calls: z.array(z.unknown()).default([]),
+  token_usage: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string(),
+});
+export type ChatMessage = z.infer<typeof chatMessageSchema>;
+
+export const neighborChunkSchema = z.object({
+  id: z.string(),
+  document_id: z.string(),
+  seq: z.number(),
+  content: z.string(),
+  is_primary: z.boolean(),
+});
+export type NeighborChunk = z.infer<typeof neighborChunkSchema>;
+
+export const chunkNeighborsSchema = z.object({
+  primary_chunk_id: z.string(),
+  window: z.number(),
+  chunks: z.array(neighborChunkSchema),
+});
+export type ChunkNeighbors = z.infer<typeof chunkNeighborsSchema>;
