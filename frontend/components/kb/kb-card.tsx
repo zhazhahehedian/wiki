@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { MessageSquare, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDeleteKb } from "@/lib/hooks/use-kbs";
 import type { KB } from "@/lib/schemas";
@@ -27,7 +27,14 @@ export function KBCard({ kb }: { kb: KB }) {
       <div className="text-xs text-muted-foreground">
         {kb.embed_model} · dim={kb.embed_dim} · {new Date(kb.created_at).toLocaleDateString()}
       </div>
-      <div className="mt-auto pt-2 flex justify-end">
+      <div className="mt-auto flex items-center justify-between pt-2">
+        <Link
+          href={`/kbs/${kb.id}/chats`}
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
+        >
+          <MessageSquare className="size-4" />
+          Chat
+        </Link>
         <Button size="sm" variant="ghost" onClick={handleDelete} disabled={del.isPending}>
           <Trash2 className="size-4" />
         </Button>

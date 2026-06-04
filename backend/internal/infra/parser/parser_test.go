@@ -30,8 +30,8 @@ func TestMarkdownParse(t *testing.T) {
 func TestDispatcherSupports(t *testing.T) {
 	d := NewDispatcher()
 	cases := map[string]bool{
-		"text/markdown":            true,
-		"application/pdf":          true,
+		"text/markdown":   true,
+		"application/pdf": true,
 		"application/vnd.openxmlformats-officedocument.wordprocessingml.document": true,
 		"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":       true,
 		"application/octet-stream": false,
