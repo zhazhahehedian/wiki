@@ -1,0 +1,77 @@
+# 检索评测集 · 阶段 2.5
+# 来源: E:\MyLearn\ai-learn-main\src\app\data\qa_test_10.json（公开 RAG 教学项目）转换 + 3 条代码块用例
+# 所有 expected_keywords 均已核实逐字出现在对应文档原文中（判定依赖 strings.Contains）
+#
+# 测试 KB 需上传以下三份文档（expected_document 与上传文件名精确一致）:
+#   1. 2024少儿编程教育行业发展趋势报告.md   —— 主语料（来自 E:\MyLearn\ai-learn-main\src\app\data\）
+#   2. 2021年低代码行业研究报告.pdf          —— 干扰文档，无对应题目，让文档级 Hit@k 有区分度
+#   3. CLAUDE.md                             —— 本仓库根目录，含命令代码块，验证 parser 修复
+
+# ---------- 主语料: 2024少儿编程教育行业发展趋势报告 ----------
+
+- id: q001
+  question: "什么是少儿编程教育？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["可视化图形编程", "计算思维", "STEAM"]
+
+- id: q002
+  question: "国家政策对少儿编程教育的影响体现在哪些方面？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["科创类", "学业水平"]
+
+- id: q003
+  question: "哪些因素在推动少儿编程教育普及化？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["教育文化娱乐", "人才缺口", "付费意愿"]
+
+- id: q004
+  question: "预计2024年少儿编程教育市场规模是多少？未来潜力如何？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["488", "千亿"]
+
+- id: q005
+  question: "少儿编程教育产业链涉及哪些关键环节？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["上游", "中游", "下游"]
+
+- id: q006
+  question: "OMO 模式在少儿编程教育中扮演什么角色？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["OMO", "获客", "师训"]
+
+- id: q007
+  question: "什么是编程+X课程？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["编程+X", "跨学科"]
+
+- id: q008
+  question: "生成式AI技术对少儿编程教育有何具体影响？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["师-机-生", "生成式"]
+
+- id: q009
+  question: "为什么说少儿编程教育市场长期发展仍需依赖政府、行业、企业三方协同？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["监管", "标准化", "续费"]
+
+- id: q010
+  question: "国内少儿编程教育企业如何布局国际化市场？"
+  expected_document: "2024少儿编程教育行业发展趋势报告.md"
+  expected_keywords: ["CodeMonkey", "Wonderclass", "玛塔创想"]
+
+# ---------- 代码块用例: CLAUDE.md（验证 parser 保留代码块内容） ----------
+
+- id: code-1
+  question: "改完数据库 schema 后用什么命令重新生成 Go 代码？"
+  expected_document: "CLAUDE.md"
+  expected_keywords: ["sqlc generate"]
+
+- id: code-2
+  question: "怎么在本地跑数据库迁移？"
+  expected_document: "CLAUDE.md"
+  expected_keywords: ["goose"]
+
+- id: code-3
+  question: "如何给前端添加一个 shadcn 组件？"
+  expected_document: "CLAUDE.md"
+  expected_keywords: ["shadcn@latest"]
