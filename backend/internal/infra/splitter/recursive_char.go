@@ -45,13 +45,22 @@ func (s *RecursiveChar) splitRecursive(text string, chunkSize int, tok *tokenize
 		if !strings.Contains(text, sep) {
 			continue
 		}
-		parts := strings.Split(text, sep)
+		parts := strings.SplitAfter(text, sep)
 		var result []string
 		for _, p := range parts {
 			if p == "" {
 				continue
 			}
+			// SplitAfter 保留分隔符；若整段无法再被该分隔符切小（如超长单句以
+			// 该分隔符结尾），换下一级分隔符，避免无限递归。
+			if p == text {
+				result = nil
+				break
+			}
 			result = append(result, s.splitRecursive(p, chunkSize, tok)...)
+		}
+		if result == nil {
+			continue
 		}
 		return result
 	}
@@ -59,14 +68,18 @@ func (s *RecursiveChar) splitRecursive(text string, chunkSize int, tok *tokenize
 }
 
 func hardSplitByToken(text string, chunkSize int, tok *tokenizer.Tiktoken) []string {
-	ids := tok.Encode(text)
 	var out []string
-	for i := 0; i < len(ids); i += chunkSize {
-		end := i + chunkSize
-		if end > len(ids) {
-			end = len(ids)
+	var current strings.Builder
+	for _, r := range text {
+		next := current.String() + string(r)
+		if current.Len() > 0 && tok.Count(next) > chunkSize {
+			out = append(out, current.String())
+			current.Reset()
 		}
-		out = append(out, tok.Decode(ids[i:end]))
+		current.WriteRune(r)
+	}
+	if current.Len() > 0 {
+		out = append(out, current.String())
 	}
 	return out
 }
@@ -101,9 +114,18 @@ func tailTokens(s string, n int, tok *tokenizer.Tiktoken) string {
 	if n <= 0 {
 		return ""
 	}
-	ids := tok.Encode(s)
-	if len(ids) <= n {
+	if tok.Count(s) <= n {
 		return s
 	}
-	return tok.Decode(ids[len(ids)-n:])
+
+	runes := []rune(s)
+	start := len(runes)
+	for start > 0 {
+		candidate := string(runes[start-1:])
+		if tok.Count(candidate) > n {
+			break
+		}
+		start--
+	}
+	return string(runes[start:])
 }
