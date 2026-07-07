@@ -52,8 +52,12 @@ func (d *Dispatcher) Parse(ctx context.Context, r io.Reader, mime string) (*port
 			return nil, fmt.Errorf("fallback read: %w", err)
 		}
 	}
+	text, err := decodeTextBytes(buf)
+	if err != nil {
+		return nil, err
+	}
 	return &ports.ParseResult{
-		Text:     string(buf),
+		Text:     text,
 		Metadata: map[string]any{"format": "unknown", "mime": mime},
 	}, nil
 }

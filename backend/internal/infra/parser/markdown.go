@@ -24,6 +24,11 @@ func (Markdown) Parse(ctx context.Context, r io.Reader, mime string) (*ports.Par
 	if err != nil {
 		return nil, err
 	}
+	decoded, err := decodeTextBytes(src)
+	if err != nil {
+		return nil, err
+	}
+	src = []byte(decoded)
 
 	md := goldmark.New()
 	root := md.Parser().Parse(text.NewReader(src))

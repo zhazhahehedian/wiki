@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 func TestMarkdownParse(t *testing.T) {
@@ -51,5 +54,41 @@ func TestDispatcherFallback(t *testing.T) {
 	}
 	if res.Text != "plain text" {
 		t.Errorf("fallback text mismatch: %q", res.Text)
+	}
+}
+
+func TestDispatcherFallbackDecodesGB18030Text(t *testing.T) {
+	raw, err := simplifiedchinese.GB18030.NewEncoder().String("斗地主流程说明")
+	if err != nil {
+		t.Fatalf("encode fixture: %v", err)
+	}
+
+	res, err := NewDispatcher().Parse(context.Background(), strings.NewReader(raw), "application/octet-stream")
+	if err != nil {
+		t.Fatalf("fallback parse: %v", err)
+	}
+	if !utf8.ValidString(res.Text) {
+		t.Fatalf("parsed text is not valid UTF-8: %q", res.Text)
+	}
+	if res.Text != "斗地主流程说明" {
+		t.Fatalf("parsed text = %q, want decoded Chinese text", res.Text)
+	}
+}
+
+func TestMarkdownParseDecodesGB18030Text(t *testing.T) {
+	raw, err := simplifiedchinese.GB18030.NewEncoder().String("# 斗地主流程说明\n\n正文")
+	if err != nil {
+		t.Fatalf("encode fixture: %v", err)
+	}
+
+	res, err := (Markdown{}).Parse(context.Background(), strings.NewReader(raw), "text/markdown")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !utf8.ValidString(res.Text) {
+		t.Fatalf("parsed text is not valid UTF-8: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "斗地主流程说明") {
+		t.Fatalf("parsed text = %q, want decoded heading", res.Text)
 	}
 }
