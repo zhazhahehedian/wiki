@@ -65,6 +65,20 @@ func TestSectionizeMarkdownSkipsHeadingWithEmptyBody(t *testing.T) {
 	}
 }
 
+func TestSectionizeMarkdownHeadingLevelSkipAndBacktrack(t *testing.T) {
+	text := "# A\n\n正文a\n\n### C\n\n正文c\n\n## B\n\n正文b\n\n###### F\n\n正文f"
+	sections := SectionizeMarkdown(text)
+	if len(sections) != 4 {
+		t.Fatalf("len(sections) = %d, want 4: %#v", len(sections), sections)
+	}
+	wantPaths := []string{"A", "A > C", "A > B", "A > B > F"}
+	for i, want := range wantPaths {
+		if sections[i].Path != want {
+			t.Errorf("sections[%d].Path = %q, want %q", i, sections[i].Path, want)
+		}
+	}
+}
+
 func TestSectionizeMarkdownLengthAwareFenceTracking(t *testing.T) {
 	text := "# 教程\n\n````\n```\n# 不是标题\n```\n````\n\n## 真标题\n\n正文。"
 	sections := SectionizeMarkdown(text)
