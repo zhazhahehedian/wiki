@@ -30,6 +30,45 @@ func TestMarkdownParse(t *testing.T) {
 	}
 }
 
+func TestMarkdownParsePreservesCodeBlockContent(t *testing.T) {
+	md := "# 标题\n\n正文段落。\n\n```bash\ngoose -dir migrations up\n```\n\n结尾。"
+	res, err := (Markdown{}).Parse(context.Background(), strings.NewReader(md), "text/markdown")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(res.Text, "goose -dir migrations up") {
+		t.Errorf("code block content missing from parsed text: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "```bash") {
+		t.Errorf("code fence with language missing: %q", res.Text)
+	}
+}
+
+func TestMarkdownParsePreservesHeadingMarkers(t *testing.T) {
+	md := "# 部署指南\n\n## 环境变量\n\n配置 DATABASE_URL。"
+	res, err := (Markdown{}).Parse(context.Background(), strings.NewReader(md), "text/markdown")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(res.Text, "# 部署指南") {
+		t.Errorf("level-1 heading marker missing: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "## 环境变量") {
+		t.Errorf("level-2 heading marker missing: %q", res.Text)
+	}
+}
+
+func TestMarkdownParseRendersListItems(t *testing.T) {
+	md := "前言\n\n- 第一项\n- 第二项"
+	res, err := (Markdown{}).Parse(context.Background(), strings.NewReader(md), "text/markdown")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(res.Text, "- 第一项") || !strings.Contains(res.Text, "- 第二项") {
+		t.Errorf("list items missing or unmarked: %q", res.Text)
+	}
+}
+
 func TestDispatcherSupports(t *testing.T) {
 	d := NewDispatcher()
 	cases := map[string]bool{
