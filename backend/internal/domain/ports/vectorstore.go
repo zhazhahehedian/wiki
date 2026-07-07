@@ -24,5 +24,6 @@ type VectorSearchHit struct {
 
 type VectorStore interface {
 	InsertChunks(ctx context.Context, items []domain.ChunkWithEmbedding) error
+	DeleteByDocument(ctx context.Context, documentID string) error
 	Search(ctx context.Context, kbID string, query []float32, opts VectorSearchOptions) ([]VectorSearchHit, error)
 }

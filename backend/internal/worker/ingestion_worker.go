@@ -135,6 +135,10 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 			Embedding: allEmbeddings[i],
 		})
 	}
+	// 重新摄入前先删除旧 chunks, 避免新旧数据混杂。
+	if err := w.vstore.DeleteByDocument(ctx, docID.String()); err != nil {
+		return failed(fmt.Errorf("delete old chunks: %w", err))
+	}
 	if err := w.vstore.InsertChunks(ctx, items); err != nil {
 		return failed(fmt.Errorf("insert chunks: %w", err))
 	}

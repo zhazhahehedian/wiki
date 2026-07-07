@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
@@ -17,6 +18,7 @@ type pgxDB interface {
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 type Pgvector struct {
@@ -65,6 +67,14 @@ func (v *Pgvector) InsertChunks(ctx context.Context, items []domain.ChunkWithEmb
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// DeleteByDocument 删除文档的全部 chunks, 供重新摄入前清理旧数据。
+func (v *Pgvector) DeleteByDocument(ctx context.Context, documentID string) error {
+	if _, err := v.pool.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
+		return fmt.Errorf("delete chunks by document: %w", err)
 	}
 	return nil
 }

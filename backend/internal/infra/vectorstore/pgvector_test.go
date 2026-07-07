@@ -149,6 +149,31 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	}
 }
 
+func TestDeleteByDocumentIssuesDelete(t *testing.T) {
+	db := &fakeDB{}
+	store := &Pgvector{pool: db}
+
+	if err := store.DeleteByDocument(context.Background(), "doc-1"); err != nil {
+		t.Fatalf("DeleteByDocument() error = %v", err)
+	}
+	if !strings.Contains(db.execSQL, "DELETE FROM chunks WHERE document_id = $1") {
+		t.Fatalf("exec SQL = %q, want chunks delete by document_id", db.execSQL)
+	}
+	if len(db.execArgs) != 1 || db.execArgs[0] != "doc-1" {
+		t.Fatalf("exec args = %#v, want [doc-1]", db.execArgs)
+	}
+}
+
+func TestDeleteByDocumentWrapsError(t *testing.T) {
+	db := &fakeDB{execErr: errors.New("boom")}
+	store := &Pgvector{pool: db}
+
+	err := store.DeleteByDocument(context.Background(), "doc-1")
+	if err == nil || !strings.Contains(err.Error(), "delete chunks by document") {
+		t.Fatalf("DeleteByDocument() error = %v, want wrapped", err)
+	}
+}
+
 type fakeDB struct {
 	querySQL  string
 	queryArgs []any
@@ -158,6 +183,10 @@ type fakeDB struct {
 	rowSQL  string
 	rowArgs []any
 	row     pgx.Row
+
+	execSQL  string
+	execArgs []any
+	execErr  error
 }
 
 func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
@@ -174,6 +203,12 @@ func (f *fakeDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.rowSQL = sql
 	f.rowArgs = args
 	return f.row
+}
+
+func (f *fakeDB) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	f.execSQL = sql
+	f.execArgs = args
+	return pgconn.CommandTag{}, f.execErr
 }
 
 type fakeRows struct {
