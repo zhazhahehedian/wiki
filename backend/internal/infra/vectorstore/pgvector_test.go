@@ -11,11 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
 func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
-	db := &fakeDB{
+	tx := &fakeTx{
 		rows: &fakeRows{values: [][]any{{
 			"chunk-1",
 			"kb-1",
@@ -27,6 +28,7 @@ func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
 			[]byte(`{"path":"ops.md"}`),
 		}}},
 	}
+	db := &fakeDB{tx: tx}
 	store := &Pgvector{pool: db}
 
 	hits, err := store.Search(context.Background(), "kb-1", []float32{0.1, 0.2}, ports.VectorSearchOptions{})
@@ -50,26 +52,29 @@ func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
 	if hit.Metadata["path"] != "ops.md" {
 		t.Fatalf("Metadata[path] = %v, want ops.md", hit.Metadata["path"])
 	}
-	if !strings.Contains(db.querySQL, "JOIN documents d ON d.id = c.document_id") {
-		t.Fatalf("Search SQL missing documents join: %s", db.querySQL)
+	if !strings.Contains(tx.execSQL, "SET LOCAL ivfflat.probes") {
+		t.Fatalf("Search must raise ivfflat.probes in the same tx, got exec: %q", tx.execSQL)
 	}
-	if !strings.Contains(db.querySQL, "d.status = 'ready'") {
-		t.Fatalf("Search SQL missing ready filter: %s", db.querySQL)
+	if !strings.Contains(tx.querySQL, "JOIN documents d ON d.id = c.document_id") {
+		t.Fatalf("Search SQL missing documents join: %s", tx.querySQL)
 	}
-	if !strings.Contains(db.querySQL, "ORDER BY c.embedding <=> $2") {
-		t.Fatalf("Search SQL missing distance ordering: %s", db.querySQL)
+	if !strings.Contains(tx.querySQL, "d.status = 'ready'") {
+		t.Fatalf("Search SQL missing ready filter: %s", tx.querySQL)
 	}
-	if got := db.queryArgs[0]; got != "kb-1" {
+	if !strings.Contains(tx.querySQL, "ORDER BY c.embedding <=> $2") {
+		t.Fatalf("Search SQL missing distance ordering: %s", tx.querySQL)
+	}
+	if got := tx.queryArgs[0]; got != "kb-1" {
 		t.Fatalf("Search kb arg = %v, want kb-1", got)
 	}
-	if got := db.queryArgs[2]; got != 8 {
+	if got := tx.queryArgs[2]; got != 8 {
 		t.Fatalf("Search topK arg = %v, want 8", got)
 	}
 }
 
 func TestSearchReturnsIterationErrors(t *testing.T) {
 	db := &fakeDB{
-		rows: &fakeRows{err: errors.New("cursor failed")},
+		tx: &fakeTx{rows: &fakeRows{err: errors.New("cursor failed")}},
 	}
 	store := &Pgvector{pool: db}
 
@@ -149,6 +154,81 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	}
 }
 
+func TestReplaceChunksDeletesThenInsertsInOneTx(t *testing.T) {
+	tx := &fakeTx{}
+	db := &fakeDB{tx: tx}
+	store := &Pgvector{pool: db}
+
+	items := []domain.ChunkWithEmbedding{{
+		Chunk: domain.Chunk{
+			KBID: "kb-1", DocumentID: "doc-1", Seq: 0,
+			Content: "rotate password", TokenCount: 2,
+		},
+		Embedding: []float32{0.1, 0.2},
+	}}
+	if err := store.ReplaceChunks(context.Background(), "doc-1", items); err != nil {
+		t.Fatalf("ReplaceChunks() error = %v", err)
+	}
+
+	if len(tx.ops) != 3 || !strings.HasPrefix(tx.ops[0], "exec:") || tx.ops[1] != "sendbatch" || tx.ops[2] != "commit" {
+		t.Fatalf("tx ops = %#v, want [exec:delete sendbatch commit]", tx.ops)
+	}
+	if !strings.Contains(tx.execSQL, "DELETE FROM chunks WHERE document_id = $1") {
+		t.Fatalf("tx exec SQL = %q, want chunks delete by document_id", tx.execSQL)
+	}
+	if len(tx.execArgs) != 1 || tx.execArgs[0] != "doc-1" {
+		t.Fatalf("tx exec args = %#v, want [doc-1]", tx.execArgs)
+	}
+	if tx.batch == nil || tx.batch.Len() != 1 {
+		t.Fatalf("batch = %#v, want 1 queued insert", tx.batch)
+	}
+	if !strings.Contains(tx.batch.QueuedQueries[0].SQL, "INSERT INTO chunks") {
+		t.Fatalf("batch SQL = %q, want chunks insert", tx.batch.QueuedQueries[0].SQL)
+	}
+}
+
+func TestReplaceChunksRollsBackWhenDeleteFails(t *testing.T) {
+	tx := &fakeTx{execErr: errors.New("boom")}
+	db := &fakeDB{tx: tx}
+	store := &Pgvector{pool: db}
+
+	err := store.ReplaceChunks(context.Background(), "doc-1", nil)
+	if err == nil || !strings.Contains(err.Error(), "delete old chunks") {
+		t.Fatalf("ReplaceChunks() error = %v, want wrapped delete error", err)
+	}
+	if tx.committed {
+		t.Fatal("tx committed despite delete failure")
+	}
+	if !tx.rolledBack {
+		t.Fatal("tx not rolled back after delete failure")
+	}
+}
+
+func TestDeleteByDocumentIssuesDelete(t *testing.T) {
+	db := &fakeDB{}
+	store := &Pgvector{pool: db}
+
+	if err := store.DeleteByDocument(context.Background(), "doc-1"); err != nil {
+		t.Fatalf("DeleteByDocument() error = %v", err)
+	}
+	if !strings.Contains(db.execSQL, "DELETE FROM chunks WHERE document_id = $1") {
+		t.Fatalf("exec SQL = %q, want chunks delete by document_id", db.execSQL)
+	}
+	if len(db.execArgs) != 1 || db.execArgs[0] != "doc-1" {
+		t.Fatalf("exec args = %#v, want [doc-1]", db.execArgs)
+	}
+}
+
+func TestDeleteByDocumentWrapsError(t *testing.T) {
+	db := &fakeDB{execErr: errors.New("boom")}
+	store := &Pgvector{pool: db}
+
+	err := store.DeleteByDocument(context.Background(), "doc-1")
+	if err == nil || !strings.Contains(err.Error(), "delete chunks by document") {
+		t.Fatalf("DeleteByDocument() error = %v, want wrapped", err)
+	}
+}
+
 type fakeDB struct {
 	querySQL  string
 	queryArgs []any
@@ -158,9 +238,18 @@ type fakeDB struct {
 	rowSQL  string
 	rowArgs []any
 	row     pgx.Row
+
+	execSQL  string
+	execArgs []any
+	execErr  error
+
+	tx pgx.Tx
 }
 
 func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+	if f.tx != nil {
+		return f.tx, nil
+	}
 	return nil, errors.New("BeginTx not implemented")
 }
 
@@ -175,6 +264,96 @@ func (f *fakeDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.rowArgs = args
 	return f.row
 }
+
+func (f *fakeDB) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	f.execSQL = sql
+	f.execArgs = args
+	return pgconn.CommandTag{}, f.execErr
+}
+
+// fakeTx records the order of operations issued inside a transaction so tests
+// can assert delete-then-insert atomicity.
+type fakeTx struct {
+	ops        []string
+	execSQL    string
+	execArgs   []any
+	execErr    error
+	batch      *pgx.Batch
+	committed  bool
+	rolledBack bool
+
+	querySQL  string
+	queryArgs []any
+	rows      pgx.Rows
+	queryErr  error
+}
+
+func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
+	return nil, errors.New("nested Begin not implemented")
+}
+
+func (t *fakeTx) Commit(context.Context) error {
+	t.ops = append(t.ops, "commit")
+	t.committed = true
+	return nil
+}
+
+func (t *fakeTx) Rollback(context.Context) error {
+	t.rolledBack = true
+	return nil
+}
+
+func (t *fakeTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("CopyFrom not implemented")
+}
+
+func (t *fakeTx) SendBatch(_ context.Context, b *pgx.Batch) pgx.BatchResults {
+	t.ops = append(t.ops, "sendbatch")
+	t.batch = b
+	return &fakeBatchResults{remaining: b.Len()}
+}
+
+func (t *fakeTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
+
+func (t *fakeTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("Prepare not implemented")
+}
+
+func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	t.ops = append(t.ops, "exec:"+sql)
+	t.execSQL = sql
+	t.execArgs = args
+	return pgconn.CommandTag{}, t.execErr
+}
+
+func (t *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	t.ops = append(t.ops, "query")
+	t.querySQL = sql
+	t.queryArgs = args
+	return t.rows, t.queryErr
+}
+
+func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
+
+func (t *fakeTx) Conn() *pgx.Conn { return nil }
+
+type fakeBatchResults struct {
+	remaining int
+	execErr   error
+}
+
+func (r *fakeBatchResults) Exec() (pgconn.CommandTag, error) {
+	r.remaining--
+	return pgconn.CommandTag{}, r.execErr
+}
+
+func (r *fakeBatchResults) Query() (pgx.Rows, error) {
+	return nil, errors.New("batch Query not implemented")
+}
+
+func (r *fakeBatchResults) QueryRow() pgx.Row { return nil }
+
+func (r *fakeBatchResults) Close() error { return nil }
 
 type fakeRows struct {
 	values [][]any

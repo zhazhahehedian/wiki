@@ -212,6 +212,12 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 		}
 	}
 
+	// 客户端断连后 LLM 流会关闭并正常退出循环,
+	// 必须在持久化前再查一次取消状态, 避免落半截 assistant 消息 (spec §5.4)。
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
 	assistantContent := strings.TrimSpace(answer.String())
 	if assistantContent == "" {
 		err := fmt.Errorf("llm stream completed without content")

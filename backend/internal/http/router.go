@@ -41,6 +41,9 @@ func NewRouter(h Handlers) http.Handler {
 
 		r.Get("/docs/{id}/chunks", h.Chunk.ListByDoc)
 
+		r.Post("/docs/{id}/reingest", h.Doc.Reingest)
+		r.Post("/kbs/{id}/reingest", h.Doc.ReingestKB)
+
 		r.Get("/kbs/{kbID}/conversations", h.Chat.ListConversations)
 		r.Post("/kbs/{kbID}/conversations", h.Chat.CreateConversation)
 		r.Get("/conversations/{conversationID}/messages", h.Chat.ListMessages)

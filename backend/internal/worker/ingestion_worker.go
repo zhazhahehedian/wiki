@@ -79,7 +79,7 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 	}
 	defer reader.Close()
 
-	parsed, err := w.parser.Parse(ctx, reader, doc.MimeType)
+	parsed, err := w.parser.Parse(ctx, reader, effectiveMimeType(doc.MimeType, doc.Title))
 	if err != nil {
 		return failed(fmt.Errorf("parse: %w", err))
 	}
@@ -90,28 +90,26 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 	if err := w.setStatus(ctx, docID, domain.StatusChunking); err != nil {
 		return failed(err)
 	}
-	splitChunks, err := w.splitter.Split(ctx, parsed.Text, ports.SplitOptions{
-		ChunkSize: w.chunkSize, Overlap: w.overlap,
-	})
+	pieces, err := buildChunkPieces(ctx, w.splitter, parsed, w.chunkSize, w.overlap)
 	if err != nil {
 		return failed(fmt.Errorf("split: %w", err))
 	}
-	if len(splitChunks) == 0 {
+	if len(pieces) == 0 {
 		return failed(fmt.Errorf("splitter produced 0 chunks"))
 	}
 
 	if err := w.setStatus(ctx, docID, domain.StatusEmbedding); err != nil {
 		return failed(err)
 	}
-	allEmbeddings := make([][]float32, 0, len(splitChunks))
-	for i := 0; i < len(splitChunks); i += w.batchSize {
+	allEmbeddings := make([][]float32, 0, len(pieces))
+	for i := 0; i < len(pieces); i += w.batchSize {
 		end := i + w.batchSize
-		if end > len(splitChunks) {
-			end = len(splitChunks)
+		if end > len(pieces) {
+			end = len(pieces)
 		}
 		texts := make([]string, 0, end-i)
-		for _, c := range splitChunks[i:end] {
-			texts = append(texts, c.Content)
+		for _, p := range pieces[i:end] {
+			texts = append(texts, p.Content)
 		}
 		embs, err := w.embedder.Embed(ctx, texts)
 		if err != nil {
@@ -119,26 +117,27 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 		}
 		allEmbeddings = append(allEmbeddings, embs...)
 	}
-	if len(allEmbeddings) != len(splitChunks) {
-		return failed(fmt.Errorf("embedding count mismatch: %d vs %d", len(allEmbeddings), len(splitChunks)))
+	if len(allEmbeddings) != len(pieces) {
+		return failed(fmt.Errorf("embedding count mismatch: %d vs %d", len(allEmbeddings), len(pieces)))
 	}
 
-	items := make([]domain.ChunkWithEmbedding, 0, len(splitChunks))
-	for i, c := range splitChunks {
+	items := make([]domain.ChunkWithEmbedding, 0, len(pieces))
+	for i, p := range pieces {
 		items = append(items, domain.ChunkWithEmbedding{
 			Chunk: domain.Chunk{
 				KBID:       doc.KbID.String(),
 				DocumentID: docID.String(),
-				Seq:        c.Seq,
-				Content:    c.Content,
-				TokenCount: c.TokenCount,
-				Metadata:   map[string]any{},
+				Seq:        i,
+				Content:    p.Content,
+				TokenCount: p.TokenCount,
+				Metadata:   p.Metadata,
 			},
 			Embedding: allEmbeddings[i],
 		})
 	}
-	if err := w.vstore.InsertChunks(ctx, items); err != nil {
-		return failed(fmt.Errorf("insert chunks: %w", err))
+	// 同一事务内先删旧 chunks 再插新 chunks, 保证重新摄入原子性。
+	if err := w.vstore.ReplaceChunks(ctx, docID.String(), items); err != nil {
+		return failed(fmt.Errorf("replace chunks: %w", err))
 	}
 
 	if err := w.setStatus(ctx, docID, domain.StatusReady); err != nil {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 
@@ -17,6 +18,7 @@ type pgxDB interface {
 	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 type Pgvector struct {
@@ -27,44 +29,56 @@ func New(pool *pgxpool.Pool) *Pgvector {
 	return &Pgvector{pool: pool}
 }
 
-func (v *Pgvector) InsertChunks(ctx context.Context, items []domain.ChunkWithEmbedding) error {
-	if len(items) == 0 {
-		return nil
-	}
-
+// ReplaceChunks 在单个事务内删除文档旧 chunks 并插入新 chunks,
+// 避免进程在"已删旧、未插新"之间中断时留下零 chunks 的文档。
+func (v *Pgvector) ReplaceChunks(ctx context.Context, documentID string, items []domain.ChunkWithEmbedding) error {
 	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	batch := &pgx.Batch{}
-	for _, it := range items {
-		metaJSON, err := json.Marshal(it.Metadata)
-		if err != nil {
-			return fmt.Errorf("marshal metadata: %w", err)
-		}
-		batch.Queue(
-			`INSERT INTO chunks (kb_id, document_id, seq, content, token_count, embedding, metadata)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			it.KBID, it.DocumentID, it.Seq, it.Content, it.TokenCount,
-			pgvector.NewVector(it.Embedding), metaJSON,
-		)
+	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
+		return fmt.Errorf("delete old chunks: %w", err)
 	}
 
-	br := tx.SendBatch(ctx, batch)
-	for i := 0; i < len(items); i++ {
-		if _, err := br.Exec(); err != nil {
-			br.Close()
-			return fmt.Errorf("insert chunk %d: %w", i, err)
+	if len(items) > 0 {
+		batch := &pgx.Batch{}
+		for _, it := range items {
+			metaJSON, err := json.Marshal(it.Metadata)
+			if err != nil {
+				return fmt.Errorf("marshal metadata: %w", err)
+			}
+			batch.Queue(
+				`INSERT INTO chunks (kb_id, document_id, seq, content, token_count, embedding, metadata)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				it.KBID, it.DocumentID, it.Seq, it.Content, it.TokenCount,
+				pgvector.NewVector(it.Embedding), metaJSON,
+			)
 		}
-	}
-	if err := br.Close(); err != nil {
-		return fmt.Errorf("close batch: %w", err)
+
+		br := tx.SendBatch(ctx, batch)
+		for i := 0; i < len(items); i++ {
+			if _, err := br.Exec(); err != nil {
+				br.Close()
+				return fmt.Errorf("insert chunk %d: %w", i, err)
+			}
+		}
+		if err := br.Close(); err != nil {
+			return fmt.Errorf("close batch: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// DeleteByDocument 删除文档的全部 chunks, 供重新摄入前清理旧数据。
+func (v *Pgvector) DeleteByDocument(ctx context.Context, documentID string) error {
+	if _, err := v.pool.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
+		return fmt.Errorf("delete chunks by document: %w", err)
 	}
 	return nil
 }
@@ -112,7 +126,20 @@ func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opt
 		topK = 8
 	}
 
-	rows, err := v.pool.Query(ctx,
+	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin search tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// idx_chunks_ivfflat 在建表迁移时创建, 彼时表为空, 质心退化; 加上数据量
+	// 远小于 lists=100, 默认 probes=1 会把召回压到 0(2026-07-08 评测实测)。
+	// 按 sqrt(lists) 经验值取 10; SET LOCAL 仅影响本事务。
+	if _, err := tx.Exec(ctx, `SET LOCAL ivfflat.probes = 10`); err != nil {
+		return nil, fmt.Errorf("set ivfflat probes: %w", err)
+	}
+
+	rows, err := tx.Query(ctx,
 		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
 		        1 - (c.embedding <=> $2) AS score, c.metadata
 		   FROM chunks c

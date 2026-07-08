@@ -34,9 +34,11 @@ type fakeVectorStore struct {
 	err   error
 }
 
-func (f *fakeVectorStore) InsertChunks(context.Context, []domain.ChunkWithEmbedding) error {
+func (f *fakeVectorStore) ReplaceChunks(context.Context, string, []domain.ChunkWithEmbedding) error {
 	return nil
 }
+
+func (f *fakeVectorStore) DeleteByDocument(context.Context, string) error { return nil }
 
 func (f *fakeVectorStore) Search(_ context.Context, kbID string, query []float32, opts ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
 	f.kbID = kbID

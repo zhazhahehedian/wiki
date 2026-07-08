@@ -21,7 +21,7 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 1 代码全部完成（后端 + 前端），本地 `go build/vet/test` + `pnpm typecheck/build` 全部通过。剩余：任务 17（docker 端到端 curl）+ 任务 22（验收），需在有 Docker 的服务器环境补做。下一步：部署到服务器跑端到端验收，通过后推进阶段 2（RAG 对话）。
+> **当前进度**：阶段 2.5 已完成（2026-07-08，检索质量修复与评测基线，spec：[2026-07-07-phase-2.5-retrieval-quality-design.md](docs/superpowers/specs/2026-07-07-phase-2.5-retrieval-quality-design.md)）。终态评测 docHit@1=1.00 / passageHit@5=1.00 / MRR=1.000（13 例），验收结果与两个计划外修复（.md 上传 MIME 推断、ivfflat probes 召回塌陷）见该 spec §10.1；评测 CLI：`backend/cmd/evalretrieval`，结果留档 `docs/eval/results/`。流式取消硬化已含单测 + HTTP 端到端验证。下一阶段：**阶段 3（ReAct Agent 模式）**。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 

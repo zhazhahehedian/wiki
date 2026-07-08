@@ -26,4 +26,7 @@ export const docApi = {
   async delete(id: string): Promise<void> {
     await apiFetch<void>(`/api/v1/docs/${id}`, { method: "DELETE" });
   },
+  async reingest(id: string): Promise<Doc> {
+    return apiFetch<Doc>(`/api/v1/docs/${id}/reingest`, { method: "POST" });
+  },
 };
