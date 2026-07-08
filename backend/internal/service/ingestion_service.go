@@ -112,6 +112,86 @@ func (s *Ingestion) Upload(ctx context.Context, in UploadInput) (*domain.Documen
 	return rowToDocFull(row), nil
 }
 
+type ErrDocProcessing struct{ ID string }
+
+func (e *ErrDocProcessing) Error() string { return "document is still being processed: " + e.ID }
+
+// Reingest 把已入库的文档重新走一遍摄入管线。
+// 仅允许 ready/failed 状态; worker 会在写入新 chunks 前删除旧 chunks。
+func (s *Ingestion) Reingest(ctx context.Context, docID string) (*domain.Document, error) {
+	id, err := uuid.Parse(docID)
+	if err != nil {
+		return nil, &ErrDocNotFound{ID: docID}
+	}
+	row, err := s.queries.GetDocument(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &ErrDocNotFound{ID: docID}
+		}
+		return nil, fmt.Errorf("get document: %w", err)
+	}
+	switch domain.DocStatus(row.Status) {
+	case domain.StatusReady, domain.StatusFailed:
+	default:
+		return nil, &ErrDocProcessing{ID: docID}
+	}
+
+	if err := s.queries.UpdateDocumentStatus(ctx, generated.UpdateDocumentStatusParams{
+		ID: id, Status: string(domain.StatusPending),
+	}); err != nil {
+		return nil, fmt.Errorf("reset document status: %w", err)
+	}
+	if err := s.enqueuer.EnqueueIngestion(ctx, docID); err != nil {
+		msg := err.Error()
+		_ = s.queries.UpdateDocumentStatus(ctx, generated.UpdateDocumentStatusParams{
+			ID: id, Status: string(domain.StatusFailed), ErrorMessage: &msg,
+		})
+		return nil, fmt.Errorf("enqueue: %w", err)
+	}
+
+	row.Status = string(domain.StatusPending)
+	row.ErrorMessage = nil
+	return rowToDocFull(row), nil
+}
+
+// ReingestKB 把 KB 下所有 ready/failed 文档逐个重新入队, 返回入队数量。
+func (s *Ingestion) ReingestKB(ctx context.Context, kbID string) (int, error) {
+	kbUUID, err := uuid.Parse(kbID)
+	if err != nil {
+		return 0, &ErrKBNotFound{ID: kbID}
+	}
+	if _, err := s.queries.GetKnowledgeBase(ctx, kbUUID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, &ErrKBNotFound{ID: kbID}
+		}
+		return 0, fmt.Errorf("get kb: %w", err)
+	}
+
+	enqueued := 0
+	const pageSize = int32(100)
+	for offset := int32(0); ; offset += pageSize {
+		rows, err := s.queries.ListDocumentsByKB(ctx, generated.ListDocumentsByKBParams{
+			KbID: kbUUID, Limit: pageSize, Offset: offset,
+		})
+		if err != nil {
+			return enqueued, fmt.Errorf("list documents: %w", err)
+		}
+		for _, row := range rows {
+			if _, err := s.Reingest(ctx, row.ID.String()); err != nil {
+				var busy *ErrDocProcessing
+				if errors.As(err, &busy) {
+					continue // 处理中的文档跳过, 不视为失败
+				}
+				return enqueued, err
+			}
+			enqueued++
+		}
+		if int32(len(rows)) < pageSize {
+			return enqueued, nil
+		}
+	}
+}
+
 func rowToDocFull(r generated.Document) *domain.Document {
 	doc := &domain.Document{
 		ID:         r.ID.String(),

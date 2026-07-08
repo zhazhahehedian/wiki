@@ -129,3 +129,38 @@ func (h *DocumentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *DocumentHandler) Reingest(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	doc, err := h.ingestionSvc.Reingest(r.Context(), id)
+	if err != nil {
+		var notFound *service.ErrDocNotFound
+		if errors.As(err, &notFound) {
+			WriteError(w, r, NewAPIError(http.StatusNotFound, CodeDocNotFound, err.Error()))
+			return
+		}
+		var busy *service.ErrDocProcessing
+		if errors.As(err, &busy) {
+			WriteError(w, r, NewAPIError(http.StatusConflict, CodeValidationFailed, err.Error()))
+			return
+		}
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, doc)
+}
+
+func (h *DocumentHandler) ReingestKB(w http.ResponseWriter, r *http.Request) {
+	kbID := chi.URLParam(r, "id")
+	n, err := h.ingestionSvc.ReingestKB(r.Context(), kbID)
+	if err != nil {
+		var kbNF *service.ErrKBNotFound
+		if errors.As(err, &kbNF) {
+			WriteError(w, r, NewAPIError(http.StatusNotFound, CodeKBNotFound, err.Error()))
+			return
+		}
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusAccepted, map[string]any{"enqueued": n})
+}
