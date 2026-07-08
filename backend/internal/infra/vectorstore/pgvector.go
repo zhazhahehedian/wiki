@@ -29,40 +29,44 @@ func New(pool *pgxpool.Pool) *Pgvector {
 	return &Pgvector{pool: pool}
 }
 
-func (v *Pgvector) InsertChunks(ctx context.Context, items []domain.ChunkWithEmbedding) error {
-	if len(items) == 0 {
-		return nil
-	}
-
+// ReplaceChunks 在单个事务内删除文档旧 chunks 并插入新 chunks,
+// 避免进程在"已删旧、未插新"之间中断时留下零 chunks 的文档。
+func (v *Pgvector) ReplaceChunks(ctx context.Context, documentID string, items []domain.ChunkWithEmbedding) error {
 	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	batch := &pgx.Batch{}
-	for _, it := range items {
-		metaJSON, err := json.Marshal(it.Metadata)
-		if err != nil {
-			return fmt.Errorf("marshal metadata: %w", err)
-		}
-		batch.Queue(
-			`INSERT INTO chunks (kb_id, document_id, seq, content, token_count, embedding, metadata)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			it.KBID, it.DocumentID, it.Seq, it.Content, it.TokenCount,
-			pgvector.NewVector(it.Embedding), metaJSON,
-		)
+	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
+		return fmt.Errorf("delete old chunks: %w", err)
 	}
 
-	br := tx.SendBatch(ctx, batch)
-	for i := 0; i < len(items); i++ {
-		if _, err := br.Exec(); err != nil {
-			br.Close()
-			return fmt.Errorf("insert chunk %d: %w", i, err)
+	if len(items) > 0 {
+		batch := &pgx.Batch{}
+		for _, it := range items {
+			metaJSON, err := json.Marshal(it.Metadata)
+			if err != nil {
+				return fmt.Errorf("marshal metadata: %w", err)
+			}
+			batch.Queue(
+				`INSERT INTO chunks (kb_id, document_id, seq, content, token_count, embedding, metadata)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+				it.KBID, it.DocumentID, it.Seq, it.Content, it.TokenCount,
+				pgvector.NewVector(it.Embedding), metaJSON,
+			)
 		}
-	}
-	if err := br.Close(); err != nil {
-		return fmt.Errorf("close batch: %w", err)
+
+		br := tx.SendBatch(ctx, batch)
+		for i := 0; i < len(items); i++ {
+			if _, err := br.Exec(); err != nil {
+				br.Close()
+				return fmt.Errorf("insert chunk %d: %w", i, err)
+			}
+		}
+		if err := br.Close(); err != nil {
+			return fmt.Errorf("close batch: %w", err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

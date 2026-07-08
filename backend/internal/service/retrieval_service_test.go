@@ -34,7 +34,7 @@ type fakeVectorStore struct {
 	err   error
 }
 
-func (f *fakeVectorStore) InsertChunks(context.Context, []domain.ChunkWithEmbedding) error {
+func (f *fakeVectorStore) ReplaceChunks(context.Context, string, []domain.ChunkWithEmbedding) error {
 	return nil
 }
 

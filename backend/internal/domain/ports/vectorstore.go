@@ -23,7 +23,8 @@ type VectorSearchHit struct {
 }
 
 type VectorStore interface {
-	InsertChunks(ctx context.Context, items []domain.ChunkWithEmbedding) error
+	// ReplaceChunks 原子替换文档的全部 chunks(同一事务内先删后插)。
+	ReplaceChunks(ctx context.Context, documentID string, items []domain.ChunkWithEmbedding) error
 	DeleteByDocument(ctx context.Context, documentID string) error
 	Search(ctx context.Context, kbID string, query []float32, opts VectorSearchOptions) ([]VectorSearchHit, error)
 }

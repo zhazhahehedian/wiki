@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
@@ -149,6 +150,56 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	}
 }
 
+func TestReplaceChunksDeletesThenInsertsInOneTx(t *testing.T) {
+	tx := &fakeTx{}
+	db := &fakeDB{tx: tx}
+	store := &Pgvector{pool: db}
+
+	items := []domain.ChunkWithEmbedding{{
+		Chunk: domain.Chunk{
+			KBID: "kb-1", DocumentID: "doc-1", Seq: 0,
+			Content: "rotate password", TokenCount: 2,
+		},
+		Embedding: []float32{0.1, 0.2},
+	}}
+	if err := store.ReplaceChunks(context.Background(), "doc-1", items); err != nil {
+		t.Fatalf("ReplaceChunks() error = %v", err)
+	}
+
+	if len(tx.ops) != 3 || !strings.HasPrefix(tx.ops[0], "exec:") || tx.ops[1] != "sendbatch" || tx.ops[2] != "commit" {
+		t.Fatalf("tx ops = %#v, want [exec:delete sendbatch commit]", tx.ops)
+	}
+	if !strings.Contains(tx.execSQL, "DELETE FROM chunks WHERE document_id = $1") {
+		t.Fatalf("tx exec SQL = %q, want chunks delete by document_id", tx.execSQL)
+	}
+	if len(tx.execArgs) != 1 || tx.execArgs[0] != "doc-1" {
+		t.Fatalf("tx exec args = %#v, want [doc-1]", tx.execArgs)
+	}
+	if tx.batch == nil || tx.batch.Len() != 1 {
+		t.Fatalf("batch = %#v, want 1 queued insert", tx.batch)
+	}
+	if !strings.Contains(tx.batch.QueuedQueries[0].SQL, "INSERT INTO chunks") {
+		t.Fatalf("batch SQL = %q, want chunks insert", tx.batch.QueuedQueries[0].SQL)
+	}
+}
+
+func TestReplaceChunksRollsBackWhenDeleteFails(t *testing.T) {
+	tx := &fakeTx{execErr: errors.New("boom")}
+	db := &fakeDB{tx: tx}
+	store := &Pgvector{pool: db}
+
+	err := store.ReplaceChunks(context.Background(), "doc-1", nil)
+	if err == nil || !strings.Contains(err.Error(), "delete old chunks") {
+		t.Fatalf("ReplaceChunks() error = %v, want wrapped delete error", err)
+	}
+	if tx.committed {
+		t.Fatal("tx committed despite delete failure")
+	}
+	if !tx.rolledBack {
+		t.Fatal("tx not rolled back after delete failure")
+	}
+}
+
 func TestDeleteByDocumentIssuesDelete(t *testing.T) {
 	db := &fakeDB{}
 	store := &Pgvector{pool: db}
@@ -187,9 +238,14 @@ type fakeDB struct {
 	execSQL  string
 	execArgs []any
 	execErr  error
+
+	tx pgx.Tx
 }
 
 func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+	if f.tx != nil {
+		return f.tx, nil
+	}
 	return nil, errors.New("BeginTx not implemented")
 }
 
@@ -210,6 +266,82 @@ func (f *fakeDB) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	f.execArgs = args
 	return pgconn.CommandTag{}, f.execErr
 }
+
+// fakeTx records the order of operations issued inside a transaction so tests
+// can assert delete-then-insert atomicity.
+type fakeTx struct {
+	ops        []string
+	execSQL    string
+	execArgs   []any
+	execErr    error
+	batch      *pgx.Batch
+	committed  bool
+	rolledBack bool
+}
+
+func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
+	return nil, errors.New("nested Begin not implemented")
+}
+
+func (t *fakeTx) Commit(context.Context) error {
+	t.ops = append(t.ops, "commit")
+	t.committed = true
+	return nil
+}
+
+func (t *fakeTx) Rollback(context.Context) error {
+	t.rolledBack = true
+	return nil
+}
+
+func (t *fakeTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("CopyFrom not implemented")
+}
+
+func (t *fakeTx) SendBatch(_ context.Context, b *pgx.Batch) pgx.BatchResults {
+	t.ops = append(t.ops, "sendbatch")
+	t.batch = b
+	return &fakeBatchResults{remaining: b.Len()}
+}
+
+func (t *fakeTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
+
+func (t *fakeTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("Prepare not implemented")
+}
+
+func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	t.ops = append(t.ops, "exec:"+sql)
+	t.execSQL = sql
+	t.execArgs = args
+	return pgconn.CommandTag{}, t.execErr
+}
+
+func (t *fakeTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, errors.New("Query not implemented")
+}
+
+func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
+
+func (t *fakeTx) Conn() *pgx.Conn { return nil }
+
+type fakeBatchResults struct {
+	remaining int
+	execErr   error
+}
+
+func (r *fakeBatchResults) Exec() (pgconn.CommandTag, error) {
+	r.remaining--
+	return pgconn.CommandTag{}, r.execErr
+}
+
+func (r *fakeBatchResults) Query() (pgx.Rows, error) {
+	return nil, errors.New("batch Query not implemented")
+}
+
+func (r *fakeBatchResults) QueryRow() pgx.Row { return nil }
+
+func (r *fakeBatchResults) Close() error { return nil }
 
 type fakeRows struct {
 	values [][]any
