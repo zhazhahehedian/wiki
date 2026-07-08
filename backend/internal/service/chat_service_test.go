@@ -178,6 +178,71 @@ func TestBuildRAGMessagesIncludesNoEvidenceContext(t *testing.T) {
 	}
 }
 
+// blockingLLM 先吐一个 token, 然后等 ctx 取消才关流,
+// 模拟真实 LLM 客户端在客户端断连时结束流的行为。
+type blockingLLM struct{}
+
+func (blockingLLM) Chat(context.Context, []ports.Message, ports.ChatOptions) (*ports.Message, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (blockingLLM) ChatStream(ctx context.Context, _ []ports.Message, _ ports.ChatOptions) (<-chan ports.StreamChunk, error) {
+	out := make(chan ports.StreamChunk, 1)
+	out <- ports.StreamChunk{Text: "部分回答"}
+	go func() {
+		<-ctx.Done()
+		close(out)
+	}()
+	return out, nil
+}
+
+// cancelOnTokenSink 在收到第一个 token 时取消 ctx, 模拟客户端中途断连。
+type cancelOnTokenSink struct {
+	recordingSink
+	cancel context.CancelFunc
+}
+
+func (s *cancelOnTokenSink) SendToken(ctx context.Context, text string) error {
+	s.cancel()
+	return s.recordingSink.SendToken(ctx, text)
+}
+
+func TestAskStreamClientCancelDoesNotPersistAssistant(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	convID := uuid.New()
+	queries := &fakeChatQueries{
+		events: &eventLog{},
+		conversation: generated.Conversation{
+			ID:   convID,
+			KbID: uuid.New(),
+			Mode: domain.ConversationModeRAG,
+		},
+	}
+	retrieval := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
+	svc := NewChat(queries, retrieval, blockingLLM{}, "test-model", 0)
+	sink := &cancelOnTokenSink{
+		recordingSink: recordingSink{events: queries.events},
+		cancel:        cancel,
+	}
+
+	err := svc.AskStream(ctx, convID.String(), "问题", sink)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("AskStream() error = %v, want context.Canceled", err)
+	}
+	for _, m := range queries.createdMessages {
+		if m.Role == domain.RoleAssistant {
+			t.Fatalf("assistant message persisted after cancel: %q", m.Content)
+		}
+	}
+	for _, e := range queries.events.items {
+		if e == "done" {
+			t.Fatal("done event sent after cancel")
+		}
+	}
+}
+
 type eventLog struct {
 	items []string
 }
