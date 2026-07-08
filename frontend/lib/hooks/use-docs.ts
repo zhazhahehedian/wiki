@@ -49,3 +49,11 @@ export function useDeleteDoc(kbId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["docs", kbId] }),
   });
 }
+
+export function useReingestDoc(kbId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => docApi.reingest(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["docs", kbId] }),
+  });
+}

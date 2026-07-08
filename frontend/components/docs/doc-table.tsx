@@ -1,18 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { IngestStatusBadge } from "./ingest-status-badge";
-import { useDeleteDoc } from "@/lib/hooks/use-docs";
+import { useDeleteDoc, useReingestDoc } from "@/lib/hooks/use-docs";
 import type { Doc } from "@/lib/schemas";
 import { toast } from "sonner";
 
 export function DocTable({ kbId, docs }: { kbId: string; docs: Doc[] }) {
   const del = useDeleteDoc(kbId);
+  const reingest = useReingestDoc(kbId);
 
   function fmt(bytes: number): string {
     if (bytes < 1024) return bytes + " B";
@@ -28,6 +29,13 @@ export function DocTable({ kbId, docs }: { kbId: string; docs: Doc[] }) {
     });
   }
 
+  function onReingest(d: Doc) {
+    reingest.mutate(d.id, {
+      onSuccess: () => toast.success("已重新入队处理"),
+      onError: (e) => toast.error("重新处理失败: " + (e as Error).message),
+    });
+  }
+
   return (
     <Table>
       <TableHeader>
@@ -36,7 +44,7 @@ export function DocTable({ kbId, docs }: { kbId: string; docs: Doc[] }) {
           <TableHead>状态</TableHead>
           <TableHead>大小</TableHead>
           <TableHead>上传时间</TableHead>
-          <TableHead className="w-12" />
+          <TableHead className="w-20" />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -56,6 +64,15 @@ export function DocTable({ kbId, docs }: { kbId: string; docs: Doc[] }) {
               {new Date(d.created_at).toLocaleString()}
             </TableCell>
             <TableCell>
+              <Button
+                size="sm"
+                variant="ghost"
+                title="重新处理"
+                onClick={() => onReingest(d)}
+                disabled={reingest.isPending || (d.status !== "ready" && d.status !== "failed")}
+              >
+                <RefreshCw className="size-4" />
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => onDelete(d)} disabled={del.isPending}>
                 <Trash2 className="size-4" />
               </Button>
