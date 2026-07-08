@@ -29,6 +29,8 @@ backend/vendor/
 backend/coverage.out
 backend/coverage.html
 backend/*.test
+# tiktoken 编码缓存(缓存路径未展开时会在 backend/ 下生成乱名目录)
+backend/*tiktoken*/
 
 # ─── sqlc generated code is checked in by convention
 # (don't add it to .gitignore — we want it versioned)
