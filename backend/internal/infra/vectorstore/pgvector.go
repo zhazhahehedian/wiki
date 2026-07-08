@@ -126,7 +126,20 @@ func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opt
 		topK = 8
 	}
 
-	rows, err := v.pool.Query(ctx,
+	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin search tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// idx_chunks_ivfflat 在建表迁移时创建, 彼时表为空, 质心退化; 加上数据量
+	// 远小于 lists=100, 默认 probes=1 会把召回压到 0(2026-07-08 评测实测)。
+	// 按 sqrt(lists) 经验值取 10; SET LOCAL 仅影响本事务。
+	if _, err := tx.Exec(ctx, `SET LOCAL ivfflat.probes = 10`); err != nil {
+		return nil, fmt.Errorf("set ivfflat probes: %w", err)
+	}
+
+	rows, err := tx.Query(ctx,
 		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
 		        1 - (c.embedding <=> $2) AS score, c.metadata
 		   FROM chunks c

@@ -16,7 +16,7 @@ import (
 )
 
 func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
-	db := &fakeDB{
+	tx := &fakeTx{
 		rows: &fakeRows{values: [][]any{{
 			"chunk-1",
 			"kb-1",
@@ -28,6 +28,7 @@ func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
 			[]byte(`{"path":"ops.md"}`),
 		}}},
 	}
+	db := &fakeDB{tx: tx}
 	store := &Pgvector{pool: db}
 
 	hits, err := store.Search(context.Background(), "kb-1", []float32{0.1, 0.2}, ports.VectorSearchOptions{})
@@ -51,26 +52,29 @@ func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
 	if hit.Metadata["path"] != "ops.md" {
 		t.Fatalf("Metadata[path] = %v, want ops.md", hit.Metadata["path"])
 	}
-	if !strings.Contains(db.querySQL, "JOIN documents d ON d.id = c.document_id") {
-		t.Fatalf("Search SQL missing documents join: %s", db.querySQL)
+	if !strings.Contains(tx.execSQL, "SET LOCAL ivfflat.probes") {
+		t.Fatalf("Search must raise ivfflat.probes in the same tx, got exec: %q", tx.execSQL)
 	}
-	if !strings.Contains(db.querySQL, "d.status = 'ready'") {
-		t.Fatalf("Search SQL missing ready filter: %s", db.querySQL)
+	if !strings.Contains(tx.querySQL, "JOIN documents d ON d.id = c.document_id") {
+		t.Fatalf("Search SQL missing documents join: %s", tx.querySQL)
 	}
-	if !strings.Contains(db.querySQL, "ORDER BY c.embedding <=> $2") {
-		t.Fatalf("Search SQL missing distance ordering: %s", db.querySQL)
+	if !strings.Contains(tx.querySQL, "d.status = 'ready'") {
+		t.Fatalf("Search SQL missing ready filter: %s", tx.querySQL)
 	}
-	if got := db.queryArgs[0]; got != "kb-1" {
+	if !strings.Contains(tx.querySQL, "ORDER BY c.embedding <=> $2") {
+		t.Fatalf("Search SQL missing distance ordering: %s", tx.querySQL)
+	}
+	if got := tx.queryArgs[0]; got != "kb-1" {
 		t.Fatalf("Search kb arg = %v, want kb-1", got)
 	}
-	if got := db.queryArgs[2]; got != 8 {
+	if got := tx.queryArgs[2]; got != 8 {
 		t.Fatalf("Search topK arg = %v, want 8", got)
 	}
 }
 
 func TestSearchReturnsIterationErrors(t *testing.T) {
 	db := &fakeDB{
-		rows: &fakeRows{err: errors.New("cursor failed")},
+		tx: &fakeTx{rows: &fakeRows{err: errors.New("cursor failed")}},
 	}
 	store := &Pgvector{pool: db}
 
@@ -277,6 +281,11 @@ type fakeTx struct {
 	batch      *pgx.Batch
 	committed  bool
 	rolledBack bool
+
+	querySQL  string
+	queryArgs []any
+	rows      pgx.Rows
+	queryErr  error
 }
 
 func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
@@ -317,8 +326,11 @@ func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	return pgconn.CommandTag{}, t.execErr
 }
 
-func (t *fakeTx) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	return nil, errors.New("Query not implemented")
+func (t *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	t.ops = append(t.ops, "query")
+	t.querySQL = sql
+	t.queryArgs = args
+	return t.rows, t.queryErr
 }
 
 func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
