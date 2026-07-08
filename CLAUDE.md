@@ -21,7 +21,7 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 2 已完成（RAG 对话最小闭环就绪），但实际使用发现检索精度不足，已立项**阶段 2.5：检索质量修复与评测基线**（spec：[2026-07-07-phase-2.5-retrieval-quality-design.md](docs/superpowers/specs/2026-07-07-phase-2.5-retrieval-quality-design.md)）。已实锤并修复 splitter 分隔符丢失 bug（2026-07-07）；Markdown parser 丢代码块 bug 待阶段 2.5 修复。原记录的"流式取消硬化验证"欠账已折入阶段 2.5。阶段 2.5 完成且评测达标后进入阶段 3（ReAct Agent 模式）。
+> **当前进度**：阶段 2.5 已完成（2026-07-08，检索质量修复与评测基线，spec：[2026-07-07-phase-2.5-retrieval-quality-design.md](docs/superpowers/specs/2026-07-07-phase-2.5-retrieval-quality-design.md)）。终态评测 docHit@1=1.00 / passageHit@5=1.00 / MRR=1.000（13 例），验收结果与两个计划外修复（.md 上传 MIME 推断、ivfflat probes 召回塌陷）见该 spec §10.1；评测 CLI：`backend/cmd/evalretrieval`，结果留档 `docs/eval/results/`。流式取消硬化已含单测 + HTTP 端到端验证。下一阶段：**阶段 3（ReAct Agent 模式）**。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 
