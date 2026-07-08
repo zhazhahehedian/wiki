@@ -79,7 +79,7 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 	}
 	defer reader.Close()
 
-	parsed, err := w.parser.Parse(ctx, reader, doc.MimeType)
+	parsed, err := w.parser.Parse(ctx, reader, effectiveMimeType(doc.MimeType, doc.Title))
 	if err != nil {
 		return failed(fmt.Errorf("parse: %w", err))
 	}
