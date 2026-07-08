@@ -67,8 +67,8 @@ func Load() (*Config, error) {
 	}
 
 	cfg.TokenizerEncoding = getEnv("TOKENIZER_ENCODING", "cl100k_base")
-	cfg.ChunkSize, _ = strconv.Atoi(getEnv("CHUNK_SIZE", "800"))
-	cfg.ChunkOverlap, _ = strconv.Atoi(getEnv("CHUNK_OVERLAP", "120"))
+	cfg.ChunkSize, _ = strconv.Atoi(getEnv("CHUNK_SIZE", "400"))
+	cfg.ChunkOverlap, _ = strconv.Atoi(getEnv("CHUNK_OVERLAP", "60"))
 	cfg.EmbedBatchSize, _ = strconv.Atoi(getEnv("EMBED_BATCH_SIZE", "64"))
 	maxMB, _ := strconv.ParseInt(getEnv("UPLOAD_MAX_MB", "50"), 10, 64)
 	cfg.UploadMaxBytes = maxMB * 1024 * 1024

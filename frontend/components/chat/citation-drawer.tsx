@@ -24,7 +24,7 @@ export function CitationDrawer({
 }) {
   const query = useQuery({
     queryKey: ["chunk-neighbors", kbId, citation?.chunk_id],
-    queryFn: () => chatApi.getNeighbors(kbId, citation!.chunk_id, 2),
+    queryFn: () => chatApi.getNeighbors(kbId, citation!.chunk_id, 1),
     enabled: !!citation,
   });
 
