@@ -169,6 +169,20 @@
   scrollbar-width: none;
 }
 
+/* highlight.js 配色（适配 CodeBlock 深色底 #1e1e1e / #0d0d0d，明暗模式一致）
+   刻意不引入完整 highlight.js 主题样式表：其 .hljs 基础规则会设置 background/padding，与 CodeBlock 冲突 */
+.hljs-comment, .hljs-quote { color: #7f848e; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-type { color: #c678dd; }
+.hljs-string, .hljs-regexp, .hljs-addition { color: #98c379; }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: #d19a66; }
+.hljs-title, .hljs-section, .hljs-name, .hljs-function { color: #61afef; }
+.hljs-attr, .hljs-attribute, .hljs-variable, .hljs-template-variable { color: #e06c75; }
+.hljs-built_in, .hljs-builtin-name, .hljs-class { color: #e5c07b; }
+.hljs-meta, .hljs-link { color: #56b6c2; }
+.hljs-deletion { color: #e06c75; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 0.01ms !important;

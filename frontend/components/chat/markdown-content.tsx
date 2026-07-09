@@ -1,6 +1,6 @@
 "use client";
 
-import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, memo, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -31,7 +31,8 @@ function Pre({ children }: { children?: ReactNode }) {
   );
 }
 
-export function MarkdownContent({ content }: { content: string }) {
+// memo：props 仅一个字符串，流式渲染时避免已完成的兄弟消息随每个 token 重新解析 markdown
+export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
   return (
     <div className="prose prose-sm max-w-none dark:prose-invert prose-pre:m-0 prose-pre:bg-transparent prose-pre:p-0">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={{ pre: Pre }}>
@@ -39,4 +40,4 @@ export function MarkdownContent({ content }: { content: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
