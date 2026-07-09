@@ -12,11 +12,25 @@ interface CodeBlockProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export function CodeBlock({ code, language, className, children, ...props }: CodeBlockProps) {
   const [hasCopied, setHasCopied] = React.useState(false);
+  const resetTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const onCopy = () => {
-    navigator.clipboard.writeText(code);
+  React.useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    };
+  }, []);
+
+  const onCopy = async () => {
+    // 非 https / 非 localhost 环境下 navigator.clipboard 不存在，静默跳过
+    if (!navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      return;
+    }
     setHasCopied(true);
-    setTimeout(() => setHasCopied(false), 2000);
+    if (resetTimerRef.current) clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = setTimeout(() => setHasCopied(false), 2000);
   };
 
   return (
@@ -38,7 +52,7 @@ export function CodeBlock({ code, language, className, children, ...props }: Cod
         </div>
         <button
           type="button"
-          aria-label="复制代码"
+          aria-label={hasCopied ? "已复制" : "复制代码"}
           onClick={onCopy}
           className="text-white/40 transition-colors hover:text-white"
         >

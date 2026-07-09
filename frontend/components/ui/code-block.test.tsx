@@ -19,5 +19,7 @@ describe("CodeBlock", () => {
     render(<CodeBlock code="goose up" language="bash" />);
     await user.click(screen.getByRole("button", { name: "复制代码" }));
     expect(writeText).toHaveBeenCalledWith("goose up");
+    // 复制成功后按钮切换为“已复制”状态（a11y 反馈）
+    expect(screen.getByRole("button", { name: "已复制" })).toBeInTheDocument();
   });
 });
