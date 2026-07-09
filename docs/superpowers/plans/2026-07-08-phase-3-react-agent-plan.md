@@ -59,7 +59,7 @@
 
 纯类型定义，无行为逻辑，以编译代替测试（行为由 Task 2/4 的测试覆盖）。
 
-- [ ] **Step 1: 扩展 llm.go**
+- [x] **Step 1: 扩展 llm.go**
 
 将 `backend/internal/domain/ports/llm.go` 中的 `Message`、`ChatOptions`、`StreamChunk` 替换为以下内容，并新增 `ToolDefinition`/`ToolCall`（文件其余部分不动，需要新增 import `encoding/json`）：
 
@@ -99,7 +99,7 @@ type StreamChunk struct {
 }
 ```
 
-- [ ] **Step 2: 新建 tool.go**
+- [x] **Step 2: 新建 tool.go**
 
 创建 `backend/internal/domain/ports/tool.go`：
 
@@ -121,12 +121,12 @@ type Tool interface {
 }
 ```
 
-- [ ] **Step 3: 编译验证**
+- [x] **Step 3: 编译验证**
 
 Run: `cd backend && go build ./...`
 Expected: 编译通过（现有代码只读 Message.Role/Content，新增字段向后兼容）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/domain/ports/llm.go internal/domain/ports/tool.go
@@ -143,7 +143,7 @@ git commit -m "feat(ports): add tool calling types to LLM port and Tool interfac
 
 两部分：① 请求侧把 `ports.Message`/`ports.ToolDefinition` 转成 OpenAI wire 格式（tool_calls 是嵌套 `function` 对象，不能直接 marshal ports 类型）；② 流式响应侧把 tool_call 增量 delta（按 index 分片的 id/name/arguments）聚合成完整 `ports.ToolCall`，在 finish_reason 到达时随 chunk 一次性发出。
 
-- [ ] **Step 1: 写失败测试——流式 delta 聚合**
+- [x] **Step 1: 写失败测试——流式 delta 聚合**
 
 在 `openai_compat_test.go` 追加（沿用文件现有的 httptest 风格；`sseHandler` 若已有同名 helper 则复用）：
 
@@ -231,12 +231,12 @@ func TestChatStreamSendsToolsAndToolMessagesOnWire(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/infra/llm/ -run 'TestChatStreamAggregates|TestChatStreamSendsTools' -v`
 Expected: FAIL（ToolCalls 恒空、请求体无 tools 字段）
 
-- [ ] **Step 3: 实现 wire 转换与聚合**
+- [x] **Step 3: 实现 wire 转换与聚合**
 
 修改 `openai_compat.go`。① 替换 `chatRequest` 并新增 wire 类型与转换函数：
 
@@ -476,12 +476,12 @@ func (a *toolCallAggregator) flush() []ports.ToolCall {
 	return out, nil
 ```
 
-- [ ] **Step 4: 跑测试确认通过（含既有用例不回归）**
+- [x] **Step 4: 跑测试确认通过（含既有用例不回归）**
 
 Run: `cd backend && go test ./internal/infra/llm/ -v`
 Expected: 全部 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/infra/llm/openai_compat.go internal/infra/llm/openai_compat_test.go
@@ -500,7 +500,7 @@ git commit -m "feat(llm): support OpenAI tool calling with streaming delta aggre
 
 无 schema 迁移（`conversations.mode` 列阶段 2 已建）。纯类型 + query，以编译和既有测试验证。
 
-- [ ] **Step 1: 扩展 domain/chat.go**
+- [x] **Step 1: 扩展 domain/chat.go**
 
 常量块改为：
 
@@ -554,11 +554,11 @@ type ToolResultEvent struct {
 	ToolCalls  []ToolCallStep `json:"tool_calls"`
 ```
 
-- [ ] **Step 2: 修 chat_service.go 编译错**
+- [x] **Step 2: 修 chat_service.go 编译错**
 
 `rowToChatMessage` 中 `ToolCalls: []any{}` 改为 `ToolCalls: []domain.ToolCallStep{}`（`json.Unmarshal(r.ToolCalls, &msg.ToolCalls)` 行不变，历史数据 `[]` 解出空 slice）。
 
-- [ ] **Step 3: 加 UpdateConversationMode query**
+- [x] **Step 3: 加 UpdateConversationMode query**
 
 `backend/internal/repo/queries/conversations.sql` 末尾追加：
 
@@ -570,12 +570,12 @@ WHERE id = $1
 RETURNING *;
 ```
 
-- [ ] **Step 4: sqlc generate + 编译 + 既有测试**
+- [x] **Step 4: sqlc generate + 编译 + 既有测试**
 
 Run: `cd backend && sqlc generate && go build ./... && go test ./internal/service/`
 Expected: generated 代码出现 `UpdateConversationMode`；编译与既有测试全通过
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/domain/chat.go internal/service/chat_service.go internal/repo/queries/conversations.sql internal/repo/generated/
@@ -593,7 +593,7 @@ git commit -m "feat(domain): add react mode, tool call step types and UpdateConv
 
 循环持有 llm/model/maxIterations；tools 与 sink 由每次 `Run` 传入（工具按会话构造、kbID 闭包注入，见 Task 7）。`EventSink` 是 `service.ChatStreamSink` 的结构化子集——service 的 sink 自动满足它，无需适配器，也不产生 agent→service 依赖。
 
-- [ ] **Step 1: 写 prompt.go**
+- [x] **Step 1: 写 prompt.go**
 
 ```go
 package agent
@@ -622,7 +622,7 @@ func BuildReActMessages(history []*domain.ChatMessage, question string) []ports.
 }
 ```
 
-- [ ] **Step 2: 写失败测试**
+- [x] **Step 2: 写失败测试**
 
 创建 `react_agent_test.go`（fake 全在本文件，不依赖 service 包）：
 
@@ -842,12 +842,12 @@ func TestRunCancelDuringStreamReturnsCanceled(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/agent/ -v`
 Expected: 编译失败（react_agent.go 尚不存在，`New`/`Run` 未定义）
 
-- [ ] **Step 4: 实现 react_agent.go**
+- [x] **Step 4: 实现 react_agent.go**
 
 ```go
 package agent
@@ -1044,12 +1044,12 @@ func truncateRunes(s string, maxRunes int) string {
 }
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+- [x] **Step 5: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/agent/ -v`
 Expected: 5 个用例全 PASS
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/agent/
@@ -1066,7 +1066,7 @@ git commit -m "feat(agent): add hand-rolled ReAct loop with tool trace and cance
 
 包装 `service.Retrieval`。kbID 构造时闭包注入（不让 LLM 传）；每次成功检索后调 `onRetrieval` 回调（Task 7 中 chat_service 用它做 citation 去重收集 + 推 retrieval SSE 事件）。**依赖方向**：tools → service（允许；service 不 import tools，工厂在 main.go 组装，无循环）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `kb_retrieval_test.go`：
 
@@ -1163,12 +1163,12 @@ func TestKBRetrievalInvokeNoHitsReturnsExplicitText(t *testing.T) {
 
 注意：`ports.VectorSearchHit`/`ports.VectorItem`/`ports.VectorSearchOptions` 的字段以 `internal/domain/ports/vectorstore.go` 现有定义为准（`KBID/ChunkID/DocumentID/DocumentTitle/Seq/Score/Content` 已在 citation_assembler 中使用过，签名如不符以现文件为准微调 fake）。
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/agent/tools/ -v`
 Expected: 编译失败（`NewKBRetrieval` 未定义）
 
-- [ ] **Step 3: 实现 kb_retrieval.go**
+- [x] **Step 3: 实现 kb_retrieval.go**
 
 ```go
 package tools
@@ -1247,12 +1247,12 @@ func (t *KBRetrieval) Invoke(ctx context.Context, argsJSON string) (string, erro
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/agent/tools/ -v`
 Expected: 3 个用例全 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/tools/
@@ -1269,7 +1269,7 @@ git commit -m "feat(agent): add kb_retrieval tool wrapping retrieval service"
 
 包装 `service.Document.ListByKB`（签名：`ListByKB(ctx, kbID string, statusFilter *string, limit, offset int) ([]*domain.Document, int, error)`）。用本包定义的窄接口解耦，测试无需真 DB。上限 50 条，超出在结果中注明总数（spec §5.2）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `list_documents_test.go`：
 
@@ -1361,12 +1361,12 @@ func TestListDocumentsNotesTruncationWhenTotalExceedsLimit(t *testing.T) {
 
 （`fakeDocLister` 用了 `time.Now()`——这是 Go 测试代码，允许。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/agent/tools/ -run TestListDocuments -v`
 Expected: 编译失败（`NewListDocuments` 未定义）
 
-- [ ] **Step 3: 实现 list_documents.go**
+- [x] **Step 3: 实现 list_documents.go**
 
 ```go
 package tools
@@ -1473,12 +1473,12 @@ func humanBytes(n int64) string {
 }
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/agent/tools/ -v`
 Expected: kb_retrieval + list_documents 用例全 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/agent/tools/
@@ -1497,7 +1497,7 @@ git commit -m "feat(agent): add list_documents tool for KB meta questions"
 
 service 层收口：`ChatStreamSink` 扩展两个 tool 事件方法（从而自动满足 `agent.EventSink`）；`AskStream` 按 mode 分发；react 路径在新文件 `chat_react.go`（citation 去重收集 + 委托 agent.Run + 持久化）；工具经 `AgentToolFactory` 注入（main.go 组装，service 不 import agent/tools，避免循环依赖）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `chat_service_test.go` 追加（既有 fakes 的适配放 Step 2）：
 
@@ -1656,7 +1656,7 @@ func TestUpdateModeValidatesEnum(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: 适配既有 fakes**
+- [x] **Step 2: 适配既有 fakes**
 
 同文件：
 
@@ -1686,12 +1686,12 @@ func (s *recordingSink) SendToolResult(_ context.Context, ev domain.ToolResultEv
 3. 既有 `NewChat(queries, retrieval, llm, "...", n)` 调用点全部追加 `, nil, nil`（RAG 用例不需要 agent）；`CreateConversation(ctx, kbID)` 调用点追加 `, ""`。
 4. 测试文件 import 增加 `"github.com/zenith-wang/it-wiki/backend/internal/agent"`。
 
-- [ ] **Step 3: 跑测试确认失败**
+- [x] **Step 3: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/service/ -v`
 Expected: 编译失败（NewChat 签名、UpdateMode、ErrInvalidMode、RetrievalCallback 均未定义）
 
-- [ ] **Step 4: 改 chat_service.go**
+- [x] **Step 4: 改 chat_service.go**
 
 1. `ChatStreamSink` 接口增加（`SendToken` 之后）：
 
@@ -1853,7 +1853,7 @@ func (s *Chat) createMessage(ctx context.Context, convID uuid.UUID, role, conten
 
 `CreateMessageParams` 的 `ToolCalls: []byte("[]")` 改为 `ToolCalls: toolCallsJSON`。
 
-- [ ] **Step 5: 新建 chat_react.go**
+- [x] **Step 5: 新建 chat_react.go**
 
 ```go
 package service
@@ -1923,7 +1923,7 @@ func (s *Chat) askReAct(ctx context.Context, conv generated.Conversation, conten
 }
 ```
 
-- [ ] **Step 6: main.go 接线**
+- [x] **Step 6: main.go 接线**
 
 `cmd/server/main.go` import 增加：
 
@@ -1946,7 +1946,7 @@ func (s *Chat) askReAct(ctx context.Context, conv generated.Conversation, conten
 	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, reactAgent, agentToolFactory)
 ```
 
-- [ ] **Step 7: 补 httpChatSink 两个方法（保持全仓可编译）**
+- [x] **Step 7: 补 httpChatSink 两个方法（保持全仓可编译）**
 
 `ChatStreamSink` 接口扩展会让 `internal/http` 编译失败。在 `backend/internal/http/chat_handler.go` 的 `httpChatSink` 追加（SSE 事件名即 spec §6.1 的两个新事件）：
 
@@ -1966,12 +1966,12 @@ func (s *httpChatSink) SendToolResult(_ context.Context, ev domain.ToolResultEve
 
 同文件 `CreateConversation` handler 因 service 签名变更需同步：`h.svc.CreateConversation(r.Context(), kbID)` 临时改为 `h.svc.CreateConversation(r.Context(), kbID, "")`（Task 8 再升级为解析可选 body）。
 
-- [ ] **Step 8: 跑测试确认通过**
+- [x] **Step 8: 跑测试确认通过**
 
 Run: `cd backend && go build ./... && go test ./internal/service/ -v`
 Expected: 全仓编译通过，新旧用例全 PASS
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add internal/service/ internal/http/chat_handler.go cmd/server/main.go
@@ -1989,7 +1989,7 @@ git commit -m "feat(chat): dispatch by conversation mode with ReAct path and too
 
 PATCH `/api/v1/conversations/{conversationID}`（仅 mode 字段）；POST 创建会话支持可选 body `{mode}`（现前端不传 body，须容忍空 body）。端到端测试用 httptest 起真 router，fakes 全部实现 service 导出接口（`service.ChatQueries`、`ports.LLMClient` 等都是导出的，http 包测试可直接实现）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 创建 `chat_react_e2e_test.go`（package `http`；fakes 与 service 包测试同构但跨包不可复用，此处独立完整实现）：
 
@@ -2328,12 +2328,12 @@ func (f *tokenThenBlockLLM) wait() {
 
 （`fakeE2EQueries`/`scriptedChatLLM`/`callbackTool` 的完整实现见本 Step 开头的第一个代码块。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd backend && go test ./internal/http/ -v`
 Expected: 编译失败（`UpdateConversation` handler、PATCH 路由、createConversationRequest 未实现；`NewRouter(Handlers{Chat: ...})` 若 Handlers 其他字段为 nil 导致 panic，则在 router 注册处允许 nil handler 或测试里补零值 handler——以现 router.go 实现为准，必要时给 Handlers 补齐空实现）
 
-- [ ] **Step 3: 实现 handler + 路由**
+- [x] **Step 3: 实现 handler + 路由**
 
 `chat_handler.go`：
 
@@ -2400,12 +2400,12 @@ func (h *ChatHandler) UpdateConversation(w http.ResponseWriter, r *http.Request)
 		r.Patch("/conversations/{conversationID}", h.Chat.UpdateConversation)
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+- [x] **Step 4: 跑测试确认通过**
 
 Run: `cd backend && go test ./internal/http/ -v && go test ./...`
 Expected: http 新用例 + 全仓测试 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/http/
@@ -2422,7 +2422,7 @@ git commit -m "feat(api): add PATCH conversation mode and react SSE end-to-end c
 
 纯类型/客户端方法，以 `pnpm typecheck` 验证。
 
-- [ ] **Step 1: schemas 扩展**
+- [x] **Step 1: schemas 扩展**
 
 `lib/schemas/index.ts`：
 
@@ -2454,7 +2454,7 @@ export type ToolCallStep = z.infer<typeof toolCallStepSchema>;
   tool_calls: z.array(toolCallStepSchema).default([]),
 ```
 
-- [ ] **Step 2: chat.ts 扩展**
+- [x] **Step 2: chat.ts 扩展**
 
 1. `ChatStreamEvent` 联合类型追加两个成员（spec §6.1）：
 
@@ -2479,12 +2479,12 @@ export type ToolCallStep = z.infer<typeof toolCallStepSchema>;
 
 （`apiFetch` 对非 FormData body 自动加 `Content-Type: application/json`，无需手动传 headers。）
 
-- [ ] **Step 3: 类型检查**
+- [x] **Step 3: 类型检查**
 
 Run: `cd frontend && pnpm typecheck`
 Expected: PASS（`use-chat-stream.ts` 若因 `tool_calls` 类型收紧报错，属预期，Task 10 消除；若报错则本步只要求错误仅来自该文件）
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add lib/schemas/index.ts lib/api/chat.ts
@@ -2501,7 +2501,7 @@ git commit -m "feat(frontend): add react mode schema and tool call stream events
 
 核心行为（spec §4.2/§8）：`tool_call` 事件把 draft 已积累的 content 挪为该 step 的 thought 并清空气泡（thought 是流式转发过的思考文本）；`tool_result` 按 id 落定对应 step；`retrieval` 在 Agent 模式下会多次到达，沿用整体替换（零改动）。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `use-chat-stream.test.ts` 追加（沿用文件现有 `baseState`/`applyStreamEvent` 风格）：
 
@@ -2586,12 +2586,12 @@ describe("applyStreamEvent tool events", () => {
 
 （import 增加 `type LocalToolStep`。）
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `cd frontend && pnpm test`
 Expected: 新用例 FAIL（tool_call/tool_result 事件落进 applyStreamEvent 兜底分支被忽略）
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 `use-chat-stream.ts`：
 
@@ -2675,12 +2675,12 @@ function safeParseJson(raw: string): unknown {
 
 4. 若 `localMessage` 或初始化处对 `tool_calls: []` 的类型有报错，按 `LocalToolStep[]` 空数组处理（字面量 `[]` 即可）。
 
-- [ ] **Step 4: 跑测试 + 类型检查确认通过**
+- [x] **Step 4: 跑测试 + 类型检查确认通过**
 
 Run: `cd frontend && pnpm test && pnpm typecheck`
 Expected: 全 PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add lib/hooks/use-chat-stream.ts lib/hooks/use-chat-stream.test.ts
@@ -2697,7 +2697,7 @@ git commit -m "feat(frontend): handle tool_call/tool_result stream events with t
 
 分段控件（两个按钮，沿用现有 border/bg-muted 风格，不引新 shadcn 组件）；PATCH mutation 成功后 invalidate `["conversations", kbId]`（页面的 conversation 即来自该 query）；流式期间禁用；失败走 sonner toast（spec §6.2 错误显式）。
 
-- [ ] **Step 1: 改 chat-header.tsx**
+- [x] **Step 1: 改 chat-header.tsx**
 
 整文件替换为：
 
@@ -2788,7 +2788,7 @@ export function ChatHeader({
 }
 ```
 
-- [ ] **Step 2: 页面传 disabled**
+- [x] **Step 2: 页面传 disabled**
 
 `app/kbs/[kbId]/chats/[conversationId]/page.tsx` 中：
 
@@ -2796,12 +2796,12 @@ export function ChatHeader({
           <ChatHeader kbId={kbId} conversation={conversation} disabled={chat.isStreaming} />
 ```
 
-- [ ] **Step 3: 验证**
+- [x] **Step 3: 验证**
 
 Run: `cd frontend && pnpm typecheck && pnpm lint`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add components/chat/chat-header.tsx "app/kbs/[kbId]/chats/[conversationId]/page.tsx"
@@ -2818,7 +2818,7 @@ git commit -m "feat(frontend): add RAG/Agent mode switch in chat header"
 
 轨迹用原生 `<details>/<summary>` 做折叠（零新依赖，样式贴现有风格；阶段 3.5 统一刷视觉）。折叠态：图标 + 工具名 + 参数摘要 + 耗时/spinner/错误标记；展开：thought、arguments、result。历史消息 `tool_calls` 非空即渲染，刷新后可回看（spec D3）。
 
-- [ ] **Step 1: 新建 tool-call-trace.tsx**
+- [x] **Step 1: 新建 tool-call-trace.tsx**
 
 ```tsx
 "use client";
@@ -2886,7 +2886,7 @@ export function ToolCallTrace({ steps }: { steps: LocalToolStep[] }) {
 }
 ```
 
-- [ ] **Step 2: message-bubble 接入**
+- [x] **Step 2: message-bubble 接入**
 
 `message-bubble.tsx` 的 assistant 分支，在 Markdown 容器 `<div className="leading-relaxed ...">` 之前插入：
 
@@ -2898,12 +2898,12 @@ export function ToolCallTrace({ steps }: { steps: LocalToolStep[] }) {
 
 注意 pending 占位：Agent 模式下 content 被挪进 thought 后气泡可能为空，`message.pending ? "Thinking..." : ""` 的现有兜底保持不变即可。
 
-- [ ] **Step 3: 验证**
+- [x] **Step 3: 验证**
 
 Run: `cd frontend && pnpm typecheck && pnpm lint && pnpm test`
 Expected: 全 PASS
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add components/chat/tool-call-trace.tsx components/chat/message-bubble.tsx
@@ -2919,7 +2919,7 @@ git commit -m "feat(frontend): render collapsible tool call trace in messages"
 - Modify: `docs/superpowers/specs/2026-07-08-phase-3-react-agent-design.md`
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: 主 spec 三处标注**
+- [x] **Step 1: 主 spec 三处标注**
 
 `2026-05-19-it-wiki-agent-design.md`：
 
@@ -2927,11 +2927,11 @@ git commit -m "feat(frontend): render collapsible tool call trace in messages"
 2. §3 「Eino 的定位」标题下第一行加：`> 阶段 3 实施注记（2026-07）：未引入 Eino。react_agent 为手写循环（internal/agent/），tools 实现 ports.Tool 接口。本节保留原设想供 V1.5 评估。`
 3. §7 阶段 3 小节：`tools 注册：kb_retrieval、calculator` 改为 `tools 注册：kb_retrieval、list_documents（阶段 3 spec D5：calculator 无业务价值，换为可回答"知识库里有哪些文档"的 list_documents）`；验收行 `kb_retrieval + calculator` 同步改为 `kb_retrieval + list_documents`。§10 验收清单不动（表述仍适用）。
 
-- [ ] **Step 2: 阶段 3 spec 校正 SSE 示例**
+- [x] **Step 2: 阶段 3 spec 校正 SSE 示例**
 
 `2026-07-08-phase-3-react-agent-design.md` §6.1 的 `tool_call` 示例中 `"arguments":"{...}"`（字符串）改为与实现一致的原样字符串透传说明：`data: {"id":"call_x","name":"kb_retrieval","arguments":"{\"query\":\"部署\"}"}`，并加一句 `arguments 为 LLM 原样输出的 JSON 字符串，前端负责 parse（坏 JSON 降级原文展示）`。
 
-- [ ] **Step 3: CLAUDE.md 三处**
+- [x] **Step 3: CLAUDE.md 三处**
 
 1. §2 当前阶段：更新为阶段 3 已完成（附本 spec/plan 链接与验收结论），下一阶段改为 **阶段 3.5（UI 视觉升级，参考 argus 与 do-write 的 UI，需先 brainstorm 出 spec）**
 2. §3 版本表 Eino 行改为：`| Eino | 未引入（阶段 3 D1 决策：手写 ReAct 循环，V1.5 再评估） |`
@@ -2943,7 +2943,7 @@ git commit -m "feat(frontend): render collapsible tool call trace in messages"
 3. 前端 tool-call-trace 无需改动（按 name/arguments/result 通用渲染）；如需专属展示再加分支
 ```
 
-- [ ] **Step 4: 全量验证（后端 + 前端）**
+- [x] **Step 4: 全量验证（后端 + 前端）**
 
 ```bash
 cd backend && go build ./... && go test ./...
@@ -2952,7 +2952,7 @@ cd ../frontend && pnpm lint && pnpm typecheck && pnpm test && pnpm build
 
 Expected: 全绿。
 
-- [ ] **Step 5: 手动验收（对照 spec §11，需 .env 与远程 DB/MinIO 可用）**
+- [x] **Step 5: 手动验收（对照 spec §11，需 .env 与远程 DB/MinIO 可用）**
 
 ```bash
 cd backend && set -a; . ../.env; set +a && go run ./cmd/server   # PORT=8088
@@ -2965,7 +2965,7 @@ cd frontend && pnpm dev
 4. 刷新页面 → 历史轨迹仍可展开
 5. 流式中点 Stop → 无半截 assistant 消息落库
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/ CLAUDE.md

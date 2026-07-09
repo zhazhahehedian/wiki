@@ -185,10 +185,11 @@ Agent 模式独立 system prompt（`internal/agent/` 内维护），要点：优
 ### 6.1 SSE 事件（新增 2 个，其余不变）
 
 ```
-event: tool_call    data: {"id":"call_x","name":"kb_retrieval","arguments":"{...}"}
+event: tool_call    data: {"id":"call_x","name":"kb_retrieval","arguments":"{\"query\":\"部署\"}"}
 event: tool_result  data: {"id":"call_x","name":"kb_retrieval","result":"...(截断)","duration_ms":840,"error":"..."?}
 ```
 
+- `tool_call.arguments` 为 LLM 原样输出的 JSON 字符串，前端负责 parse（坏 JSON 降级原文展示）
 - `retrieval` 事件在 Agent 模式下**可出现多次**（每次 kb_retrieval 后，全量替换语义）——前端现有 retrieval 分支天然兼容
 - `tool_result.result` 截断长度与持久化一致（2000 字符）
 - `token` / `done` / `error` 语义不变

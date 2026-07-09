@@ -21,7 +21,7 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 2.5 已完成（2026-07-08，检索质量修复与评测基线，spec：[2026-07-07-phase-2.5-retrieval-quality-design.md](docs/superpowers/specs/2026-07-07-phase-2.5-retrieval-quality-design.md)）。终态评测 docHit@1=1.00 / passageHit@5=1.00 / MRR=1.000（13 例），验收结果与两个计划外修复（.md 上传 MIME 推断、ivfflat probes 召回塌陷）见该 spec §10.1；评测 CLI：`backend/cmd/evalretrieval`，结果留档 `docs/eval/results/`。流式取消硬化已含单测 + HTTP 端到端验证。下一阶段：**阶段 3（ReAct Agent 模式）**。
+> **当前进度**：阶段 3 已完成（2026-07-09，ReAct Agent 模式，spec：[2026-07-08-phase-3-react-agent-design.md](docs/superpowers/specs/2026-07-08-phase-3-react-agent-design.md)，plan：[2026-07-08-phase-3-react-agent-plan.md](docs/superpowers/plans/2026-07-08-phase-3-react-agent-plan.md)）。会话可切换 RAG / Agent 模式；Agent 模式手写 ReAct 循环（未引入 Eino，spec D1），LLM 通过 OpenAI tool calling 自主调用 kb_retrieval 与 list_documents，工具轨迹经 SSE tool_call/tool_result 实时推送并持久化到 messages.tool_calls JSONB，citations 跨多次检索按 chunk_id 去重。后端（含 e2e SSE + 取消）与前端（vitest + typecheck + lint）测试全绿。下一阶段：**阶段 3.5（UI 视觉升级，参考 argus 与 do-write 的 UI，需先 brainstorm 出 spec）**。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 
@@ -40,7 +40,7 @@
 | Tailwind CSS | v4.x（CSS-first 配置） |
 | PostgreSQL | 16.x |
 | pgvector | 0.7+ |
-| Eino | 最新 release（启动阶段写入 go.mod 后锁定） |
+| Eino | 未引入（阶段 3 D1 决策：手写 ReAct 循环，V1.5 再评估） |
 
 ---
 
@@ -101,13 +101,12 @@ pnpm dlx shadcn@latest add <component>
 
 shadcn 组件复制到 `components/ui/` 后可以改样式，**不要把 ui/ 组件作为依赖去 import 到 components/ui 之外却又改 ui/ 源码** — 会引起跨组件意外破坏。
 
-### 5.4 添加 Eino tool
+### 5.4 添加 agent tool
 
 ```
-1. 在 backend/internal/agent/tools/ 新建 xxx.go
-2. 实现 eino tool 接口
-3. 在 agent/react_agent.go 注册
-4. 前端 tool-call-trace.tsx 增加该 tool 的展示分支（可选）
+1. 在 backend/internal/agent/tools/ 新建 xxx.go，实现 ports.Tool 接口
+2. 在 cmd/server/main.go 的 agentToolFactory 注册
+3. 前端 tool-call-trace 无需改动（按 name/arguments/result 通用渲染）；如需专属展示再加分支
 ```
 
 ---
