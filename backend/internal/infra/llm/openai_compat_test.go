@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -117,29 +118,133 @@ func TestChatStreamReturnsHTTPErrorBeforeChannel(t *testing.T) {
 	}
 }
 
-func TestParseStreamPayloadReadsUsage(t *testing.T) {
-	finishReason := "stop"
-	payload := `{"choices":[{"delta":{"content":""},"finish_reason":"` + finishReason + `"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`
+func TestChatStreamReadsUsage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"choices":[{"delta":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`+"\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
 
-	chunk, err := parseStreamPayload(payload)
+	client := New(Config{BaseURL: server.URL, Model: "fallback-model"})
+	ch, err := client.ChatStream(context.Background(), nil, ports.ChatOptions{})
 	if err != nil {
-		t.Fatalf("parseStreamPayload() error = %v", err)
+		t.Fatalf("ChatStream() error = %v", err)
 	}
-	if !chunk.Done {
-		t.Fatalf("Done = false, want true")
+	chunks := readStreamChunks(t, ch)
+	if len(chunks) == 0 || !chunks[0].Done {
+		t.Fatalf("chunks = %#v, want first chunk Done", chunks)
 	}
-	if chunk.Usage == nil || chunk.Usage.TotalTokens != 8 {
-		t.Fatalf("Usage = %#v, want total tokens", chunk.Usage)
+	if chunks[0].Usage == nil || chunks[0].Usage.TotalTokens != 8 {
+		t.Fatalf("Usage = %#v, want total tokens", chunks[0].Usage)
 	}
 }
 
-func TestParseStreamPayloadReturnsAPIError(t *testing.T) {
-	_, err := parseStreamPayload(`{"error":{"message":"bad key"}}`)
-	if err == nil {
-		t.Fatal("parseStreamPayload() error = nil, want API error")
+func TestChatStreamReturnsAPIErrorChunk(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, `data: {"error":{"message":"bad key"}}`+"\n\n")
+	}))
+	defer server.Close()
+
+	client := New(Config{BaseURL: server.URL, Model: "fallback-model"})
+	ch, err := client.ChatStream(context.Background(), nil, ports.ChatOptions{})
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
 	}
-	if !strings.Contains(err.Error(), "bad key") {
-		t.Fatalf("parseStreamPayload() error = %v, want API message", err)
+	var streamErr error
+	for chunk := range ch {
+		if chunk.Err != nil {
+			streamErr = chunk.Err
+		}
+	}
+	if streamErr == nil {
+		t.Fatal("stream error = nil, want API error")
+	}
+	if !strings.Contains(streamErr.Error(), "bad key") {
+		t.Fatalf("stream error = %v, want API message", streamErr)
+	}
+}
+
+func TestChatStreamAggregatesToolCallDeltas(t *testing.T) {
+	lines := []string{
+		`data: {"choices":[{"delta":{"content":"让我查一下。"},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"kb_retrieval","arguments":""}}]},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":"}}]},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"部署\"}"}}]},"finish_reason":null}]}`,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, l := range lines {
+			_, _ = io.WriteString(w, l+"\n\n")
+		}
+	}))
+	defer srv.Close()
+
+	client := New(Config{BaseURL: srv.URL, Model: "test"})
+	stream, err := client.ChatStream(context.Background(), []ports.Message{{Role: "user", Content: "hi"}}, ports.ChatOptions{})
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+
+	var text string
+	var calls []ports.ToolCall
+	for chunk := range stream {
+		if chunk.Err != nil {
+			t.Fatalf("stream chunk error: %v", chunk.Err)
+		}
+		text += chunk.Text
+		calls = append(calls, chunk.ToolCalls...)
+	}
+
+	if text != "让我查一下。" {
+		t.Errorf("text = %q, want 让我查一下。", text)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("aggregated calls = %d, want 1", len(calls))
+	}
+	want := ports.ToolCall{ID: "call_1", Name: "kb_retrieval", Arguments: `{"query":"部署"}`}
+	if calls[0] != want {
+		t.Errorf("call = %+v, want %+v", calls[0], want)
+	}
+}
+
+func TestChatStreamSendsToolsAndToolMessagesOnWire(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	client := New(Config{BaseURL: srv.URL, Model: "test"})
+	msgs := []ports.Message{
+		{Role: "assistant", Content: "查一下", ToolCalls: []ports.ToolCall{{ID: "call_1", Name: "kb_retrieval", Arguments: `{"query":"x"}`}}},
+		{Role: "tool", Content: "result text", ToolCallID: "call_1"},
+	}
+	opts := ports.ChatOptions{Tools: []ports.ToolDefinition{{
+		Name: "kb_retrieval", Description: "search kb",
+		Parameters: json.RawMessage(`{"type":"object"}`),
+	}}}
+	stream, err := client.ChatStream(context.Background(), msgs, opts)
+	if err != nil {
+		t.Fatalf("ChatStream() error = %v", err)
+	}
+	for range stream {
+	}
+
+	body := string(gotBody)
+	for _, want := range []string{
+		`"tools":[{"type":"function","function":{"name":"kb_retrieval","description":"search kb","parameters":{"type":"object"}}}]`,
+		`"tool_calls":[{"id":"call_1","type":"function","function":{"name":"kb_retrieval","arguments":"{\"query\":\"x\"}"}}]`,
+		`"tool_call_id":"call_1"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("request body missing %s\nbody: %s", want, body)
+		}
 	}
 }
 
