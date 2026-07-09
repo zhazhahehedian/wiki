@@ -31,7 +31,7 @@ export function CitationDrawer({
 
   return (
     <Sheet open={!!citation} onOpenChange={(open) => !open && onOpenChange(null)}>
-      <SheetContent side="right" className="flex w-full flex-col sm:max-w-xl">
+      <SheetContent side="right" className="flex flex-col data-[side=right]:w-full data-[side=right]:sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{citation?.document_title ?? "引用"}</SheetTitle>
           <SheetDescription>{citation ? `切片 #${citation.seq} 及相邻上下文` : ""}</SheetDescription>

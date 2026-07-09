@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import type { LocalChatMessage } from "@/lib/hooks/use-chat-stream";
+import type { LocalChatMessage, LocalToolStep } from "@/lib/hooks/use-chat-stream";
 import { MessageBubble } from "./message-bubble";
 
 function makeMessage(patch: Partial<LocalChatMessage>): LocalChatMessage {
@@ -53,5 +53,40 @@ describe("MessageBubble", () => {
     render(<MessageBubble message={makeMessage({ content: "答案", citations: [citation] })} onCitationClick={vi.fn()} />);
     expect(screen.getByText("来源")).toBeInTheDocument();
     expect(screen.getByText("排障手册")).toBeInTheDocument();
+  });
+
+  it("keeps timeline expanded and shows cursor while pending with tool calls and no content", () => {
+    const step: LocalToolStep = {
+      step: 1,
+      id: "call-1",
+      name: "kb_retrieval",
+      arguments: { query: "端口" },
+      result: "[1] 内容",
+      duration_ms: 120,
+    };
+    const { container } = render(
+      <MessageBubble message={makeMessage({ pending: true, tool_calls: [step] })} onCitationClick={vi.fn()} />,
+    );
+    // 流式过程中时间线保持展开：无「调用了 N 个工具」pill，步骤可见
+    expect(screen.queryByText(/调用了 1 个工具/)).not.toBeInTheDocument();
+    expect(screen.getByText("kb_retrieval")).toBeInTheDocument();
+    // 工具间隙（无内容）也要显示光标，避免空窗
+    expect(container.querySelector(".animate-caret-blink")).not.toBeNull();
+  });
+
+  it("collapses timeline to pill once the message is no longer pending", () => {
+    const step: LocalToolStep = {
+      step: 1,
+      id: "call-1",
+      name: "kb_retrieval",
+      arguments: { query: "端口" },
+      result: "[1] 内容",
+      duration_ms: 120,
+    };
+    render(
+      <MessageBubble message={makeMessage({ content: "答案", tool_calls: [step] })} onCitationClick={vi.fn()} />,
+    );
+    expect(screen.getByText(/调用了 1 个工具/)).toBeInTheDocument();
+    expect(screen.queryByText("kb_retrieval")).not.toBeInTheDocument();
   });
 });

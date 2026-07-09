@@ -28,9 +28,10 @@ export function MessageBubble({
     );
   }
 
-  const anyRunning = message.tool_calls.some((step) => step.running);
-  const answerStarted = !message.pending || (message.content.trim().length > 0 && !anyRunning);
-  const showCursorOnly = !!message.pending && message.content.trim().length === 0 && message.tool_calls.length === 0;
+  // 时间线在整个流式过程中保持展开，done 事件清掉 pending 后才自动折叠
+  //（spec 验收项 6「回答完成 → 时间线自动折叠」；历史回放 pending 为 undefined → 默认折叠）。
+  const answerStarted = !message.pending;
+  const showCursorOnly = !!message.pending && message.content.trim().length === 0;
 
   return (
     <article className="flex justify-start">
