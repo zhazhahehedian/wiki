@@ -15,6 +15,12 @@ export interface LocalChatMessage extends Omit<ChatMessage, "id" | "created_at" 
   tool_calls: LocalToolStep[];
   pending?: boolean;
   error?: string;
+  /**
+   * 稳定的前端本地 key，创建时即固定，"done" 事件把草稿 id 换成服务端 message_id
+   * 时也不会变化。React 列表渲染按它 key，避免 AgentTimeline 等子组件因 id 切换
+   * 而 remount 丢失本地展开状态（阶段 3.5 Task 6 code review 遗留项 A）。
+   */
+  client_key: string;
 }
 
 export interface ChatStreamState {
@@ -25,14 +31,14 @@ export interface ChatStreamState {
 
 export function useChatStream(initialMessages: ChatMessage[] = []) {
   const [state, setState] = useState<ChatStreamState>({
-    messages: initialMessages,
+    messages: toLocalMessages(initialMessages),
     isStreaming: false,
     error: null,
   });
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setState((current) => ({ ...current, messages: initialMessages }));
+    setState((current) => ({ ...current, messages: toLocalMessages(initialMessages) }));
   }, [initialMessages]);
 
   const stop = useCallback(() => {
@@ -86,6 +92,10 @@ export function useChatStream(initialMessages: ChatMessage[] = []) {
   return { ...state, send, stop };
 }
 
+function toLocalMessages(messages: ChatMessage[]): LocalChatMessage[] {
+  return messages.map((message) => ({ ...message, client_key: message.id, tool_calls: message.tool_calls as LocalToolStep[] }));
+}
+
 function localMessage(
   id: string,
   conversationId: string,
@@ -95,6 +105,7 @@ function localMessage(
 ): LocalChatMessage {
   return {
     id,
+    client_key: id,
     conversation_id: conversationId,
     role,
     content,

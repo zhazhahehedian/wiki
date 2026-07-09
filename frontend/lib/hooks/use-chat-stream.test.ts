@@ -9,6 +9,7 @@ describe("applyStreamEvent", () => {
     messages: [
       {
         id: "draft-assistant",
+        client_key: "draft-assistant",
         conversation_id: "conversation-1",
         role: "assistant",
         content: "",
@@ -80,6 +81,7 @@ describe("applyStreamEvent tool events", () => {
     messages: [
       {
         id: "draft-assistant",
+        client_key: "draft-assistant",
         conversation_id: "conversation-1",
         role: "assistant",
         content: "",

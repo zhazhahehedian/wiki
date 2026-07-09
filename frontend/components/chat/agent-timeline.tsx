@@ -42,7 +42,7 @@ function StepNode({ step }: { step: LocalToolStep }) {
         <div className="space-y-2 border-t border-border/60 px-2.5 py-2">
           <div>
             <p className="mb-1 font-medium text-muted-foreground">参数</p>
-            <pre className="overflow-x-auto rounded bg-muted p-2 font-mono">{JSON.stringify(step.arguments, null, 2)}</pre>
+            <pre className="overflow-x-auto rounded bg-muted p-2 font-mono">{JSON.stringify(step.arguments ?? {}, null, 2)}</pre>
           </div>
           {step.error ? (
             <div>

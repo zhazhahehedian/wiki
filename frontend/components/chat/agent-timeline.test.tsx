@@ -63,4 +63,27 @@ describe("AgentTimeline", () => {
     await user.click(summary);
     expect(screen.getByText("需要先检索知识库")).toBeInTheDocument();
   });
+
+  it("auto-collapses to the pill when answerStarted flips from false to true", () => {
+    const { rerender } = render(<AgentTimeline steps={[doneStep]} answerStarted={false} />);
+    expect(screen.getByText("需要先检索知识库")).toBeInTheDocument();
+
+    rerender(<AgentTimeline steps={[doneStep]} answerStarted />);
+    expect(screen.queryByText("需要先检索知识库")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /调用了 1 个工具/ })).toBeInTheDocument();
+  });
+
+  it("stays expanded after user expands via pill, even as steps update on rerender", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<AgentTimeline steps={[doneStep]} answerStarted />);
+
+    const summary = screen.getByRole("button", { name: /调用了 1 个工具/ });
+    await user.click(summary);
+    expect(screen.getByText("需要先检索知识库")).toBeInTheDocument();
+
+    const updatedStep: LocalToolStep = { ...doneStep, result: '{"chunks":5}' };
+    rerender(<AgentTimeline steps={[updatedStep]} answerStarted />);
+    expect(screen.getByText("需要先检索知识库")).toBeInTheDocument();
+    expect(screen.getByText('{"chunks":5}')).toBeInTheDocument();
+  });
 });

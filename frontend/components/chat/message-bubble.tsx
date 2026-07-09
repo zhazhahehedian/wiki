@@ -1,11 +1,11 @@
 "use client";
 
-import ReactMarkdown from "react-markdown";
-import rehypeHighlight from "rehype-highlight";
+import { Sparkles } from "lucide-react";
 
-import { CitationCard } from "@/components/chat/citation-card";
-import { ToolCallTrace } from "@/components/chat/tool-call-trace";
-import { cn } from "@/lib/utils";
+import { AgentTimeline } from "@/components/chat/agent-timeline";
+import { CitationChip } from "@/components/chat/citation-chip";
+import { MarkdownContent } from "@/components/chat/markdown-content";
+import { StreamingCursor } from "@/components/chat/streaming-cursor";
 import type { Citation } from "@/lib/schemas";
 import type { LocalChatMessage } from "@/lib/hooks/use-chat-stream";
 
@@ -18,35 +18,56 @@ export function MessageBubble({
 }) {
   const isUser = message.role === "user";
 
-  return (
-    <article className={cn("flex", isUser ? "justify-end" : "justify-start")}>
-      <div
-        className={cn(
-          "max-w-[min(760px,calc(100vw-3rem))] rounded-md border p-3 text-sm",
-          isUser ? "bg-primary text-primary-foreground" : "bg-background",
-          message.error && "border-destructive",
-        )}
-      >
-        {isUser ? (
+  if (isUser) {
+    return (
+      <article className="flex justify-end">
+        <div className="max-w-[min(560px,85%)] rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
           <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
-        ) : (
-          <>
-            <ToolCallTrace steps={message.tool_calls} />
-            <div className="leading-relaxed [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-muted [&_pre]:p-3">
-              <ReactMarkdown rehypePlugins={[rehypeHighlight]}>
-                {message.content || (message.pending ? "Thinking..." : "")}
-              </ReactMarkdown>
+        </div>
+      </article>
+    );
+  }
+
+  const anyRunning = message.tool_calls.some((step) => step.running);
+  const answerStarted = !message.pending || (message.content.trim().length > 0 && !anyRunning);
+  const showCursorOnly = !!message.pending && message.content.trim().length === 0 && message.tool_calls.length === 0;
+
+  return (
+    <article className="flex justify-start">
+      <div className="flex w-full gap-3">
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Sparkles className="size-4" />
+        </div>
+        <div className="min-w-0 flex-1 pt-0.5 text-sm">
+          {message.tool_calls.length > 0 && (
+            <AgentTimeline steps={message.tool_calls} answerStarted={answerStarted} />
+          )}
+          {showCursorOnly ? (
+            <StreamingCursor />
+          ) : (
+            message.content && (
+              <div className="leading-relaxed">
+                <MarkdownContent content={message.content} />
+                {message.pending && <StreamingCursor />}
+              </div>
+            )
+          )}
+          {message.error && (
+            <p className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {message.error}
+            </p>
+          )}
+          {message.citations.length > 0 && (
+            <div className="mt-3 border-t border-border/60 pt-2">
+              <span className="mr-2 text-xs text-muted-foreground">来源</span>
+              <span className="inline-flex flex-wrap gap-1.5 align-middle">
+                {message.citations.map((citation) => (
+                  <CitationChip key={citation.id} citation={citation} onClick={() => onCitationClick(citation)} />
+                ))}
+              </span>
             </div>
-          </>
-        )}
-        {message.error && <p className="mt-2 text-xs text-destructive">{message.error}</p>}
-        {!isUser && message.citations.length > 0 && (
-          <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
-            {message.citations.map((citation) => (
-              <CitationCard key={citation.id} citation={citation} onClick={() => onCitationClick(citation)} />
-            ))}
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </article>
   );
