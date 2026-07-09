@@ -161,7 +161,7 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-sans: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, var(--font-noto-sans-sc), sans-serif;
+    --font-sans: var(--font-geist-sans), var(--font-noto-sans-sc), system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     --font-heading: var(--font-sans);
     --font-mono: var(--font-geist-mono), "SF Mono", Monaco, Inconsolata, "Roboto Mono", monospace;
     --color-sidebar-ring: var(--sidebar-ring);
