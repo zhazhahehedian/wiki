@@ -1,14 +1,19 @@
 package domain
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
-	ConversationModeRAG = "rag"
-	RoleUser            = "user"
-	RoleAssistant       = "assistant"
-	EvidenceNone        = "none"
-	EvidenceWeak        = "weak"
-	EvidenceSufficient  = "sufficient"
+	ConversationModeRAG   = "rag"
+	ConversationModeReAct = "react"
+	RoleUser              = "user"
+	RoleAssistant         = "assistant"
+	RoleTool              = "tool"
+	EvidenceNone          = "none"
+	EvidenceWeak          = "weak"
+	EvidenceSufficient    = "sufficient"
 )
 
 type Conversation struct {
@@ -31,13 +36,40 @@ type Citation struct {
 	Snippet       string  `json:"snippet"`
 }
 
+// ToolCallStep 是持久化在 messages.tool_calls JSONB 里的单步轨迹（spec §6.2）。
+type ToolCallStep struct {
+	Step       int             `json:"step"`
+	ID         string          `json:"id"`
+	Name       string          `json:"name"`
+	Thought    string          `json:"thought,omitempty"`
+	Arguments  json.RawMessage `json:"arguments"`
+	Result     string          `json:"result"`
+	DurationMs int64           `json:"duration_ms"`
+	Error      string          `json:"error,omitempty"`
+}
+
+// ToolCallEvent / ToolResultEvent 是 SSE tool_call / tool_result 事件载荷（spec §6.1）。
+type ToolCallEvent struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolResultEvent struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Result     string `json:"result"`
+	DurationMs int64  `json:"duration_ms"`
+	Error      string `json:"error,omitempty"`
+}
+
 type ChatMessage struct {
 	ID             string         `json:"id"`
 	ConversationID string         `json:"conversation_id"`
 	Role           string         `json:"role"`
 	Content        string         `json:"content"`
 	Citations      []Citation     `json:"citations"`
-	ToolCalls      []any          `json:"tool_calls"`
+	ToolCalls      []ToolCallStep `json:"tool_calls"`
 	TokenUsage     map[string]any `json:"token_usage"`
 	CreatedAt      time.Time      `json:"created_at"`
 }

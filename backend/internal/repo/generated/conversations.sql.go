@@ -178,3 +178,30 @@ func (q *Queries) TouchConversationForUser(ctx context.Context, arg TouchConvers
 	_, err := q.db.Exec(ctx, touchConversationForUser, arg.ID, arg.UserID)
 	return err
 }
+
+const updateConversationMode = `-- name: UpdateConversationMode :one
+UPDATE conversations
+SET mode = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, kb_id, title, mode, user_id, created_at, updated_at
+`
+
+type UpdateConversationModeParams struct {
+	ID   uuid.UUID `json:"id"`
+	Mode string    `json:"mode"`
+}
+
+func (q *Queries) UpdateConversationMode(ctx context.Context, arg UpdateConversationModeParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, updateConversationMode, arg.ID, arg.Mode)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.Title,
+		&i.Mode,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

@@ -36,6 +36,7 @@ type Querier interface {
 	ListRecentMessagesByConversationForUser(ctx context.Context, arg ListRecentMessagesByConversationForUserParams) ([]Message, error)
 	TouchConversation(ctx context.Context, id uuid.UUID) error
 	TouchConversationForUser(ctx context.Context, arg TouchConversationForUserParams) error
+	UpdateConversationMode(ctx context.Context, arg UpdateConversationModeParams) (Conversation, error)
 	UpdateDocumentStatus(ctx context.Context, arg UpdateDocumentStatusParams) error
 }
 

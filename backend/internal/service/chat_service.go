@@ -309,7 +309,7 @@ func rowToChatMessage(r generated.Message) *domain.ChatMessage {
 		Role:           r.Role,
 		Content:        r.Content,
 		Citations:      []domain.Citation{},
-		ToolCalls:      []any{},
+		ToolCalls:      []domain.ToolCallStep{},
 		TokenUsage:     map[string]any{},
 		CreatedAt:      r.CreatedAt,
 	}
