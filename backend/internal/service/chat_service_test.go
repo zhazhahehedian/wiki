@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/agent"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
@@ -52,7 +53,7 @@ func TestChatAskStreamPersistsUserThenRetrievalThenAssistant(t *testing.T) {
 		{Text: "the runbook.", Usage: &ports.TokenUsage{PromptTokens: 3, CompletionTokens: 4, TotalTokens: 7}},
 	}}
 	sink := &recordingSink{events: events}
-	svc := NewChat(queries, retrieval, llm, "phase-model", 10)
+	svc := NewChat(queries, retrieval, llm, "phase-model", 10, nil, nil)
 
 	err := svc.AskStream(context.Background(), convID.String(), " how rotate? ", sink)
 	if err != nil {
@@ -121,7 +122,7 @@ func TestChatAskStreamDoesNotPersistAssistantOnLLMFailure(t *testing.T) {
 		0,
 	)
 	llmErr := errors.New("provider disconnected")
-	svc := NewChat(queries, retrieval, &fakeLLM{chunks: []ports.StreamChunk{{Err: llmErr}}}, "phase-model", 10)
+	svc := NewChat(queries, retrieval, &fakeLLM{chunks: []ports.StreamChunk{{Err: llmErr}}}, "phase-model", 10, nil, nil)
 	sink := &recordingSink{events: events}
 
 	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
@@ -142,7 +143,7 @@ func TestChatAskStreamReturnsNotFoundBeforeSSEStarts(t *testing.T) {
 	convID := uuid.New()
 	events := &eventLog{}
 	queries := &fakeChatQueries{events: events, getConversationErr: pgx.ErrNoRows}
-	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10)
+	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, nil, nil)
 	sink := &recordingSink{events: events}
 
 	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
@@ -221,7 +222,7 @@ func TestAskStreamClientCancelDoesNotPersistAssistant(t *testing.T) {
 		},
 	}
 	retrieval := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
-	svc := NewChat(queries, retrieval, blockingLLM{}, "test-model", 0)
+	svc := NewChat(queries, retrieval, blockingLLM{}, "test-model", 0, nil, nil)
 	sink := &cancelOnTokenSink{
 		recordingSink: recordingSink{events: queries.events},
 		cancel:        cancel,
@@ -324,6 +325,11 @@ func (f *fakeChatQueries) TouchConversation(_ context.Context, id uuid.UUID) err
 	return nil
 }
 
+func (f *fakeChatQueries) UpdateConversationMode(_ context.Context, arg generated.UpdateConversationModeParams) (generated.Conversation, error) {
+	f.conversation.Mode = arg.Mode
+	return f.conversation, nil
+}
+
 type fakeLLM struct {
 	messages []ports.Message
 	opts     ports.ChatOptions
@@ -382,6 +388,171 @@ func (s *recordingSink) SendError(_ context.Context, err ChatStreamError) error 
 	return nil
 }
 
+func (s *recordingSink) SendToolCall(_ context.Context, ev domain.ToolCallEvent) error {
+	s.started = true
+	s.events.add("tool_call:" + ev.Name)
+	return nil
+}
+
+func (s *recordingSink) SendToolResult(_ context.Context, ev domain.ToolResultEvent) error {
+	s.started = true
+	s.events.add("tool_result:" + ev.Name)
+	return nil
+}
+
 func (s *recordingSink) Started() bool {
 	return s.started
+}
+
+// scriptedChatLLM 与 agent 包测试里的 scriptedLLM 相同思路：按轮弹出 chunks。
+type scriptedChatLLM struct {
+	rounds [][]ports.StreamChunk
+}
+
+func (f *scriptedChatLLM) Chat(context.Context, []ports.Message, ports.ChatOptions) (*ports.Message, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *scriptedChatLLM) ChatStream(context.Context, []ports.Message, ports.ChatOptions) (<-chan ports.StreamChunk, error) {
+	if len(f.rounds) == 0 {
+		return nil, errors.New("no rounds left")
+	}
+	round := f.rounds[0]
+	f.rounds = f.rounds[1:]
+	out := make(chan ports.StreamChunk, len(round))
+	for _, c := range round {
+		out <- c
+	}
+	close(out)
+	return out, nil
+}
+
+// callbackTool 模拟 kb_retrieval：Invoke 时触发 onRetrieval。
+type callbackTool struct{ onRetrieval RetrievalCallback }
+
+func (t *callbackTool) Name() string                      { return "kb_retrieval" }
+func (t *callbackTool) Description() string               { return "fake" }
+func (t *callbackTool) ParametersSchema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *callbackTool) Invoke(ctx context.Context, _ string) (string, error) {
+	err := t.onRetrieval(ctx, &RetrievalResult{
+		EvidenceLevel: domain.EvidenceSufficient,
+		Hits: []ports.VectorSearchHit{{
+			KBID: "kb", ChunkID: "ch-1", DocumentID: "d1",
+			DocumentTitle: "T.md", Seq: 1, Score: 0.9, Content: "内容",
+		}},
+	})
+	return "[1] 内容", err
+}
+
+func newReActChat(queries *fakeChatQueries, llm ports.LLMClient) *Chat {
+	factory := func(kbID string, onRetrieval RetrievalCallback) []ports.Tool {
+		return []ports.Tool{&callbackTool{onRetrieval: onRetrieval}}
+	}
+	return NewChat(queries, nil, llm, "test-model", 0, agent.New(llm, "test-model", 5), factory)
+}
+
+func TestChatAskStreamReActPersistsStepsAndCitations(t *testing.T) {
+	convID := uuid.New()
+	queries := &fakeChatQueries{
+		events: &eventLog{},
+		conversation: generated.Conversation{
+			ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeReAct,
+		},
+	}
+	llm := &scriptedChatLLM{rounds: [][]ports.StreamChunk{
+		{{ToolCalls: []ports.ToolCall{{ID: "call_1", Name: "kb_retrieval", Arguments: `{"query":"部署"}`}}, Done: true}},
+		{{Text: "答案 [1]"}, {Done: true, Usage: &ports.TokenUsage{TotalTokens: 7}}},
+	}}
+	svc := newReActChat(queries, llm)
+	sink := &recordingSink{events: queries.events}
+
+	if err := svc.AskStream(context.Background(), convID.String(), "怎么部署", sink); err != nil {
+		t.Fatalf("AskStream() error = %v", err)
+	}
+
+	if len(queries.createdMessages) != 2 {
+		t.Fatalf("created %d messages, want 2", len(queries.createdMessages))
+	}
+	assistant := queries.createdMessages[1]
+	if assistant.Role != domain.RoleAssistant || assistant.Content != "答案 [1]" {
+		t.Errorf("assistant = %+v", assistant)
+	}
+	toolCalls := string(assistant.ToolCalls)
+	for _, want := range []string{`"name":"kb_retrieval"`, `"step":1`, `"result":"[1] 内容"`} {
+		if !strings.Contains(toolCalls, want) {
+			t.Errorf("tool_calls missing %s\ngot: %s", want, toolCalls)
+		}
+	}
+	if !strings.Contains(string(assistant.Citations), `"chunk_id":"ch-1"`) {
+		t.Errorf("citations = %s", assistant.Citations)
+	}
+
+	got := strings.Join(queries.events.items, ",")
+	for _, want := range []string{"tool_call:kb_retrieval", "tool_result:kb_retrieval", "retrieval", "done"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("events missing %s\ngot: %s", want, got)
+		}
+	}
+}
+
+func TestChatAskStreamReActCancelDoesNotPersistAssistant(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	convID := uuid.New()
+	queries := &fakeChatQueries{
+		events: &eventLog{},
+		conversation: generated.Conversation{
+			ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeReAct,
+		},
+	}
+	svc := newReActChat(queries, blockingLLM{})
+	sink := &cancelOnTokenSink{recordingSink: recordingSink{events: queries.events}, cancel: cancel}
+
+	err := svc.AskStream(ctx, convID.String(), "q", sink)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("AskStream() error = %v, want context.Canceled", err)
+	}
+	for _, m := range queries.createdMessages {
+		if m.Role == domain.RoleAssistant {
+			t.Fatalf("assistant persisted after cancel: %q", m.Content)
+		}
+	}
+}
+
+func TestCreateConversationWithMode(t *testing.T) {
+	queries := &fakeChatQueries{}
+	svc := NewChat(queries, nil, &fakeLLM{}, "m", 0, nil, nil)
+
+	conv, err := svc.CreateConversation(context.Background(), uuid.NewString(), domain.ConversationModeReAct)
+	if err != nil {
+		t.Fatalf("CreateConversation() error = %v", err)
+	}
+	if conv.Mode != domain.ConversationModeReAct {
+		t.Errorf("mode = %q", conv.Mode)
+	}
+
+	if _, err := svc.CreateConversation(context.Background(), uuid.NewString(), "bogus"); !errors.Is(err, ErrInvalidMode) {
+		t.Errorf("expected ErrInvalidMode, got %v", err)
+	}
+	// 空 mode 默认 rag
+	conv, err = svc.CreateConversation(context.Background(), uuid.NewString(), "")
+	if err != nil || conv.Mode != domain.ConversationModeRAG {
+		t.Errorf("default mode = %q, err = %v", conv.Mode, err)
+	}
+}
+
+func TestUpdateModeValidatesEnum(t *testing.T) {
+	queries := &fakeChatQueries{conversation: generated.Conversation{ID: uuid.New()}}
+	svc := NewChat(queries, nil, &fakeLLM{}, "m", 0, nil, nil)
+
+	if _, err := svc.UpdateMode(context.Background(), queries.conversation.ID.String(), "bogus"); !errors.Is(err, ErrInvalidMode) {
+		t.Errorf("expected ErrInvalidMode, got %v", err)
+	}
+	conv, err := svc.UpdateMode(context.Background(), queries.conversation.ID.String(), domain.ConversationModeReAct)
+	if err != nil {
+		t.Fatalf("UpdateMode() error = %v", err)
+	}
+	if conv.Mode != domain.ConversationModeReAct {
+		t.Errorf("mode = %q", conv.Mode)
+	}
 }

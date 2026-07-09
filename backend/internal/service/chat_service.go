@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/agent"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
@@ -21,6 +22,16 @@ type ErrConversationNotFound struct{ ID string }
 
 func (e *ErrConversationNotFound) Error() string { return "conversation not found: " + e.ID }
 
+// ErrInvalidMode 表示 mode 不在 rag/react 枚举内。
+var ErrInvalidMode = errors.New("mode must be 'rag' or 'react'")
+
+// RetrievalCallback 在 Agent 每次 kb_retrieval 成功后触发。
+type RetrievalCallback func(ctx context.Context, r *RetrievalResult) error
+
+// AgentToolFactory 按会话构造工具集（kbID 闭包注入）。由 main.go 组装，
+// 避免 service ↔ agent/tools 循环依赖。
+type AgentToolFactory func(kbID string, onRetrieval RetrievalCallback) []ports.Tool
+
 type ChatQueries interface {
 	CreateConversation(ctx context.Context, arg generated.CreateConversationParams) (generated.Conversation, error)
 	GetConversation(ctx context.Context, id uuid.UUID) (generated.Conversation, error)
@@ -31,11 +42,14 @@ type ChatQueries interface {
 	CountMessagesByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
 	ListRecentMessagesByConversation(ctx context.Context, arg generated.ListRecentMessagesByConversationParams) ([]generated.Message, error)
 	TouchConversation(ctx context.Context, id uuid.UUID) error
+	UpdateConversationMode(ctx context.Context, arg generated.UpdateConversationModeParams) (generated.Conversation, error)
 }
 
 type ChatStreamSink interface {
 	SendRetrieval(ctx context.Context, result *RetrievalResult) error
 	SendToken(ctx context.Context, text string) error
+	SendToolCall(ctx context.Context, ev domain.ToolCallEvent) error
+	SendToolResult(ctx context.Context, ev domain.ToolResultEvent) error
 	SendDone(ctx context.Context, done ChatDone) error
 	SendError(ctx context.Context, err ChatStreamError) error
 	Started() bool
@@ -58,16 +72,25 @@ type Chat struct {
 	llm             ports.LLMClient
 	llmModel        string
 	historyMessages int
+	reactAgent      *agent.ReactAgent
+	toolFactory     AgentToolFactory
 }
 
-func NewChat(q ChatQueries, retrieval *Retrieval, llm ports.LLMClient, llmModel string, historyMessages int) *Chat {
+func NewChat(q ChatQueries, retrieval *Retrieval, llm ports.LLMClient, llmModel string, historyMessages int, reactAgent *agent.ReactAgent, toolFactory AgentToolFactory) *Chat {
 	if historyMessages < 0 {
 		historyMessages = 10
 	}
-	return &Chat{queries: q, retrieval: retrieval, llm: llm, llmModel: llmModel, historyMessages: historyMessages}
+	return &Chat{queries: q, retrieval: retrieval, llm: llm, llmModel: llmModel,
+		historyMessages: historyMessages, reactAgent: reactAgent, toolFactory: toolFactory}
 }
 
-func (s *Chat) CreateConversation(ctx context.Context, kbID string) (*domain.Conversation, error) {
+func (s *Chat) CreateConversation(ctx context.Context, kbID, mode string) (*domain.Conversation, error) {
+	if mode == "" {
+		mode = domain.ConversationModeRAG
+	}
+	if mode != domain.ConversationModeRAG && mode != domain.ConversationModeReAct {
+		return nil, ErrInvalidMode
+	}
 	kbUUID, err := uuid.Parse(kbID)
 	if err != nil {
 		return nil, &ErrKBNotFound{ID: kbID}
@@ -75,11 +98,29 @@ func (s *Chat) CreateConversation(ctx context.Context, kbID string) (*domain.Con
 	row, err := s.queries.CreateConversation(ctx, generated.CreateConversationParams{
 		KbID:   kbUUID,
 		Title:  "New chat",
-		Mode:   domain.ConversationModeRAG,
+		Mode:   mode,
 		UserID: localUserID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create conversation: %w", err)
+	}
+	return rowToConversation(row), nil
+}
+
+func (s *Chat) UpdateMode(ctx context.Context, conversationID, mode string) (*domain.Conversation, error) {
+	if mode != domain.ConversationModeRAG && mode != domain.ConversationModeReAct {
+		return nil, ErrInvalidMode
+	}
+	convID, err := uuid.Parse(conversationID)
+	if err != nil {
+		return nil, &ErrConversationNotFound{ID: conversationID}
+	}
+	row, err := s.queries.UpdateConversationMode(ctx, generated.UpdateConversationModeParams{ID: convID, Mode: mode})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &ErrConversationNotFound{ID: conversationID}
+		}
+		return nil, fmt.Errorf("update conversation mode: %w", err)
 	}
 	return rowToConversation(row), nil
 }
@@ -161,17 +202,24 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 		}
 		return fmt.Errorf("get conversation: %w", err)
 	}
-	if conv.Mode != domain.ConversationModeRAG {
+	if conv.Mode != domain.ConversationModeRAG && conv.Mode != domain.ConversationModeReAct {
 		return fmt.Errorf("unsupported conversation mode: %s", conv.Mode)
 	}
 
-	if _, err := s.createMessage(ctx, conv.ID, domain.RoleUser, content, nil, nil); err != nil {
+	if _, err := s.createMessage(ctx, conv.ID, domain.RoleUser, content, nil, nil, nil); err != nil {
 		return err
 	}
 	if err := s.queries.TouchConversation(ctx, conv.ID); err != nil {
 		return fmt.Errorf("touch conversation after user message: %w", err)
 	}
 
+	if conv.Mode == domain.ConversationModeReAct {
+		return s.askReAct(ctx, conv, content, sink)
+	}
+	return s.askRAG(ctx, conv, content, sink)
+}
+
+func (s *Chat) askRAG(ctx context.Context, conv generated.Conversation, content string, sink ChatStreamSink) error {
 	retrieval, err := s.retrieval.Retrieve(ctx, conv.KbID.String(), content)
 	if err != nil {
 		return err
@@ -224,7 +272,7 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 		_ = sink.SendError(ctx, ChatStreamError{Code: "llm_stream_failed", Message: err.Error()})
 		return err
 	}
-	assistant, err := s.createMessage(ctx, conv.ID, domain.RoleAssistant, assistantContent, retrieval.Citations, usage)
+	assistant, err := s.createMessage(ctx, conv.ID, domain.RoleAssistant, assistantContent, retrieval.Citations, nil, usage)
 	if err != nil {
 		_ = sink.SendError(ctx, ChatStreamError{Code: "assistant_persist_failed", Message: err.Error()})
 		return err
@@ -235,7 +283,7 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 	return sink.SendDone(ctx, ChatDone{MessageID: assistant.ID, ConversationID: conv.ID.String(), Usage: usage})
 }
 
-func (s *Chat) createMessage(ctx context.Context, convID uuid.UUID, role, content string, citations []domain.Citation, usage *ports.TokenUsage) (*domain.ChatMessage, error) {
+func (s *Chat) createMessage(ctx context.Context, convID uuid.UUID, role, content string, citations []domain.Citation, steps []domain.ToolCallStep, usage *ports.TokenUsage) (*domain.ChatMessage, error) {
 	citationsJSON := []byte("[]")
 	if len(citations) > 0 {
 		b, err := json.Marshal(citations)
@@ -243,6 +291,15 @@ func (s *Chat) createMessage(ctx context.Context, convID uuid.UUID, role, conten
 			return nil, fmt.Errorf("marshal citations: %w", err)
 		}
 		citationsJSON = b
+	}
+
+	toolCallsJSON := []byte("[]")
+	if len(steps) > 0 {
+		b, err := json.Marshal(steps)
+		if err != nil {
+			return nil, fmt.Errorf("marshal tool calls: %w", err)
+		}
+		toolCallsJSON = b
 	}
 
 	usageJSON := []byte("{}")
@@ -259,7 +316,7 @@ func (s *Chat) createMessage(ctx context.Context, convID uuid.UUID, role, conten
 		Role:           role,
 		Content:        content,
 		Citations:      citationsJSON,
-		ToolCalls:      []byte("[]"),
+		ToolCalls:      toolCallsJSON,
 		TokenUsage:     usageJSON,
 	})
 	if err != nil {

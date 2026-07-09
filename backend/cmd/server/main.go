@@ -17,7 +17,10 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/agent"
+	agenttools "github.com/zenith-wang/it-wiki/backend/internal/agent/tools"
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/embedder"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/llm"
@@ -122,7 +125,14 @@ func run() error {
 	docSvc := service.NewDocument(queries)
 	ingestionSvc := service.NewIngestion(queries, mc, rclient)
 	retrievalSvc := service.NewRetrieval(embed, vstore, cfg.RAGTopK, cfg.RAGMinScore)
-	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages)
+	reactAgent := agent.New(llmClient, cfg.LLMModel, 5)
+	agentToolFactory := func(kbID string, onRetrieval service.RetrievalCallback) []ports.Tool {
+		return []ports.Tool{
+			agenttools.NewKBRetrieval(retrievalSvc, kbID, onRetrieval),
+			agenttools.NewListDocuments(docSvc, kbID),
+		}
+	}
+	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, reactAgent, agentToolFactory)
 
 	router := httpx.NewRouter(httpx.Handlers{
 		KB:    httpx.NewKBHandler(kbSvc),
