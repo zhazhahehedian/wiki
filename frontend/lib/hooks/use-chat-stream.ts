@@ -3,11 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { streamConversationMessage, type ChatStreamEvent } from "@/lib/api/chat";
-import type { ChatMessage, Citation } from "@/lib/schemas";
+import type { ChatMessage, Citation, ToolCallStep } from "@/lib/schemas";
 
-export interface LocalChatMessage extends Omit<ChatMessage, "id" | "created_at"> {
+export interface LocalToolStep extends ToolCallStep {
+  running?: boolean;
+}
+
+export interface LocalChatMessage extends Omit<ChatMessage, "id" | "created_at" | "tool_calls"> {
   id: string;
   created_at: string;
+  tool_calls: LocalToolStep[];
   pending?: boolean;
   error?: string;
 }
@@ -112,6 +117,47 @@ export function applyStreamEvent(state: ChatStreamState, draftId: string, event:
       ),
     };
   }
+  if (event.event === "tool_call") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.id !== draftId) return message;
+        const thought = message.content.trim();
+        const step: LocalToolStep = {
+          step: message.tool_calls.length + 1,
+          id: event.data.id,
+          name: event.data.name,
+          arguments: safeParseJson(event.data.arguments),
+          ...(thought ? { thought } : {}),
+          running: true,
+        };
+        // 思考文本已流式展示过，收进轨迹后清空气泡（spec §4.2）
+        return { ...message, content: "", tool_calls: [...message.tool_calls, step] };
+      }),
+    };
+  }
+  if (event.event === "tool_result") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.id !== draftId) return message;
+        return {
+          ...message,
+          tool_calls: message.tool_calls.map((step) =>
+            step.id === event.data.id
+              ? {
+                  ...step,
+                  result: event.data.result,
+                  duration_ms: event.data.duration_ms,
+                  error: event.data.error,
+                  running: false,
+                }
+              : step,
+          ),
+        };
+      }),
+    };
+  }
   if (event.event === "done") {
     return updateDraft(state, draftId, {
       id: event.data.message_id,
@@ -133,4 +179,12 @@ function updateDraft(state: ChatStreamState, draftId: string, patch: Partial<Loc
     ...state,
     messages: state.messages.map((message) => (message.id === draftId ? { ...message, ...patch } : message)),
   };
+}
+
+function safeParseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }
