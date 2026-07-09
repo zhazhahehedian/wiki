@@ -71,12 +71,24 @@ export const conversationSchema = z.object({
   id: z.string(),
   kb_id: z.string(),
   title: z.string(),
-  mode: z.literal("rag"),
+  mode: z.enum(["rag", "react"]),
   user_id: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
+
+export const toolCallStepSchema = z.object({
+  step: z.number(),
+  id: z.string(),
+  name: z.string(),
+  thought: z.string().optional(),
+  arguments: z.unknown().optional(),
+  result: z.string().optional(),
+  duration_ms: z.number().optional(),
+  error: z.string().optional(),
+});
+export type ToolCallStep = z.infer<typeof toolCallStepSchema>;
 
 export const chatMessageSchema = z.object({
   id: z.string(),
@@ -84,7 +96,7 @@ export const chatMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string(),
   citations: z.array(citationSchema).default([]),
-  tool_calls: z.array(z.unknown()).default([]),
+  tool_calls: z.array(toolCallStepSchema).default([]),
   token_usage: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string(),
 });

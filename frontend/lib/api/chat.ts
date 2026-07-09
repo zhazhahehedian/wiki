@@ -10,6 +10,11 @@ export type ChatStreamEvent =
       data: { evidence_level: "none" | "weak" | "sufficient"; citations: ChatMessage["citations"] };
     }
   | { event: "token"; data: { text: string } }
+  | { event: "tool_call"; data: { id: string; name: string; arguments: string } }
+  | {
+      event: "tool_result";
+      data: { id: string; name: string; result?: string; duration_ms: number; error?: string };
+    }
   | { event: "done"; data: { message_id: string; conversation_id: string; usage?: Record<string, unknown> } }
   | { event: "error"; data: { code: string; message: string } };
 
@@ -19,6 +24,12 @@ export const chatApi = {
   },
   createConversation(kbId: string) {
     return apiFetch<Conversation>(`/api/v1/kbs/${kbId}/conversations`, { method: "POST" });
+  },
+  updateConversationMode(conversationId: string, mode: "rag" | "react") {
+    return apiFetch<Conversation>(`/api/v1/conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ mode }),
+    });
   },
   listMessages(conversationId: string, limit = 100, offset = 0) {
     return apiFetchList<ChatMessage>(`/api/v1/conversations/${conversationId}/messages?limit=${limit}&offset=${offset}`);
