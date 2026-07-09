@@ -42,7 +42,7 @@ export default function ConversationPage({
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col md:flex-row">
         <ChatSidebar kbId={kbId} selectedConversationId={conversationId} />
         <section className="flex min-h-[70vh] min-w-0 flex-1 flex-col border-x">
-          <ChatHeader kbId={kbId} conversation={conversation} />
+          <ChatHeader kbId={kbId} conversation={conversation} disabled={chat.isStreaming} />
           {messagesQuery.isError && (
             <p className="border-b px-4 py-2 text-sm text-destructive">{(messagesQuery.error as Error).message}</p>
           )}
