@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Send, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,15 @@ export function ChatInput({
 }) {
   const [value, setValue] = useState("");
   const boxRef = useRef<HTMLTextAreaElement | null>(null);
+  const prevDisabledRef = useRef(disabled);
+
+  useEffect(() => {
+    // 流式生成结束（disabled true→false）时把焦点还给输入框
+    if (prevDisabledRef.current && !disabled) {
+      boxRef.current?.focus();
+    }
+    prevDisabledRef.current = disabled;
+  }, [disabled]);
 
   function autoResize() {
     const box = boxRef.current;
@@ -40,7 +49,7 @@ export function ChatInput({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       submit();
     }

@@ -1553,7 +1553,7 @@ Expected: FAIL（placeholder 是英文，按钮无中文 aria-label）
 ```tsx
 "use client";
 
-import { FormEvent, KeyboardEvent, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Send, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -1571,6 +1571,15 @@ export function ChatInput({
 }) {
   const [value, setValue] = useState("");
   const boxRef = useRef<HTMLTextAreaElement | null>(null);
+  const prevDisabledRef = useRef(disabled);
+
+  useEffect(() => {
+    // 流式生成结束（disabled true→false）时把焦点还给输入框
+    if (prevDisabledRef.current && !disabled) {
+      boxRef.current?.focus();
+    }
+    prevDisabledRef.current = disabled;
+  }, [disabled]);
 
   function autoResize() {
     const box = boxRef.current;
@@ -1593,7 +1602,7 @@ export function ChatInput({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       submit();
     }
@@ -1632,6 +1641,10 @@ export function ChatInput({
 ```
 
 （若 Task 3 生成的 `Textarea` 不接受 `ref` prop——React 19 下函数组件透传 ref 通常没问题——改用其实际支持的方式，必要时包一层 `useEffect` 查询 DOM。）
+
+> **勘误（code review 修正，已落地）**：
+> 1. Enter 发送必须加 `!event.nativeEvent.isComposing` 守卫——否则中文输入法组词期间按 Enter（确认候选词）会把未上屏的拼音直接发送。配套回归测试：`fireEvent.keyDown(box, { key: "Enter", isComposing: true })` 断言 onSend 未被调用（jsdom 会把 `isComposing` 映射到 `nativeEvent.isComposing`）。
+> 2. 流式生成期间 textarea 被 disabled 会丢焦点，需在 `disabled` true→false 转变时 `boxRef.current?.focus()` 还焦点（用 ref 记录前值，避免首挂载误触发）。
 
 - [ ] **Step 4: 跑测试确认通过**
 

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -23,6 +23,17 @@ describe("ChatInput", () => {
     await user.type(box, "第一行{Shift>}{Enter}{/Shift}第二行");
     expect(onSend).not.toHaveBeenCalled();
     expect(box).toHaveValue("第一行\n第二行");
+  });
+
+  it("does not send on Enter while IME composition is in progress", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    render(<ChatInput onSend={onSend} onStop={vi.fn()} />);
+    const box = screen.getByPlaceholderText(/输入问题/);
+    await user.type(box, "duankou");
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect(onSend).not.toHaveBeenCalled();
+    expect(box).toHaveValue("duankou");
   });
 
   it("shows stop button and disables send while streaming", () => {
