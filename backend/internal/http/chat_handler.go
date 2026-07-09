@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -21,14 +22,43 @@ func NewChatHandler(svc *service.Chat) *ChatHandler {
 	return &ChatHandler{svc: svc}
 }
 
+type createConversationRequest struct {
+	Mode string `json:"mode"`
+}
+
 func (h *ChatHandler) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	var req createConversationRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "invalid JSON body"))
+			return
+		}
+	}
 	kbID := chi.URLParam(r, "kbID")
-	conv, err := h.svc.CreateConversation(r.Context(), kbID, "")
+	conv, err := h.svc.CreateConversation(r.Context(), kbID, req.Mode)
 	if err != nil {
 		WriteError(w, r, mapChatError(err))
 		return
 	}
 	WriteJSON(w, http.StatusCreated, conv)
+}
+
+type updateConversationRequest struct {
+	Mode string `json:"mode"`
+}
+
+func (h *ChatHandler) UpdateConversation(w http.ResponseWriter, r *http.Request) {
+	var req updateConversationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "invalid JSON body"))
+		return
+	}
+	conv, err := h.svc.UpdateMode(r.Context(), chi.URLParam(r, "conversationID"), req.Mode)
+	if err != nil {
+		WriteError(w, r, mapChatError(err))
+		return
+	}
+	WriteJSON(w, http.StatusOK, conv)
 }
 
 func (h *ChatHandler) ListConversations(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +114,9 @@ func (h *ChatHandler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func mapChatError(err error) error {
+	if errors.Is(err, service.ErrInvalidMode) {
+		return NewAPIError(http.StatusBadRequest, CodeValidationFailed, err.Error())
+	}
 	var convNotFound *service.ErrConversationNotFound
 	if errors.As(err, &convNotFound) {
 		return NewAPIError(http.StatusNotFound, CodeConversationNotFound, err.Error())

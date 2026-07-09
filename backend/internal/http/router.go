@@ -46,6 +46,7 @@ func NewRouter(h Handlers) http.Handler {
 
 		r.Get("/kbs/{kbID}/conversations", h.Chat.ListConversations)
 		r.Post("/kbs/{kbID}/conversations", h.Chat.CreateConversation)
+		r.Patch("/conversations/{conversationID}", h.Chat.UpdateConversation)
 		r.Get("/conversations/{conversationID}/messages", h.Chat.ListMessages)
 		r.Post("/conversations/{conversationID}/messages/stream", h.Chat.StreamMessage)
 		r.Get("/kbs/{kbID}/chunks/{chunkID}/neighbors", h.Chunk.Neighbors)
