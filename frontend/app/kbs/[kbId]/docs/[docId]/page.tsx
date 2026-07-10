@@ -6,18 +6,26 @@ import { ArrowLeft } from "lucide-react";
 import { useDoc } from "@/lib/hooks/use-docs";
 import { IngestStatusBadge } from "@/components/docs/ingest-status-badge";
 import { ChunkList } from "@/components/chunks/chunk-list";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function DocDetailPage({ params }: { params: Promise<{ kbId: string; docId: string }> }) {
   const { kbId, docId } = use(params);
   const { data: doc, isLoading, isError, error } = useDoc(docId);
 
   return (
-    <main className="container mx-auto max-w-5xl p-8">
+    <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+      <div className="mx-auto max-w-4xl">
       <Link href={`/kbs/${kbId}/docs`} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4">
         <ArrowLeft className="size-4 mr-1" /> 返回文档列表
       </Link>
 
-      {isLoading && <p className="text-muted-foreground">加载中...</p>}
+      {isLoading && (
+        <div className="space-y-3">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-32 w-full" />
+        </div>
+      )}
       {isError && <p className="text-destructive">加载失败：{(error as Error).message}</p>}
 
       {doc && (
@@ -49,6 +57,7 @@ export default function DocDetailPage({ params }: { params: Promise<{ kbId: stri
           </section>
         </>
       )}
+      </div>
     </main>
   );
 }
