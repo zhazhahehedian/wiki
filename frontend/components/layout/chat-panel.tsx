@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { chatApi } from "@/lib/api/chat";
-import { kbApi } from "@/lib/api/kb";
+import { useKbs } from "@/lib/hooks/use-kbs";
 import { cn } from "@/lib/utils";
 
 export function ChatPanel() {
@@ -25,7 +25,7 @@ export function ChatPanel() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const kbs = useQuery({ queryKey: ["kbs"], queryFn: () => kbApi.list() });
+  const kbs = useKbs();
   const currentKb = kbs.data?.items.find((kb) => kb.id === kbId) ?? null;
 
   const conversations = useQuery({

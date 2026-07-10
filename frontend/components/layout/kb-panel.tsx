@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeleteKb, useKbs } from "@/lib/hooks/use-kbs";
+import { clearLastKbId } from "@/lib/last-kb";
 import { cn } from "@/lib/utils";
 import type { KB } from "@/lib/schemas";
 
@@ -58,9 +59,13 @@ function KbRow({ kb, active }: { kb: KB; active: boolean }) {
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
+              disabled={del.isPending}
               onClick={() =>
                 del.mutate(kb.id, {
-                  onSuccess: () => toast.success("已删除"),
+                  onSuccess: () => {
+                    clearLastKbId(kb.id);
+                    toast.success("已删除");
+                  },
                   onError: (e) => toast.error(`删除失败：${(e as Error).message}`),
                 })
               }

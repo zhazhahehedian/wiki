@@ -22,7 +22,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
       <Rail />
-      <SidebarProvider className="min-h-0 min-w-0 flex-1">
+      {/* translate-x-0 让 SidebarProvider 成为内部 fixed 定位 Sidebar 的 containing block，避免面板锚定视口盖住 Rail */}
+      <SidebarProvider className="min-h-0 min-w-0 flex-1 translate-x-0">
         <Sidebar collapsible="offcanvas" className="border-r">
           <SidebarContent>{isChats ? <ChatPanel /> : <KbPanel />}</SidebarContent>
         </Sidebar>
