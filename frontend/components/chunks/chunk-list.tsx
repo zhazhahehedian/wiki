@@ -22,7 +22,7 @@ export function ChunkList({ docId }: { docId: string }) {
     );
   }
   if (isError) return <p className="text-sm text-destructive">加载失败：{(error as Error).message}</p>;
-  if (!data || data.items.length === 0) return <p className="text-sm text-muted-foreground">无切片</p>;
+  if (!data || data.total === 0) return <p className="text-sm text-muted-foreground">无切片</p>;
 
   const totalPages = Math.ceil(data.total / PAGE_SIZE);
 

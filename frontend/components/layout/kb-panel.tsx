@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Trash2 } from "lucide-react";
@@ -25,6 +26,7 @@ import { cn } from "@/lib/utils";
 import type { KB } from "@/lib/schemas";
 
 function KbRow({ kb, active }: { kb: KB; active: boolean }) {
+  const [open, setOpen] = useState(false);
   const del = useDeleteKb();
 
   return (
@@ -38,7 +40,7 @@ function KbRow({ kb, active }: { kb: KB; active: boolean }) {
         <span className="block truncate text-sm font-medium">{kb.name}</span>
         <span className="block truncate text-xs text-muted-foreground">{kb.description || "（无描述）"}</span>
       </Link>
-      <AlertDialog>
+      <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogTrigger
           render={
             <Button
@@ -63,6 +65,7 @@ function KbRow({ kb, active }: { kb: KB; active: boolean }) {
               onClick={() =>
                 del.mutate(kb.id, {
                   onSuccess: () => {
+                    setOpen(false);
                     clearLastKbId(kb.id);
                     toast.success("已删除");
                   },
