@@ -21,7 +21,7 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 3 已完成（2026-07-09，ReAct Agent 模式，spec：[2026-07-08-phase-3-react-agent-design.md](docs/superpowers/specs/2026-07-08-phase-3-react-agent-design.md)，plan：[2026-07-08-phase-3-react-agent-plan.md](docs/superpowers/plans/2026-07-08-phase-3-react-agent-plan.md)）。会话可切换 RAG / Agent 模式；Agent 模式手写 ReAct 循环（未引入 Eino，spec D1），LLM 通过 OpenAI tool calling 自主调用 kb_retrieval 与 list_documents，工具轨迹经 SSE tool_call/tool_result 实时推送并持久化到 messages.tool_calls JSONB，citations 跨多次检索按 chunk_id 去重。后端（含 e2e SSE + 取消）与前端（vitest + typecheck + lint）测试全绿。下一阶段：**阶段 3.5（UI 视觉升级，参考 argus 与 do-write 的 UI，需先 brainstorm 出 spec）**。
+> **当前进度**：阶段 3.5 已完成（2026-07-10，UI 视觉升级，spec：[2026-07-09-phase-3-5-ui-upgrade-design.md](docs/superpowers/specs/2026-07-09-phase-3-5-ui-upgrade-design.md)，plan：[2026-07-09-phase-3-5-ui-upgrade-plan.md](docs/superpowers/plans/2026-07-09-phase-3-5-ui-upgrade-plan.md)）。紫罗兰 OKLCH 主题 + next-themes 明暗切换；rail + 二级面板 AppShell（components/layout/）；对话页改为文档流 + 垂直 agent-timeline（工具轨迹/思考引用/自动折叠）+ 引用 chips 与 Sheet 抽屉；组件 loading/empty/error 状态补齐；全站界面文案中文化。后端零改动。lint/typecheck/vitest（10 files / 42 tests）全绿；截图验收（spec §9.2）与 build 验证（本机 Google Fonts 网络受限）待用户人工完成。下一阶段：**阶段 4（打磨 + Demo 友好，见主 spec §7）**。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 
@@ -106,7 +106,7 @@ shadcn 组件复制到 `components/ui/` 后可以改样式，**不要把 ui/ 组
 ```
 1. 在 backend/internal/agent/tools/ 新建 xxx.go，实现 ports.Tool 接口
 2. 在 cmd/server/main.go 的 agentToolFactory 注册
-3. 前端 tool-call-trace 无需改动（按 name/arguments/result 通用渲染）；如需专属展示再加分支
+3. 前端 agent-timeline 无需改动（按 name/arguments/result 通用渲染）；如需专属展示再加分支
 ```
 
 ---

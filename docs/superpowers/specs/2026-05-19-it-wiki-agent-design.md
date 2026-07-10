@@ -408,6 +408,9 @@ frontend/
 │   └── api/
 ├── components/
 │   ├── ui/                  # shadcn/ui
+│   ├── layout/              # app-shell, rail, kb-panel, chat-panel,
+│   │                          theme-toggle（rail + 二级面板布局）
+│   ├── common/              # empty-state 等通用组件
 │   ├── chat/                # chat-input, message-list, message-bubble,
 │   │                          citation-card, citation-drawer,
 │   │                          tool-call-trace, mode-switch
