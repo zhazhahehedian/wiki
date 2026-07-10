@@ -55,6 +55,8 @@ export function ChatPanel() {
             }
           />
           <DropdownMenuContent className="w-56">
+            {kbs.isLoading && <DropdownMenuItem disabled>加载中…</DropdownMenuItem>}
+            {kbs.isError && <DropdownMenuItem disabled>加载失败</DropdownMenuItem>}
             {kbs.data?.items.map((kb) => (
               <DropdownMenuItem key={kb.id} onClick={() => router.push(`/kbs/${kb.id}/chats`)}>
                 <span className="truncate">{kb.name}</span>
