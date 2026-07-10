@@ -412,10 +412,10 @@ frontend/
 │   │                          theme-toggle（rail + 二级面板布局）
 │   ├── common/              # empty-state 等通用组件
 │   ├── chat/                # chat-input, message-list, message-bubble,
-│   │                          citation-card, citation-drawer,
-│   │                          tool-call-trace, mode-switch
+│   │                          citation-chip, citation-drawer,
+│   │                          agent-timeline, chat-header
 │   ├── docs/                # doc-uploader, doc-table, ingest-status-badge
-│   └── kb/                  # kb-card
+│   └── kb/                  # kb-create-dialog
 ├── lib/
 │   ├── api/{client, kb, docs, chat, chunks}.ts
 │   ├── hooks/{use-chat-stream, use-kbs, use-docs}.ts
