@@ -40,11 +40,14 @@ export default function ConversationPage({
   return (
     <>
       <ChatHeader kbId={kbId} conversation={conversation} disabled={chat.isStreaming} />
-      {(messagesQuery.isError || chat.error) && (
+      {messagesQuery.isError && (
         <Alert variant="destructive" className="mx-4 mt-2">
-          <AlertDescription>
-            {messagesQuery.isError ? (messagesQuery.error as Error).message : chat.error}
-          </AlertDescription>
+          <AlertDescription>{(messagesQuery.error as Error).message}</AlertDescription>
+        </Alert>
+      )}
+      {chat.error && (
+        <Alert variant="destructive" className="mx-4 mt-2">
+          <AlertDescription>{chat.error}</AlertDescription>
         </Alert>
       )}
       <MessageList messages={chat.messages} onCitationClick={setSelectedCitation} />
