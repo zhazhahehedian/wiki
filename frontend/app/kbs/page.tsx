@@ -29,9 +29,9 @@ export default function KbsIndexPage() {
         </div>
       </header>
 
-      <main className="flex flex-1 items-center justify-center">
+      <div className="flex flex-1 items-center justify-center">
         <EmptyState icon={Library} title={title} description={description} />
-      </main>
+      </div>
     </div>
   );
 }

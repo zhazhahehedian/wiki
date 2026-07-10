@@ -13,7 +13,7 @@ export default function DocDetailPage({ params }: { params: Promise<{ kbId: stri
   const { data: doc, isLoading, isError, error } = useDoc(docId);
 
   return (
-    <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+    <div className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
       <div className="mx-auto max-w-4xl">
         <Link href={`/kbs/${kbId}/docs`} className="inline-flex items-center text-sm text-muted-foreground hover:text-foreground mb-4">
           <ArrowLeft className="size-4 mr-1" /> 返回文档列表
@@ -58,6 +58,6 @@ export default function DocDetailPage({ params }: { params: Promise<{ kbId: stri
           </>
         )}
       </div>
-    </main>
+    </div>
   );
 }

@@ -52,8 +52,8 @@ export async function streamConversationMessage(
   });
 
   if (!response.ok || !response.body) {
-    const message = await response.text().catch(() => "Stream request failed");
-    throw new Error(message || "Stream request failed");
+    const message = await response.text().catch(() => "流式请求失败");
+    throw new Error(message || "流式请求失败");
   }
 
   const reader = response.body.getReader();
