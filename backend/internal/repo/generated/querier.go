@@ -6,6 +6,7 @@ package generated
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,12 +28,16 @@ type Querier interface {
 	CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBaseParams) (KnowledgeBase, error)
 	CreateKnowledgeBaseForOwner(ctx context.Context, arg CreateKnowledgeBaseForOwnerParams) (KnowledgeBase, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
+	CreateUserSession(ctx context.Context, arg CreateUserSessionParams) (UserSession, error)
 	DeleteDocument(ctx context.Context, id uuid.UUID) error
 	DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) error
+	DeleteExpiredUserSessions(ctx context.Context, expiresAt time.Time) (int64, error)
 	DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error
 	DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKnowledgeBaseForOwnerParams) error
+	DeleteUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	FindDocumentByChecksum(ctx context.Context, arg FindDocumentByChecksumParams) (Document, error)
 	FindDocumentByChecksumForOwner(ctx context.Context, arg FindDocumentByChecksumForOwnerParams) (Document, error)
+	GetAuthUser(ctx context.Context, id uuid.UUID) (User, error)
 	GetConversation(ctx context.Context, id uuid.UUID) (Conversation, error)
 	GetConversationForOwner(ctx context.Context, arg GetConversationForOwnerParams) (Conversation, error)
 	GetConversationForUser(ctx context.Context, arg GetConversationForUserParams) (Conversation, error)
@@ -40,6 +45,8 @@ type Querier interface {
 	GetDocumentForOwner(ctx context.Context, arg GetDocumentForOwnerParams) (Document, error)
 	GetKnowledgeBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
 	GetKnowledgeBaseForOwner(ctx context.Context, arg GetKnowledgeBaseForOwnerParams) (KnowledgeBase, error)
+	GetOAuthAccount(ctx context.Context, id uuid.UUID) (OauthAccount, error)
+	GetUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (UserSession, error)
 	ListConversationsByKB(ctx context.Context, arg ListConversationsByKBParams) ([]Conversation, error)
 	ListConversationsByKBForOwner(ctx context.Context, arg ListConversationsByKBForOwnerParams) ([]Conversation, error)
 	ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBParams) ([]Document, error)
@@ -50,6 +57,7 @@ type Querier interface {
 	ListMessagesByConversationForUser(ctx context.Context, arg ListMessagesByConversationForUserParams) ([]Message, error)
 	ListRecentMessagesByConversation(ctx context.Context, arg ListRecentMessagesByConversationParams) ([]Message, error)
 	ListRecentMessagesByConversationForUser(ctx context.Context, arg ListRecentMessagesByConversationForUserParams) ([]Message, error)
+	MarkOAuthAccountReauthRequired(ctx context.Context, id uuid.UUID) error
 	TouchConversation(ctx context.Context, id uuid.UUID) error
 	TouchConversationForOwner(ctx context.Context, arg TouchConversationForOwnerParams) error
 	TouchConversationForUser(ctx context.Context, arg TouchConversationForUserParams) error
@@ -57,6 +65,8 @@ type Querier interface {
 	UpdateConversationModeForOwner(ctx context.Context, arg UpdateConversationModeForOwnerParams) (Conversation, error)
 	UpdateDocumentStatus(ctx context.Context, arg UpdateDocumentStatusParams) error
 	UpdateDocumentStatusForOwner(ctx context.Context, arg UpdateDocumentStatusForOwnerParams) error
+	UpdateOAuthAccountTokens(ctx context.Context, arg UpdateOAuthAccountTokensParams) error
+	UpsertOAuthIdentity(ctx context.Context, arg UpsertOAuthIdentityParams) (UpsertOAuthIdentityRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

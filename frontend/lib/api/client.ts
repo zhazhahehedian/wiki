@@ -44,6 +44,17 @@ export function apiRequestInit(opts: FetchOptions = {}): RequestInit {
   };
 }
 
+export async function apiErrorFromResponse(res: Response): Promise<APIError> {
+  let parsed: { error?: { code: string; message: string; details?: Record<string, unknown>; request_id?: string } } = {};
+  try {
+    parsed = await res.json();
+  } catch {
+    // ignore parse failure
+  }
+  const error = parsed.error ?? { code: "internal_error", message: res.statusText };
+  return new APIError(res.status, error.code, error.message, error.details, error.request_id);
+}
+
 export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
   const res = await fetch(apiURL(path), apiRequestInit(opts));
 
@@ -52,14 +63,7 @@ export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promis
   }
 
   if (!res.ok) {
-    let parsed: { error?: { code: string; message: string; details?: Record<string, unknown>; request_id?: string } } = {};
-    try {
-      parsed = await res.json();
-    } catch {
-      // ignore parse failure
-    }
-    const e = parsed.error ?? { code: "internal_error", message: res.statusText };
-    throw new APIError(res.status, e.code, e.message, e.details, e.request_id);
+    throw await apiErrorFromResponse(res);
   }
 
   return (await res.json()) as T;
@@ -71,14 +75,7 @@ export async function apiFetchList<T>(
 ): Promise<{ items: T[]; total: number }> {
   const res = await fetch(apiURL(path), apiRequestInit(opts));
   if (!res.ok) {
-    let body: { error?: { code: string; message: string; details?: Record<string, unknown>; request_id?: string } } = {};
-    try {
-      body = await res.json();
-    } catch {
-      // ignore
-    }
-    const e = body.error ?? { code: "internal_error", message: res.statusText };
-    throw new APIError(res.status, e.code, e.message, e.details, e.request_id);
+    throw await apiErrorFromResponse(res);
   }
   const total = parseInt(res.headers.get("X-Total-Count") ?? "0", 10);
   const items = (await res.json()) as T[];

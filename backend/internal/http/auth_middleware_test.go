@@ -1,11 +1,16 @@
 package http
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5/middleware"
 
 	authstore "github.com/zenith-wang/it-wiki/backend/internal/auth"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
@@ -108,7 +113,7 @@ func TestAuthMiddlewareEnforcesOriginAndSessionBoundCSRFForUnsafeMethods(t *test
 
 func TestRouterKeepsHealthAndOAuthPublicButProtectsBusinessRoutes(t *testing.T) {
 	h := newTestAuthHandler(t, &fakeAuthFlow{state: "state"}, &fakeSessionStore{}, fakeUserResolver{})
-	router := NewRouter(Handlers{Auth: h, FrontendOrigin: "https://app.example.test"})
+	router := NewRouter(Handlers{Auth: h})
 
 	for _, path := range []string{"/healthz", "/api/healthz", "/api/v1/auth/feishu/start"} {
 		rec := httptest.NewRecorder()
@@ -135,4 +140,41 @@ func TestNewRouterRequiresAuthHandler(t *testing.T) {
 	}()
 
 	_ = NewRouter(Handlers{})
+}
+
+func TestRouterDerivesCORSOriginFromAuthHandler(t *testing.T) {
+	t.Setenv("FRONTEND_ORIGIN", "")
+	h := newTestAuthHandler(t, &fakeAuthFlow{state: "state"}, &fakeSessionStore{}, fakeUserResolver{})
+	router := NewRouter(Handlers{Auth: h})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/start", nil)
+	req.Header.Set("Origin", "https://app.example.test")
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://app.example.test" {
+		t.Fatalf("Access-Control-Allow-Origin = %q", got)
+	}
+}
+
+func TestRouterDoesNotLogOAuthCallbackSecrets(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := middleware.DefaultLogger
+	middleware.DefaultLogger = middleware.RequestLogger(&middleware.DefaultLogFormatter{
+		Logger: log.New(&logs, "", 0),
+	})
+	defer func() { middleware.DefaultLogger = previousLogger }()
+
+	h := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{}, fakeUserResolver{})
+	router := NewRouter(Handlers{Auth: h})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=secret-state&code=secret-code", nil)
+	req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: "secret-state"})
+	router.ServeHTTP(httptest.NewRecorder(), req)
+
+	if strings.Contains(logs.String(), "secret-state") || strings.Contains(logs.String(), "secret-code") {
+		t.Fatalf("request log exposed OAuth callback secrets: %s", logs.String())
+	}
 }

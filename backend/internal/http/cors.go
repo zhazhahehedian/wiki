@@ -2,7 +2,6 @@ package http
 
 import (
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -10,9 +9,6 @@ func CORS(next http.Handler, configuredOrigins ...string) http.Handler {
 	allowedOrigin := ""
 	if len(configuredOrigins) > 0 {
 		allowedOrigin = strings.TrimRight(configuredOrigins[0], "/")
-	}
-	if allowedOrigin == "" {
-		allowedOrigin = strings.TrimRight(os.Getenv("FRONTEND_ORIGIN"), "/")
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

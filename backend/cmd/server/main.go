@@ -134,11 +134,16 @@ func run() error {
 	}
 	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, reactAgent, agentToolFactory)
 
+	authHandler, err := buildAuthHandler(cfg, pool)
+	if err != nil {
+		return fmt.Errorf("build auth handler: %w", err)
+	}
 	router := httpx.NewRouter(httpx.Handlers{
 		KB:    httpx.NewKBHandler(kbSvc),
 		Doc:   httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),
 		Chunk: httpx.NewChunkHandler(vstore, docSvc),
 		Chat:  httpx.NewChatHandler(chatSvc),
+		Auth:  authHandler,
 	})
 
 	runCtx, runCancel := context.WithCancel(context.Background())

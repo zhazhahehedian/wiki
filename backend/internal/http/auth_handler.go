@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,7 +16,11 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
 
-const defaultFeishuAuthorizeURL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
+const (
+	defaultFeishuAuthorizeURL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
+	OAuthStateCookieName      = "it_wiki_oauth_state"
+	oauthStateCookieTTL       = 5 * time.Minute
+)
 
 type AuthFlow interface {
 	BeginOAuth(ctx context.Context) (string, error)
@@ -37,6 +42,7 @@ type AuthHandlerConfig struct {
 }
 
 type AuthHandler struct {
+	disabled         bool
 	config           AuthHandlerConfig
 	flow             AuthFlow
 	sessions         ports.SessionStore
@@ -46,6 +52,9 @@ type AuthHandler struct {
 	frontendRedirect string
 }
 
+func NewDisabledAuthHandler() *AuthHandler {
+	return &AuthHandler{disabled: true}
+}
 func NewAuthHandler(config AuthHandlerConfig, flow AuthFlow, sessions ports.SessionStore, users UserResolver) (*AuthHandler, error) {
 	if flow == nil || sessions == nil || users == nil {
 		return nil, errors.New("auth handler dependencies are required")
@@ -85,12 +94,20 @@ func NewAuthHandler(config AuthHandlerConfig, flow AuthFlow, sessions ports.Sess
 	}, nil
 }
 
+func (h *AuthHandler) FrontendOrigin() string {
+	return h.frontendOrigin
+}
 func (h *AuthHandler) Start(w http.ResponseWriter, r *http.Request) {
+	if h.disabled {
+		http.NotFound(w, r)
+		return
+	}
 	state, err := h.flow.BeginOAuth(r.Context())
 	if err != nil {
 		WriteError(w, r, fmt.Errorf("begin oauth: %w", err))
 		return
 	}
+	h.setOAuthStateCookie(w, state)
 	destination := *h.authorizeURL
 	query := destination.Query()
 	query.Set("app_id", h.config.AppID)
@@ -101,9 +118,16 @@ func (h *AuthHandler) Start(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
+	if h.disabled {
+		http.NotFound(w, r)
+		return
+	}
+	h.clearOAuthStateCookie(w)
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
-	if state == "" || code == "" {
+	stateCookie, cookieErr := r.Cookie(OAuthStateCookieName)
+	if state == "" || code == "" || cookieErr != nil ||
+		subtle.ConstantTimeCompare([]byte(state), []byte(stateCookie.Value)) != 1 {
 		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "state and code are required"))
 		return
 	}
@@ -137,6 +161,22 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *AuthHandler) setOAuthStateCookie(w http.ResponseWriter, state string) {
+	expires := time.Now().Add(oauthStateCookieTTL)
+	http.SetCookie(w, &http.Cookie{
+		Name: OAuthStateCookieName, Value: state, Path: "/api/v1/auth/feishu/callback",
+		HttpOnly: true, Secure: h.config.CookieSecure, SameSite: http.SameSiteLaxMode,
+		MaxAge: int(oauthStateCookieTTL / time.Second), Expires: expires,
+	})
+}
+
+func (h *AuthHandler) clearOAuthStateCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name: OAuthStateCookieName, Value: "", Path: "/api/v1/auth/feishu/callback",
+		HttpOnly: true, Secure: h.config.CookieSecure, SameSite: http.SameSiteLaxMode,
+		MaxAge: -1, Expires: time.Unix(1, 0),
+	})
+}
 func (h *AuthHandler) setAuthCookies(w http.ResponseWriter, result service.AuthResult) {
 	expiresAt := result.Session.ExpiresAt
 	if expiresAt.IsZero() {

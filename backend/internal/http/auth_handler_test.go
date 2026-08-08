@@ -16,13 +16,15 @@ import (
 )
 
 type fakeAuthFlow struct {
-	state  string
-	result service.AuthResult
-	err    error
+	state         string
+	result        service.AuthResult
+	err           error
+	completeCalls int
 }
 
 func (f *fakeAuthFlow) BeginOAuth(context.Context) (string, error) { return f.state, f.err }
 func (f *fakeAuthFlow) CompleteOAuth(context.Context, string, string) (service.AuthResult, error) {
+	f.completeCalls++
 	return f.result, f.err
 }
 
@@ -102,6 +104,7 @@ func TestAuthCallbackSetsBoundedCookiesAndUsesConfiguredRedirect(t *testing.T) {
 	}}
 	h := newTestAuthHandler(t, flow, &fakeSessionStore{}, fakeUserResolver{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=s&code=c&redirect=https://evil.test", nil)
+	req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: "s"})
 	rec := httptest.NewRecorder()
 
 	h.Callback(rec, req)
@@ -110,17 +113,24 @@ func TestAuthCallbackSetsBoundedCookiesAndUsesConfiguredRedirect(t *testing.T) {
 		t.Fatalf("status/location = %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 	cookies := rec.Result().Cookies()
-	if len(cookies) != 2 {
-		t.Fatalf("cookies = %v, want session and csrf", cookies)
+	clearedState := findCookie(cookies, OAuthStateCookieName)
+	if clearedState == nil || clearedState.MaxAge >= 0 {
+		t.Fatalf("state cookie not cleared after success: %#v", clearedState)
 	}
-	session := cookies[0]
+	session := findCookie(cookies, SessionCookieName)
+	if session == nil {
+		t.Fatalf("cookies = %v, missing session", cookies)
+	}
 	if session.Name != SessionCookieName || session.Value != "opaque-session" || !session.HttpOnly || !session.Secure || session.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("session cookie = %#v", session)
 	}
 	if session.MaxAge <= 0 || session.MaxAge > 3600 {
 		t.Fatalf("session MaxAge = %d", session.MaxAge)
 	}
-	csrf := cookies[1]
+	csrf := findCookie(cookies, CSRFCookieName)
+	if csrf == nil {
+		t.Fatalf("cookies = %v, missing csrf", cookies)
+	}
 	if csrf.Name != CSRFCookieName || csrf.Value != "opaque-csrf" || csrf.HttpOnly || !csrf.Secure || csrf.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("csrf cookie = %#v", csrf)
 	}
@@ -172,4 +182,82 @@ func TestAuthLogoutRevokesSessionAndClearsCookies(t *testing.T) {
 			t.Fatalf("cookie not cleared: %#v", cookie)
 		}
 	}
+}
+
+func TestAuthStartBindsStateToHttpOnlyCookie(t *testing.T) {
+	h := newTestAuthHandler(t, &fakeAuthFlow{state: "opaque-state"}, &fakeSessionStore{}, fakeUserResolver{})
+	rec := httptest.NewRecorder()
+
+	h.Start(rec, httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/start", nil))
+
+	cookie := findCookie(rec.Result().Cookies(), OAuthStateCookieName)
+	if cookie == nil || cookie.Value != "opaque-state" || !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatalf("state cookie = %#v", cookie)
+	}
+	if cookie.MaxAge <= 0 || cookie.MaxAge > 300 {
+		t.Fatalf("state cookie MaxAge = %d", cookie.MaxAge)
+	}
+}
+
+func TestAuthCallbackRejectsMissingOrMismatchedStateCookieBeforeExchange(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		cookie string
+	}{
+		{name: "missing"},
+		{name: "mismatch", cookie: "other-state"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			flow := &fakeAuthFlow{}
+			h := newTestAuthHandler(t, flow, &fakeSessionStore{}, fakeUserResolver{})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=query-state&code=code", nil)
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: tt.cookie})
+			}
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			if rec.Code != http.StatusBadRequest || flow.completeCalls != 0 {
+				t.Fatalf("status/calls = %d/%d", rec.Code, flow.completeCalls)
+			}
+			cleared := findCookie(rec.Result().Cookies(), OAuthStateCookieName)
+			if cleared == nil || cleared.MaxAge >= 0 {
+				t.Fatalf("state cookie not cleared: %#v", cleared)
+			}
+		})
+	}
+}
+
+func TestAuthCallbackClearsStateCookieOnProviderFailureAndReplay(t *testing.T) {
+	flow := &fakeAuthFlow{err: errors.New("provider failed")}
+	h := newTestAuthHandler(t, flow, &fakeSessionStore{}, fakeUserResolver{})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=state&code=code", nil)
+	req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: "state"})
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if flow.completeCalls != 1 {
+		t.Fatalf("CompleteOAuth calls = %d", flow.completeCalls)
+	}
+	cleared := findCookie(rec.Result().Cookies(), OAuthStateCookieName)
+	if cleared == nil || cleared.MaxAge >= 0 {
+		t.Fatalf("state cookie not cleared after failure: %#v", cleared)
+	}
+
+	replay := httptest.NewRecorder()
+	h.Callback(replay, httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=state&code=code", nil))
+	if replay.Code != http.StatusBadRequest || flow.completeCalls != 1 {
+		t.Fatalf("replay status/calls = %d/%d", replay.Code, flow.completeCalls)
+	}
+}
+
+func findCookie(cookies []*http.Cookie, name string) *http.Cookie {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	return nil
 }

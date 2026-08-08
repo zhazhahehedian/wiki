@@ -123,9 +123,11 @@ func (f *scriptedChatLLM) ChatStream(context.Context, []ports.Message, ports.Cha
 // callbackTool 模拟 kb_retrieval：Invoke 时触发 onRetrieval。
 type callbackTool struct{ onRetrieval service.RetrievalCallback }
 
-func (t *callbackTool) Name() string                      { return "kb_retrieval" }
-func (t *callbackTool) Description() string               { return "fake" }
-func (t *callbackTool) ParametersSchema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *callbackTool) Name() string        { return "kb_retrieval" }
+func (t *callbackTool) Description() string { return "fake" }
+func (t *callbackTool) ParametersSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
 func (t *callbackTool) Invoke(ctx context.Context, _ string) (string, error) {
 	err := t.onRetrieval(ctx, &service.RetrievalResult{
 		EvidenceLevel: domain.EvidenceSufficient,
@@ -154,7 +156,7 @@ func newReActTestServer(t *testing.T, queries service.ChatQueries, llm ports.LLM
 	authHandler := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{
 		session: domain.Session{UserID: "test-user", CSRFTokenHash: csrfHash[:]},
 	}, fakeUserResolver{user: domain.User{ID: "test-user"}})
-	router := NewRouter(Handlers{Auth: authHandler, Chat: NewChatHandler(chatSvc), FrontendOrigin: "https://app.example.test"})
+	router := NewRouter(Handlers{Auth: authHandler, Chat: NewChatHandler(chatSvc)})
 	srv := httptest.NewServer(router)
 	baseTransport := srv.Client().Transport
 	srv.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {

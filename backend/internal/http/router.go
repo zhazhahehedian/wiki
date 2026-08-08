@@ -10,12 +10,11 @@ import (
 )
 
 type Handlers struct {
-	KB             *KBHandler
-	Doc            *DocumentHandler
-	Chunk          *ChunkHandler
-	Chat           *ChatHandler
-	Auth           *AuthHandler
-	FrontendOrigin string
+	KB    *KBHandler
+	Doc   *DocumentHandler
+	Chunk *ChunkHandler
+	Chat  *ChatHandler
+	Auth  *AuthHandler
 }
 
 func NewRouter(h Handlers) http.Handler {
@@ -26,11 +25,10 @@ func NewRouter(h Handlers) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(60 * time.Second))
 	r.Use(func(next http.Handler) http.Handler {
-		return CORS(next, h.FrontendOrigin)
+		return CORS(next, h.Auth.FrontendOrigin())
 	})
 
 	r.Get("/healthz", healthz)

@@ -42,6 +42,10 @@ func UserIDFromContext(ctx context.Context) string {
 
 func (h *AuthHandler) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.disabled {
+			writeUnauthenticated(w, r)
+			return
+		}
 		cookie, err := r.Cookie(SessionCookieName)
 		if err != nil || cookie.Value == "" {
 			writeUnauthenticated(w, r)

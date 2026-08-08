@@ -33,4 +33,38 @@ describe("streamConversationMessage", () => {
       }),
     );
   });
+
+  it.each([
+    { status: 401, code: "unauthenticated" },
+    { status: 403, code: "csrf_rejected" },
+  ])("preserves standardized $status errors", async ({ status, code }) => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code,
+            message: "request rejected",
+            details: { reason: "test" },
+            request_id: "request-1",
+          },
+        }),
+        {
+          status,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      streamConversationMessage("conversation-1", "hello", { onEvent: vi.fn() }),
+    ).rejects.toMatchObject({
+      name: "Error",
+      status,
+      code,
+      message: "request rejected",
+      details: { reason: "test" },
+      requestId: "request-1",
+    });
+  });
 });

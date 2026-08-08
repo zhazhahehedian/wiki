@@ -1,4 +1,4 @@
-import { apiFetch, apiFetchList, apiRequestInit, apiURL } from "./client";
+import { apiErrorFromResponse, apiFetch, apiFetchList, apiRequestInit, apiURL } from "./client";
 import { parseSSEBuffer } from "./sse";
 import type { ChatMessage, ChunkNeighbors, Conversation } from "@/lib/schemas";
 
@@ -52,9 +52,11 @@ export async function streamConversationMessage(
     }),
   );
 
-  if (!response.ok || !response.body) {
-    const message = await response.text().catch(() => "流式请求失败");
-    throw new Error(message || "流式请求失败");
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response);
+  }
+  if (!response.body) {
+    throw new Error("流式请求失败");
   }
 
   const reader = response.body.getReader();
