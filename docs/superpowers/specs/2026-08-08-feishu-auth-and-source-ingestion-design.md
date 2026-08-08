@@ -183,3 +183,10 @@ Feishu Client 对 429/5xx 做有限指数退避并尊重 `Retry-After`；River �
 ## 9. 明确延期项
 
 完整 RBAC/ABAC、自动同步/事件订阅、文件夹导入、飞书机器人、Skill 注册与执行器、文档历史回滚、知识推送、OCR、跨租户和 gRPC/SDK 不属于本 spec 的实施范围。
+
+## 10. Confirmed implementation decisions
+
+- bitguide learning project code may be selectively reused where its interfaces and behavior fit this repository.
+- Add `AgentRunner`, `AgentResolver`, and `ToolRegistry` seams. The first concrete agent remains `knowledge-rag`.
+- Add `agent_id` to conversations with a default of `knowledge-rag`.
+- Do not introduce etcd, Redis, Milvus, or dynamic agent hot reload in this phase.
