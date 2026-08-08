@@ -131,13 +131,9 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("register knowledge-rag runner: %w", err)
 	}
-	runner, err := runnerFactory.Create(ports.DefaultAgentID)
+	agentRegistry, err := runnerFactory.BuildRegistry()
 	if err != nil {
-		return fmt.Errorf("create knowledge-rag runner: %w", err)
-	}
-	agentRegistry := agent.NewRegistry()
-	if err := agentRegistry.Register(ports.DefaultAgentID, runner); err != nil {
-		return fmt.Errorf("register knowledge-rag agent: %w", err)
+		return fmt.Errorf("build agent registry: %w", err)
 	}
 	toolRegistry := agent.NewToolRegistry()
 	if err := toolRegistry.Register("kb_retrieval", func(_ context.Context, kbID string, callback ports.RetrievalCallback) (ports.Tool, error) {

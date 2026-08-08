@@ -21,7 +21,9 @@ type ErrDuplicateTool struct {
 	ToolName string
 }
 
-func (e *ErrDuplicateTool) Error() string { return fmt.Sprintf("tool already registered: %s", e.ToolName) }
+func (e *ErrDuplicateTool) Error() string {
+	return fmt.Sprintf("tool already registered: %s", e.ToolName)
+}
 
 type ToolRegistry struct {
 	mu       sync.RWMutex
@@ -41,7 +43,7 @@ func (r *ToolRegistry) Register(name string, builder ToolBuilder) error {
 	if name == "" {
 		return fmt.Errorf("tool name is required")
 	}
-	if builder == nil {
+	if isNilInterface(builder) {
 		return fmt.Errorf("builder for tool %s is required", name)
 	}
 
@@ -96,7 +98,7 @@ func (r *ToolRegistry) ToolsFor(ctx context.Context, agentID, kbID string, callb
 	names, ok := r.agents[agentID]
 	if !ok {
 		r.mu.RUnlock()
-		return nil, &ErrUnknownAgent{AgentID: agentID}
+		return nil, ports.NewUnknownAgentError(agentID)
 	}
 	builders := make([]ToolBuilder, len(names))
 	for i, name := range names {
@@ -110,7 +112,7 @@ func (r *ToolRegistry) ToolsFor(ctx context.Context, agentID, kbID string, callb
 		if err != nil {
 			return nil, fmt.Errorf("build tool %s: %w", names[i], err)
 		}
-		if tool == nil {
+		if isNilInterface(tool) {
 			return nil, fmt.Errorf("build tool %s: builder returned nil", names[i])
 		}
 		tools = append(tools, tool)

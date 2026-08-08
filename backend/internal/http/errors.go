@@ -12,6 +12,7 @@ const (
 	CodeKBNotFound           = "kb_not_found"
 	CodeDocNotFound          = "doc_not_found"
 	CodeConversationNotFound = "conversation_not_found"
+	CodeUnknownAgent         = "unknown_agent"
 	CodeChunkNotFound        = "chunk_not_found"
 	CodeDuplicateChecksum    = "duplicate_checksum"
 	CodeLLMStreamFailed      = "llm_stream_failed"

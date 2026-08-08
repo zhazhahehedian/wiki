@@ -204,6 +204,13 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 	if err != nil {
 		return err
 	}
+	var prepared *preparedReAct
+	if conv.Mode == domain.ConversationModeReAct {
+		prepared, err = s.prepareReAct(ctx, runner, conv, content, sink)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err := s.createMessage(ctx, conv.ID, domain.RoleUser, content, nil, nil, nil); err != nil {
 		return err
 	}
@@ -212,7 +219,7 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 	}
 
 	if conv.Mode == domain.ConversationModeReAct {
-		return s.askReAct(ctx, runner, conv, content, sink)
+		return s.askReAct(ctx, prepared, conv, sink)
 	}
 	return s.askRAG(ctx, conv, content, sink)
 }

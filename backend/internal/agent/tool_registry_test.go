@@ -87,6 +87,22 @@ func TestToolRegistryRejectsDuplicateAndUnknownRegistrations(t *testing.T) {
 	}
 }
 
+func TestToolRegistryRejectsTypedNilBuildResult(t *testing.T) {
+	registry := NewToolRegistry()
+	if err := registry.Register("nil-tool", func(context.Context, string, ports.RetrievalCallback) (ports.Tool, error) {
+		var tool *registryTool
+		return tool, nil
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if err := registry.RegisterAgent(ports.DefaultAgentID, "nil-tool"); err != nil {
+		t.Fatalf("RegisterAgent() error = %v", err)
+	}
+	if _, err := registry.ToolsFor(context.Background(), "", "kb", nil); err == nil {
+		t.Fatal("ToolsFor(typed nil tool) error = nil")
+	}
+}
+
 func TestToolRegistryDoesNotRetainRequestScopedInputs(t *testing.T) {
 	registry := NewToolRegistry()
 	if err := registry.Register("retrieve", toolBuilder("retrieve", true)); err != nil {

@@ -185,6 +185,37 @@ func TestChatAskStreamRejectsUnknownAgentBeforePersistingOrStreaming(t *testing.
 	}
 }
 
+func TestChatAskStreamRejectsMissingToolProfileBeforePersistingOrStreaming(t *testing.T) {
+	convID := uuid.New()
+	events := &eventLog{}
+	queries := &fakeChatQueries{
+		events: events,
+		conversation: generated.Conversation{
+			ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeReAct, AgentID: "known-agent",
+		},
+	}
+	runner := &recordingAgentRunner{}
+	resolver := agent.NewRegistry()
+	if err := resolver.Register("known-agent", runner); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, resolver, agent.NewToolRegistry())
+	sink := &recordingSink{events: events}
+
+	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
+	var unknown *agent.ErrUnknownAgent
+	if !errors.As(err, &unknown) || unknown.AgentID != "known-agent" {
+		t.Fatalf("AskStream() error = %#v, want ErrUnknownAgent", err)
+	}
+	if runner.called {
+		t.Fatal("runner called without a registered tool profile")
+	}
+	if sink.Started() || len(queries.createdMessages) != 0 || len(queries.touched) != 0 || len(events.items) != 0 {
+		t.Fatalf("missing tool profile caused side effects: started=%v messages=%#v touches=%#v events=%#v",
+			sink.Started(), queries.createdMessages, queries.touched, events.items)
+	}
+}
+
 type recordingAgentRunner struct {
 	called bool
 }

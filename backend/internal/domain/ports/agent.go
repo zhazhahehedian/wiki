@@ -2,11 +2,31 @@ package ports
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 )
 
 const DefaultAgentID = "knowledge-rag"
+
+var ErrUnknownAgent = errors.New("unknown agent")
+
+type UnknownAgentError struct {
+	AgentID string
+}
+
+func (e *UnknownAgentError) Error() string {
+	return fmt.Sprintf("unknown agent: %s", e.AgentID)
+}
+
+func (e *UnknownAgentError) Unwrap() error { return ErrUnknownAgent }
+
+func NewUnknownAgentError(agentID string) *UnknownAgentError {
+	return &UnknownAgentError{AgentID: agentID}
+}
+
+func IsUnknownAgent(err error) bool { return errors.Is(err, ErrUnknownAgent) }
 
 // AgentEventSink is the request-scoped event surface used by an agent runner.
 type AgentEventSink interface {

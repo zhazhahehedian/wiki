@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 
@@ -10,13 +11,7 @@ import (
 
 const DefaultAgentID = ports.DefaultAgentID
 
-type ErrUnknownAgent struct {
-	AgentID string
-}
-
-func (e *ErrUnknownAgent) Error() string {
-	return fmt.Sprintf("unknown agent: %s", e.AgentID)
-}
+type ErrUnknownAgent = ports.UnknownAgentError
 
 type ErrDuplicateAgent struct {
 	AgentID string
@@ -45,7 +40,7 @@ func (r *Registry) Register(agentID string, runner ports.AgentRunner) error {
 	if agentID == "" {
 		return fmt.Errorf("agent id is required")
 	}
-	if runner == nil {
+	if isNilInterface(runner) {
 		return fmt.Errorf("runner for agent %s is required", agentID)
 	}
 
@@ -68,9 +63,22 @@ func (r *Registry) Resolve(agentID string) (ports.AgentRunner, error) {
 	runner, ok := r.runners[agentID]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, &ErrUnknownAgent{AgentID: agentID}
+		return nil, ports.NewUnknownAgentError(agentID)
 	}
 	return runner, nil
+}
+
+func isNilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return reflected.IsNil()
+	default:
+		return false
+	}
 }
 
 var _ ports.AgentResolver = (*Registry)(nil)

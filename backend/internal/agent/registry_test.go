@@ -49,6 +49,17 @@ func TestRegistryRejectsUnknownAndDuplicateAgents(t *testing.T) {
 	if !errors.As(err, &unknown) || unknown.AgentID != "missing" {
 		t.Fatalf("Resolve(missing) error = %#v, want ErrUnknownAgent", err)
 	}
+	if !ports.IsUnknownAgent(err) {
+		t.Fatalf("Resolve(missing) error = %#v, want port unknown-agent classification", err)
+	}
+}
+
+func TestRegistryRejectsTypedNilRunner(t *testing.T) {
+	registry := NewRegistry()
+	var runner *stubRunner
+	if err := registry.Register("nil-runner", runner); err == nil {
+		t.Fatal("Register(typed nil runner) error = nil")
+	}
 }
 
 func TestFactoryCreatesRegisteredDefaultAgent(t *testing.T) {
@@ -74,6 +85,49 @@ func TestFactoryCreatesRegisteredDefaultAgent(t *testing.T) {
 		t.Fatal("Create(missing) error = nil")
 	}
 }
+
+func TestFactoryBuildRegistryCreatesAllRegisteredAgents(t *testing.T) {
+	factory := NewFactory()
+	defaultRunner := &stubRunner{id: ports.DefaultAgentID}
+	otherRunner := &stubRunner{id: "other-agent"}
+	for id, runner := range map[string]ports.AgentRunner{
+		ports.DefaultAgentID: defaultRunner,
+		"other-agent":        otherRunner,
+	} {
+		runner := runner
+		if err := factory.Register(id, func() (ports.AgentRunner, error) { return runner, nil }); err != nil {
+			t.Fatalf("Register(%q) error = %v", id, err)
+		}
+	}
+
+	registry, err := factory.BuildRegistry()
+	if err != nil {
+		t.Fatalf("BuildRegistry() error = %v", err)
+	}
+	for id, want := range map[string]ports.AgentRunner{"": defaultRunner, "other-agent": otherRunner} {
+		got, err := registry.Resolve(id)
+		if err != nil {
+			t.Fatalf("Resolve(%q) error = %v", id, err)
+		}
+		if got != want {
+			t.Fatalf("Resolve(%q) = %p, want %p", id, got, want)
+		}
+	}
+}
+
+func TestFactoryRejectsTypedNilBuildResult(t *testing.T) {
+	factory := NewFactory()
+	if err := factory.Register("nil-runner", func() (ports.AgentRunner, error) {
+		var runner *stubRunner
+		return runner, nil
+	}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if _, err := factory.Create("nil-runner"); err == nil {
+		t.Fatal("Create(typed nil runner) error = nil")
+	}
+}
+
 func TestRegistrySupportsConcurrentRegistrationAndResolution(t *testing.T) {
 	registry := NewRegistry()
 	if err := registry.Register(ports.DefaultAgentID, &stubRunner{id: ports.DefaultAgentID}); err != nil {

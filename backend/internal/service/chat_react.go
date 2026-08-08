@@ -10,20 +10,29 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
-func (s *Chat) askReAct(ctx context.Context, runner ports.AgentRunner, conv generated.Conversation, content string, sink ChatStreamSink) error {
+type preparedReAct struct {
+	runner    ports.AgentRunner
+	messages  []ports.Message
+	tools     []ports.Tool
+	citations []domain.Citation
+}
+
+func (s *Chat) prepareReAct(ctx context.Context, runner ports.AgentRunner, conv generated.Conversation, content string, sink ChatStreamSink) (*preparedReAct, error) {
 	if runner == nil || s.toolRegistry == nil {
-		return fmt.Errorf("react mode is not configured")
+		return nil, fmt.Errorf("react mode is not configured")
 	}
 	history, err := s.recentHistory(ctx, conv.ID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	msgs := agent.BuildReActMessages(history, content)
+	prepared := &preparedReAct{
+		runner:   runner,
+		messages: agent.BuildReActMessages(history, content),
+	}
 
 	// 跨多次 kb_retrieval 按 chunk_id 去重，citations 全量重编号（spec D4）
 	seen := map[string]bool{}
 	var allHits []ports.VectorSearchHit
-	var citations []domain.Citation
 	onRetrieval := func(cbCtx context.Context, r *RetrievalResult) error {
 		for _, hit := range r.Hits {
 			if seen[hit.ChunkID] {
@@ -32,17 +41,21 @@ func (s *Chat) askReAct(ctx context.Context, runner ports.AgentRunner, conv gene
 			seen[hit.ChunkID] = true
 			allHits = append(allHits, hit)
 		}
-		citations = BuildCitations(allHits)
+		prepared.citations = BuildCitations(allHits)
 		return sink.SendRetrieval(cbCtx, &RetrievalResult{
 			EvidenceLevel: r.EvidenceLevel,
-			Citations:     citations,
+			Citations:     prepared.citations,
 		})
 	}
-	tools, err := s.toolRegistry.ToolsFor(ctx, conv.AgentID, conv.KbID.String(), onRetrieval)
+	prepared.tools, err = s.toolRegistry.ToolsFor(ctx, conv.AgentID, conv.KbID.String(), onRetrieval)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	result, err := runner.Run(ctx, msgs, tools, sink)
+	return prepared, nil
+}
+
+func (s *Chat) askReAct(ctx context.Context, prepared *preparedReAct, conv generated.Conversation, sink ChatStreamSink) error {
+	result, err := prepared.runner.Run(ctx, prepared.messages, prepared.tools, sink)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
@@ -55,7 +68,7 @@ func (s *Chat) askReAct(ctx context.Context, runner ports.AgentRunner, conv gene
 		return err
 	}
 
-	assistant, err := s.createMessage(ctx, conv.ID, domain.RoleAssistant, result.Content, citations, result.Steps, result.Usage)
+	assistant, err := s.createMessage(ctx, conv.ID, domain.RoleAssistant, result.Content, prepared.citations, result.Steps, result.Usage)
 	if err != nil {
 		_ = sink.SendError(ctx, ChatStreamError{Code: "assistant_persist_failed", Message: err.Error()})
 		return err
