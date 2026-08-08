@@ -89,7 +89,7 @@ func (c *OAuthClient) UserInfo(ctx context.Context, accessToken string) (domain.
 			Email     string `json:"email"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := decodeSingleJSON(resp.Body, &response); err != nil {
 		return domain.FeishuIdentity{}, &ports.OAuthError{Code: "malformed_response", Message: "provider returned malformed JSON"}
 	}
 	if response.Code != 0 {
@@ -128,17 +128,17 @@ func (c *OAuthClient) requestToken(ctx context.Context, payload map[string]strin
 		return domain.OAuthToken{}, &ports.OAuthError{Code: "http_error", Message: "provider returned a non-success status"}
 	}
 	var response struct {
-		Code             int    `json:"code"`
-		Msg              string `json:"msg"`
-		Error            string `json:"error"`
-		ErrorDescription string `json:"error_description"`
-		AccessToken      string `json:"access_token"`
-		RefreshToken     string `json:"refresh_token"`
-		ExpiresIn        int64  `json:"expires_in"`
-		RefreshExpiresIn int64  `json:"refresh_expires_in"`
-		Scope            string `json:"scope"`
+		Code                  int    `json:"code"`
+		Msg                   string `json:"msg"`
+		Error                 string `json:"error"`
+		ErrorDescription      string `json:"error_description"`
+		AccessToken           string `json:"access_token"`
+		RefreshToken          string `json:"refresh_token"`
+		ExpiresIn             int64  `json:"expires_in"`
+		RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in"`
+		Scope                 string `json:"scope"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := decodeSingleJSON(resp.Body, &response); err != nil {
 		return domain.OAuthToken{}, &ports.OAuthError{Code: "malformed_response", Message: "provider returned malformed JSON"}
 	}
 	if response.Error != "" || response.Code != 0 {
@@ -158,11 +158,22 @@ func (c *OAuthClient) requestToken(ctx context.Context, payload map[string]strin
 		AccessTokenExpiresAt: now.Add(time.Duration(response.ExpiresIn) * time.Second),
 		Scopes:               strings.Fields(response.Scope),
 	}
-	if response.RefreshExpiresIn > 0 {
-		expiresAt := now.Add(time.Duration(response.RefreshExpiresIn) * time.Second)
+	if response.RefreshTokenExpiresIn > 0 {
+		expiresAt := now.Add(time.Duration(response.RefreshTokenExpiresIn) * time.Second)
 		token.RefreshTokenExpiresAt = &expiresAt
 	}
 	return token, nil
+}
+
+func decodeSingleJSON(body io.Reader, destination any) error {
+	decoder := json.NewDecoder(body)
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("response contains trailing JSON content")
+	}
+	return nil
 }
 
 var _ ports.OAuthClient = (*OAuthClient)(nil)

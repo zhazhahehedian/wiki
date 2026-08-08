@@ -30,7 +30,7 @@ func TestOAuthClientExchangesAuthorizationCode(t *testing.T) {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"code":0,"access_token":"access","refresh_token":"refresh","expires_in":7200,"refresh_expires_in":2592000,"scope":"docs:document:readonly offline_access"}`))
+		_, _ = w.Write([]byte(`{"code":0,"access_token":"access","refresh_token":"refresh","expires_in":7200,"refresh_token_expires_in":2592000,"scope":"docs:document:readonly offline_access"}`))
 	}))
 	defer server.Close()
 
@@ -41,6 +41,9 @@ func TestOAuthClientExchangesAuthorizationCode(t *testing.T) {
 	}
 	if token.AccessToken != "access" || token.RefreshToken != "refresh" || !token.AccessTokenExpiresAt.Equal(now.Add(2*time.Hour)) {
 		t.Fatalf("ExchangeCode() = %+v", token)
+	}
+	if token.RefreshTokenExpiresAt == nil || !token.RefreshTokenExpiresAt.Equal(now.Add(30*24*time.Hour)) {
+		t.Fatalf("refresh token expiry = %v", token.RefreshTokenExpiresAt)
 	}
 	if len(token.Scopes) != 2 || token.Scopes[0] != "docs:document:readonly" {
 		t.Fatalf("scopes = %#v", token.Scopes)
@@ -195,4 +198,55 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+func TestOAuthClientRejectsTrailingJSONContent(t *testing.T) {
+	tokenJSON := `{"code":0,"access_token":"access","refresh_token":"refresh","expires_in":7200}`
+	userInfoJSON := `{"code":0,"data":{"open_id":"ou_1","tenant_key":"tenant-a","name":"Wiki User"}}`
+	trailing := []struct {
+		name   string
+		suffix string
+	}{
+		{name: "garbage", suffix: ` trailing-garbage`},
+		{name: "second value", suffix: ` {}`},
+	}
+	endpoints := []struct {
+		name string
+		body string
+		call func(ports.OAuthClient) error
+	}{
+		{
+			name: "token",
+			body: tokenJSON,
+			call: func(client ports.OAuthClient) error {
+				_, err := client.ExchangeCode(context.Background(), "code")
+				return err
+			},
+		},
+		{
+			name: "user info",
+			body: userInfoJSON,
+			call: func(client ports.OAuthClient) error {
+				_, err := client.UserInfo(context.Background(), "access")
+				return err
+			},
+		},
+	}
+	for _, endpoint := range endpoints {
+		for _, extra := range trailing {
+			t.Run(endpoint.name+"/"+extra.name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					_, _ = w.Write([]byte(endpoint.body + extra.suffix))
+				}))
+				defer server.Close()
+				client := feishu.NewOAuthClient(feishu.OAuthConfig{BaseURL: server.URL}, server.Client())
+
+				err := endpoint.call(client)
+				var oauthErr *ports.OAuthError
+				if !errors.As(err, &oauthErr) || oauthErr.Code != "malformed_response" {
+					t.Fatalf("error = %#v, want malformed_response", err)
+				}
+			})
+		}
+	}
 }
