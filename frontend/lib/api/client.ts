@@ -1,5 +1,8 @@
 const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
+const CSRF_COOKIE = "it_wiki_csrf";
+const CSRF_HEADER = "X-CSRF-Token";
+
 export class APIError extends Error {
   code: string;
   status: number;
@@ -20,11 +23,19 @@ export interface FetchOptions {
   headers?: Record<string, string>;
 }
 
+export function apiURL(path: string): string {
+  return BASE + path;
+}
+
 export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
-  const res = await fetch(BASE + path, {
-    method: opts.method ?? "GET",
+  const method = opts.method ?? "GET";
+  const csrf = isSafeMethod(method) ? "" : readCookie(CSRF_COOKIE);
+  const res = await fetch(apiURL(path), {
+    method,
+    credentials: "include",
     headers: {
       ...(opts.body && !(opts.body instanceof FormData) ? { "Content-Type": "application/json" } : {}),
+      ...(csrf ? { [CSRF_HEADER]: csrf } : {}),
       ...(opts.headers ?? {}),
     },
     body: opts.body,
@@ -52,8 +63,9 @@ export async function apiFetchList<T>(
   path: string,
   opts: FetchOptions = {},
 ): Promise<{ items: T[]; total: number }> {
-  const res = await fetch(BASE + path, {
+  const res = await fetch(apiURL(path), {
     method: opts.method ?? "GET",
+    credentials: "include",
     headers: opts.headers,
   });
   if (!res.ok) {
@@ -69,4 +81,22 @@ export async function apiFetchList<T>(
   const total = parseInt(res.headers.get("X-Total-Count") ?? "0", 10);
   const items = (await res.json()) as T[];
   return { items: items ?? [], total };
+}
+
+function isSafeMethod(method: string): boolean {
+  return ["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+}
+
+function readCookie(name: string): string {
+  if (typeof document === "undefined") {
+    return "";
+  }
+  const prefix = name + "=";
+  for (const part of document.cookie.split(";")) {
+    const cookie = part.trim();
+    if (cookie.startsWith(prefix)) {
+      return decodeURIComponent(cookie.slice(prefix.length));
+    }
+  }
+  return "";
 }
