@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -17,9 +18,12 @@ type fakeSessionPersistence struct {
 	loadErr    error
 	deleted    []byte
 	cleanupNow time.Time
+	cleanupErr error
+	events     []string
 }
 
 func (f *fakeSessionPersistence) CreateSession(_ context.Context, session domain.Session) (domain.Session, error) {
+	f.events = append(f.events, "create")
 	f.created = session
 	return session, nil
 }
@@ -34,8 +38,9 @@ func (f *fakeSessionPersistence) DeleteSessionByTokenHash(_ context.Context, has
 }
 
 func (f *fakeSessionPersistence) DeleteExpiredSessions(_ context.Context, now time.Time) (int, error) {
+	f.events = append(f.events, "cleanup")
 	f.cleanupNow = now
-	return 3, nil
+	return 3, f.cleanupErr
 }
 
 func TestPersistentSessionStorePersistsOnlyCredentialHashes(t *testing.T) {
@@ -57,6 +62,41 @@ func TestPersistentSessionStorePersistsOnlyCredentialHashes(t *testing.T) {
 	}
 	if bytes.Contains(persistence.created.TokenHash, []byte(token)) || bytes.Contains(persistence.created.CSRFTokenHash, []byte(csrf)) {
 		t.Fatal("persistent session contains raw credentials")
+	}
+}
+
+func TestPersistentSessionStoreCleansExpiredRowsBeforeCreating(t *testing.T) {
+	now := time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC)
+	persistence := &fakeSessionPersistence{}
+	store := NewPersistentSessionStore(persistence, func() time.Time { return now })
+
+	if _, _, _, err := store.Create(context.Background(), "user-1", now.Add(time.Hour)); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if !slices.Equal(persistence.events, []string{"cleanup", "create"}) {
+		t.Fatalf("events = %#v", persistence.events)
+	}
+	if !persistence.cleanupNow.Equal(now) {
+		t.Fatalf("cleanup now = %s, want %s", persistence.cleanupNow, now)
+	}
+}
+
+func TestPersistentSessionStoreStopsCreationWhenCleanupFails(t *testing.T) {
+	cleanupErr := errors.New("cleanup failed")
+	persistence := &fakeSessionPersistence{cleanupErr: cleanupErr}
+	store := NewPersistentSessionStore(persistence, time.Now)
+
+	session, token, csrf, err := store.Create(context.Background(), "user-1", time.Now().Add(time.Hour))
+
+	if !errors.Is(err, cleanupErr) {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if session.ID != "" || token != "" || csrf != "" {
+		t.Fatalf("Create() returned credentials after cleanup failure: %#v %q %q", session, token, csrf)
+	}
+	if !slices.Equal(persistence.events, []string{"cleanup"}) {
+		t.Fatalf("events = %#v", persistence.events)
 	}
 }
 

@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5/middleware"
-
 	authstore "github.com/zenith-wang/it-wiki/backend/internal/auth"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 )
@@ -160,13 +158,11 @@ func TestRouterDerivesCORSOriginFromAuthHandler(t *testing.T) {
 	}
 }
 
-func TestRouterDoesNotLogOAuthCallbackSecrets(t *testing.T) {
+func TestRouterLogsSanitizedOAuthCallbackAccess(t *testing.T) {
 	var logs bytes.Buffer
-	previousLogger := middleware.DefaultLogger
-	middleware.DefaultLogger = middleware.RequestLogger(&middleware.DefaultLogFormatter{
-		Logger: log.New(&logs, "", 0),
-	})
-	defer func() { middleware.DefaultLogger = previousLogger }()
+	previousWriter := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousWriter)
 
 	h := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{}, fakeUserResolver{})
 	router := NewRouter(Handlers{Auth: h})
@@ -174,7 +170,13 @@ func TestRouterDoesNotLogOAuthCallbackSecrets(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: "secret-state"})
 	router.ServeHTTP(httptest.NewRecorder(), req)
 
-	if strings.Contains(logs.String(), "secret-state") || strings.Contains(logs.String(), "secret-code") {
-		t.Fatalf("request log exposed OAuth callback secrets: %s", logs.String())
+	got := logs.String()
+	for _, want := range []string{"GET", "/api/v1/auth/feishu/callback", "status=302"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("access log = %q, missing %q", got, want)
+		}
+	}
+	if strings.Contains(got, "secret-state") || strings.Contains(got, "secret-code") {
+		t.Fatalf("request log exposed OAuth callback secrets: %s", got)
 	}
 }

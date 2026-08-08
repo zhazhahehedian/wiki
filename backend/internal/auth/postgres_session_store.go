@@ -29,6 +29,10 @@ func NewPersistentSessionStore(persistence SessionPersistence, now func() time.T
 }
 
 func (s *PersistentSessionStore) Create(ctx context.Context, userID string, expiresAt time.Time) (domain.Session, string, string, error) {
+	now := s.now()
+	if _, err := s.persistence.DeleteExpiredSessions(ctx, now); err != nil {
+		return domain.Session{}, "", "", err
+	}
 	token, err := randomToken()
 	if err != nil {
 		return domain.Session{}, "", "", err
@@ -45,7 +49,7 @@ func (s *PersistentSessionStore) Create(ctx context.Context, userID string, expi
 		TokenHash:     append([]byte(nil), tokenHash[:]...),
 		CSRFTokenHash: append([]byte(nil), csrfHash[:]...),
 		ExpiresAt:     expiresAt,
-		CreatedAt:     s.now(),
+		CreatedAt:     now,
 	})
 	if err != nil {
 		return domain.Session{}, "", "", err
