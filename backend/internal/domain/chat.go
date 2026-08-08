@@ -21,6 +21,7 @@ type Conversation struct {
 	KBID      string    `json:"kb_id"`
 	Title     string    `json:"title"`
 	Mode      string    `json:"mode"`
+	AgentID   string    `json:"agent_id"`
 	UserID    string    `json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

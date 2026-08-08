@@ -10,8 +10,8 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
-func (s *Chat) askReAct(ctx context.Context, conv generated.Conversation, content string, sink ChatStreamSink) error {
-	if s.reactAgent == nil || s.toolFactory == nil {
+func (s *Chat) askReAct(ctx context.Context, runner ports.AgentRunner, conv generated.Conversation, content string, sink ChatStreamSink) error {
+	if runner == nil || s.toolRegistry == nil {
 		return fmt.Errorf("react mode is not configured")
 	}
 	history, err := s.recentHistory(ctx, conv.ID)
@@ -38,9 +38,11 @@ func (s *Chat) askReAct(ctx context.Context, conv generated.Conversation, conten
 			Citations:     citations,
 		})
 	}
-	tools := s.toolFactory(conv.KbID.String(), onRetrieval)
-
-	result, err := s.reactAgent.Run(ctx, msgs, tools, sink)
+	tools, err := s.toolRegistry.ToolsFor(ctx, conv.AgentID, conv.KbID.String(), onRetrieval)
+	if err != nil {
+		return err
+	}
+	result, err := runner.Run(ctx, msgs, tools, sink)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr

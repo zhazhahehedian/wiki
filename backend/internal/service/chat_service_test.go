@@ -53,7 +53,7 @@ func TestChatAskStreamPersistsUserThenRetrievalThenAssistant(t *testing.T) {
 		{Text: "the runbook.", Usage: &ports.TokenUsage{PromptTokens: 3, CompletionTokens: 4, TotalTokens: 7}},
 	}}
 	sink := &recordingSink{events: events}
-	svc := NewChat(queries, retrieval, llm, "phase-model", 10, nil, nil)
+	svc := NewChat(queries, retrieval, llm, "phase-model", 10, testAgentResolver(nil), nil)
 
 	err := svc.AskStream(context.Background(), convID.String(), " how rotate? ", sink)
 	if err != nil {
@@ -122,7 +122,7 @@ func TestChatAskStreamDoesNotPersistAssistantOnLLMFailure(t *testing.T) {
 		0,
 	)
 	llmErr := errors.New("provider disconnected")
-	svc := NewChat(queries, retrieval, &fakeLLM{chunks: []ports.StreamChunk{{Err: llmErr}}}, "phase-model", 10, nil, nil)
+	svc := NewChat(queries, retrieval, &fakeLLM{chunks: []ports.StreamChunk{{Err: llmErr}}}, "phase-model", 10, testAgentResolver(nil), nil)
 	sink := &recordingSink{events: events}
 
 	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
@@ -159,6 +159,82 @@ func TestChatAskStreamReturnsNotFoundBeforeSSEStarts(t *testing.T) {
 	}
 }
 
+func TestChatAskStreamRejectsUnknownAgentBeforePersistingOrStreaming(t *testing.T) {
+	convID := uuid.New()
+	events := &eventLog{}
+	queries := &fakeChatQueries{
+		events: events,
+		conversation: generated.Conversation{
+			ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeRAG, AgentID: "missing-agent",
+		},
+	}
+	resolver := agent.NewRegistry()
+	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, resolver, nil)
+	sink := &recordingSink{events: events}
+
+	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
+	var unknown *agent.ErrUnknownAgent
+	if !errors.As(err, &unknown) || unknown.AgentID != "missing-agent" {
+		t.Fatalf("AskStream() error = %#v, want ErrUnknownAgent", err)
+	}
+	if sink.Started() {
+		t.Fatal("sink started for unknown agent")
+	}
+	if len(queries.createdMessages) != 0 || len(events.items) != 0 {
+		t.Fatalf("unknown agent persisted/streamed: messages=%#v events=%#v", queries.createdMessages, events.items)
+	}
+}
+
+type recordingAgentRunner struct {
+	called bool
+}
+
+func (r *recordingAgentRunner) Run(context.Context, []ports.Message, []ports.Tool, ports.AgentEventSink) (*ports.AgentResult, error) {
+	r.called = true
+	return &ports.AgentResult{Content: "selected agent response"}, nil
+}
+
+func testAgentResolver(runner ports.AgentRunner) *agent.Registry {
+	if runner == nil {
+		runner = &recordingAgentRunner{}
+	}
+	resolver := agent.NewRegistry()
+	if err := resolver.Register(ports.DefaultAgentID, runner); err != nil {
+		panic(err)
+	}
+	return resolver
+}
+
+func TestChatAskStreamUsesConversationAgentID(t *testing.T) {
+	convID := uuid.New()
+	events := &eventLog{}
+	queries := &fakeChatQueries{
+		events: events,
+		conversation: generated.Conversation{
+			ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeReAct, AgentID: "special-agent",
+		},
+	}
+	runner := &recordingAgentRunner{}
+	resolver := agent.NewRegistry()
+	if err := resolver.Register("special-agent", runner); err != nil {
+		t.Fatal(err)
+	}
+	toolRegistry := agent.NewToolRegistry()
+	if err := toolRegistry.RegisterAgent("special-agent"); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, resolver, toolRegistry)
+
+	if err := svc.AskStream(context.Background(), convID.String(), "question", &recordingSink{events: events}); err != nil {
+		t.Fatalf("AskStream() error = %v", err)
+	}
+	if !runner.called {
+		t.Fatal("conversation agent runner was not called")
+	}
+	if len(queries.createdMessages) != 2 || queries.createdMessages[1].Content != "selected agent response" {
+		t.Fatalf("created messages = %#v", queries.createdMessages)
+	}
+}
 func TestBuildRAGMessagesIncludesNoEvidenceContext(t *testing.T) {
 	msgs := BuildRAGMessages(nil, []*domain.ChatMessage{
 		{Role: "tool", Content: "ignored"},
@@ -222,7 +298,7 @@ func TestAskStreamClientCancelDoesNotPersistAssistant(t *testing.T) {
 		},
 	}
 	retrieval := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
-	svc := NewChat(queries, retrieval, blockingLLM{}, "test-model", 0, nil, nil)
+	svc := NewChat(queries, retrieval, blockingLLM{}, "test-model", 0, testAgentResolver(nil), nil)
 	sink := &cancelOnTokenSink{
 		recordingSink: recordingSink{events: queries.events},
 		cancel:        cancel,
@@ -430,9 +506,11 @@ func (f *scriptedChatLLM) ChatStream(context.Context, []ports.Message, ports.Cha
 // callbackTool 模拟 kb_retrieval：Invoke 时触发 onRetrieval。
 type callbackTool struct{ onRetrieval RetrievalCallback }
 
-func (t *callbackTool) Name() string                      { return "kb_retrieval" }
-func (t *callbackTool) Description() string               { return "fake" }
-func (t *callbackTool) ParametersSchema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *callbackTool) Name() string        { return "kb_retrieval" }
+func (t *callbackTool) Description() string { return "fake" }
+func (t *callbackTool) ParametersSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
 func (t *callbackTool) Invoke(ctx context.Context, _ string) (string, error) {
 	err := t.onRetrieval(ctx, &RetrievalResult{
 		EvidenceLevel: domain.EvidenceSufficient,
@@ -445,10 +523,17 @@ func (t *callbackTool) Invoke(ctx context.Context, _ string) (string, error) {
 }
 
 func newReActChat(queries *fakeChatQueries, llm ports.LLMClient) *Chat {
-	factory := func(kbID string, onRetrieval RetrievalCallback) []ports.Tool {
-		return []ports.Tool{&callbackTool{onRetrieval: onRetrieval}}
+	resolver := testAgentResolver(agent.New(llm, "test-model", 5))
+	tools := agent.NewToolRegistry()
+	if err := tools.Register("kb_retrieval", func(_ context.Context, _ string, callback ports.RetrievalCallback) (ports.Tool, error) {
+		return &callbackTool{onRetrieval: callback}, nil
+	}); err != nil {
+		panic(err)
 	}
-	return NewChat(queries, nil, llm, "test-model", 0, agent.New(llm, "test-model", 5), factory)
+	if err := tools.RegisterAgent(ports.DefaultAgentID, "kb_retrieval"); err != nil {
+		panic(err)
+	}
+	return NewChat(queries, nil, llm, "test-model", 0, resolver, tools)
 }
 
 func TestChatAskStreamReActPersistsStepsAndCitations(t *testing.T) {

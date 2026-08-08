@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/zenith-wang/it-wiki/backend/internal/agent"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
@@ -25,13 +24,7 @@ func (e *ErrConversationNotFound) Error() string { return "conversation not foun
 // ErrInvalidMode 表示 mode 不在 rag/react 枚举内。
 var ErrInvalidMode = errors.New("mode must be 'rag' or 'react'")
 
-// RetrievalCallback 在 Agent 每次 kb_retrieval 成功后触发。
-type RetrievalCallback func(ctx context.Context, r *RetrievalResult) error
-
-// AgentToolFactory 按会话构造工具集（kbID 闭包注入）。由 main.go 组装，
-// 避免 service ↔ agent/tools 循环依赖。
-type AgentToolFactory func(kbID string, onRetrieval RetrievalCallback) []ports.Tool
-
+type RetrievalCallback = ports.RetrievalCallback
 type ChatQueries interface {
 	CreateConversation(ctx context.Context, arg generated.CreateConversationParams) (generated.Conversation, error)
 	GetConversation(ctx context.Context, id uuid.UUID) (generated.Conversation, error)
@@ -72,18 +65,17 @@ type Chat struct {
 	llm             ports.LLMClient
 	llmModel        string
 	historyMessages int
-	reactAgent      *agent.ReactAgent
-	toolFactory     AgentToolFactory
+	agentResolver   ports.AgentResolver
+	toolRegistry    ports.ToolRegistry
 }
 
-func NewChat(q ChatQueries, retrieval *Retrieval, llm ports.LLMClient, llmModel string, historyMessages int, reactAgent *agent.ReactAgent, toolFactory AgentToolFactory) *Chat {
+func NewChat(q ChatQueries, retrieval *Retrieval, llm ports.LLMClient, llmModel string, historyMessages int, agentResolver ports.AgentResolver, toolRegistry ports.ToolRegistry) *Chat {
 	if historyMessages < 0 {
 		historyMessages = 10
 	}
 	return &Chat{queries: q, retrieval: retrieval, llm: llm, llmModel: llmModel,
-		historyMessages: historyMessages, reactAgent: reactAgent, toolFactory: toolFactory}
+		historyMessages: historyMessages, agentResolver: agentResolver, toolRegistry: toolRegistry}
 }
-
 func (s *Chat) CreateConversation(ctx context.Context, kbID, mode string) (*domain.Conversation, error) {
 	if mode == "" {
 		mode = domain.ConversationModeRAG
@@ -205,7 +197,13 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 	if conv.Mode != domain.ConversationModeRAG && conv.Mode != domain.ConversationModeReAct {
 		return fmt.Errorf("unsupported conversation mode: %s", conv.Mode)
 	}
-
+	if s.agentResolver == nil {
+		return fmt.Errorf("agent resolver is not configured")
+	}
+	runner, err := s.agentResolver.Resolve(conv.AgentID)
+	if err != nil {
+		return err
+	}
 	if _, err := s.createMessage(ctx, conv.ID, domain.RoleUser, content, nil, nil, nil); err != nil {
 		return err
 	}
@@ -214,7 +212,7 @@ func (s *Chat) AskStream(ctx context.Context, conversationID, content string, si
 	}
 
 	if conv.Mode == domain.ConversationModeReAct {
-		return s.askReAct(ctx, conv, content, sink)
+		return s.askReAct(ctx, runner, conv, content, sink)
 	}
 	return s.askRAG(ctx, conv, content, sink)
 }
@@ -353,6 +351,7 @@ func rowToConversation(r generated.Conversation) *domain.Conversation {
 		KBID:      r.KbID.String(),
 		Title:     r.Title,
 		Mode:      r.Mode,
+		AgentID:   r.AgentID,
 		UserID:    r.UserID,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,

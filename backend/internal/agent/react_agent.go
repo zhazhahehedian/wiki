@@ -11,18 +11,12 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
-// EventSink 是 service.ChatStreamSink 的结构化子集，service 的实现自动满足。
-type EventSink interface {
-	SendToken(ctx context.Context, text string) error
-	SendToolCall(ctx context.Context, ev domain.ToolCallEvent) error
-	SendToolResult(ctx context.Context, ev domain.ToolResultEvent) error
-}
+// Compatibility aliases keep the original public surface while making
+// ReactAgent satisfy ports.AgentRunner directly.
+type EventSink = ports.AgentEventSink
+type Result = ports.AgentResult
 
-type Result struct {
-	Content string
-	Steps   []domain.ToolCallStep
-	Usage   *ports.TokenUsage
-}
+var _ ports.AgentRunner = (*ReactAgent)(nil)
 
 type ReactAgent struct {
 	llm           ports.LLMClient

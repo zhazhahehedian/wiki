@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
 
@@ -14,10 +15,10 @@ import (
 type KBRetrieval struct {
 	retrieval   *service.Retrieval
 	kbID        string
-	onRetrieval func(ctx context.Context, r *service.RetrievalResult) error
+	onRetrieval ports.RetrievalCallback
 }
 
-func NewKBRetrieval(retrieval *service.Retrieval, kbID string, onRetrieval func(ctx context.Context, r *service.RetrievalResult) error) *KBRetrieval {
+func NewKBRetrieval(retrieval *service.Retrieval, kbID string, onRetrieval ports.RetrievalCallback) *KBRetrieval {
 	return &KBRetrieval{retrieval: retrieval, kbID: kbID, onRetrieval: onRetrieval}
 }
 

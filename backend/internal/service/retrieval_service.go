@@ -16,12 +16,7 @@ type Retrieval struct {
 	minScore float32
 }
 
-type RetrievalResult struct {
-	Question      string
-	EvidenceLevel string
-	Hits          []ports.VectorSearchHit
-	Citations     []domain.Citation
-}
+type RetrievalResult = ports.RetrievalResult
 
 func NewRetrieval(embedder ports.Embedder, vstore ports.VectorStore, topK int, minScore float32) *Retrieval {
 	if topK < 1 {

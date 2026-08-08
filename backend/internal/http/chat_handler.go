@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/agent"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
@@ -114,6 +115,10 @@ func (h *ChatHandler) StreamMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func mapChatError(err error) error {
+	var unknownAgent *agent.ErrUnknownAgent
+	if errors.As(err, &unknownAgent) {
+		return NewAPIError(http.StatusBadRequest, CodeValidationFailed, err.Error())
+	}
 	if errors.Is(err, service.ErrInvalidMode) {
 		return NewAPIError(http.StatusBadRequest, CodeValidationFailed, err.Error())
 	}

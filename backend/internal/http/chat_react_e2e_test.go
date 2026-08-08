@@ -147,10 +147,20 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func newReActTestServer(t *testing.T, queries service.ChatQueries, llm ports.LLMClient) *httptest.Server {
 	t.Helper()
-	factory := func(kbID string, onRetrieval service.RetrievalCallback) []ports.Tool {
-		return []ports.Tool{&callbackTool{onRetrieval: onRetrieval}}
+	resolver := agent.NewRegistry()
+	if err := resolver.Register(ports.DefaultAgentID, agent.New(llm, "test-model", 5)); err != nil {
+		t.Fatal(err)
 	}
-	chatSvc := service.NewChat(queries, nil, llm, "test-model", 0, agent.New(llm, "test-model", 5), factory)
+	tools := agent.NewToolRegistry()
+	if err := tools.Register("kb_retrieval", func(_ context.Context, _ string, callback ports.RetrievalCallback) (ports.Tool, error) {
+		return &callbackTool{onRetrieval: callback}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tools.RegisterAgent(ports.DefaultAgentID, "kb_retrieval"); err != nil {
+		t.Fatal(err)
+	}
+	chatSvc := service.NewChat(queries, nil, llm, "test-model", 0, resolver, tools)
 	csrf := "test-csrf"
 	csrfHash := sha256.Sum256([]byte(csrf))
 	authHandler := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{

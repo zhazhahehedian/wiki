@@ -125,15 +125,35 @@ func run() error {
 	docSvc := service.NewDocument(queries)
 	ingestionSvc := service.NewIngestion(queries, mc, rclient)
 	retrievalSvc := service.NewRetrieval(embed, vstore, cfg.RAGTopK, cfg.RAGMinScore)
-	reactAgent := agent.New(llmClient, cfg.LLMModel, 5)
-	agentToolFactory := func(kbID string, onRetrieval service.RetrievalCallback) []ports.Tool {
-		return []ports.Tool{
-			agenttools.NewKBRetrieval(retrievalSvc, kbID, onRetrieval),
-			agenttools.NewListDocuments(docSvc, kbID),
-		}
+	runnerFactory := agent.NewFactory()
+	if err := runnerFactory.Register(ports.DefaultAgentID, func() (ports.AgentRunner, error) {
+		return agent.New(llmClient, cfg.LLMModel, 5), nil
+	}); err != nil {
+		return fmt.Errorf("register knowledge-rag runner: %w", err)
 	}
-	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, reactAgent, agentToolFactory)
-
+	runner, err := runnerFactory.Create(ports.DefaultAgentID)
+	if err != nil {
+		return fmt.Errorf("create knowledge-rag runner: %w", err)
+	}
+	agentRegistry := agent.NewRegistry()
+	if err := agentRegistry.Register(ports.DefaultAgentID, runner); err != nil {
+		return fmt.Errorf("register knowledge-rag agent: %w", err)
+	}
+	toolRegistry := agent.NewToolRegistry()
+	if err := toolRegistry.Register("kb_retrieval", func(_ context.Context, kbID string, callback ports.RetrievalCallback) (ports.Tool, error) {
+		return agenttools.NewKBRetrieval(retrievalSvc, kbID, callback), nil
+	}); err != nil {
+		return fmt.Errorf("register kb_retrieval tool: %w", err)
+	}
+	if err := toolRegistry.Register("list_documents", func(_ context.Context, kbID string, _ ports.RetrievalCallback) (ports.Tool, error) {
+		return agenttools.NewListDocuments(docSvc, kbID), nil
+	}); err != nil {
+		return fmt.Errorf("register list_documents tool: %w", err)
+	}
+	if err := toolRegistry.RegisterAgent(ports.DefaultAgentID, "kb_retrieval", "list_documents"); err != nil {
+		return fmt.Errorf("register knowledge-rag tools: %w", err)
+	}
+	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, agentRegistry, toolRegistry)
 	authHandler, err := buildAuthHandler(cfg, pool)
 	if err != nil {
 		return fmt.Errorf("build auth handler: %w", err)
