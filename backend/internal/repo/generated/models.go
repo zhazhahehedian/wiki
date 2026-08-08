@@ -9,32 +9,45 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Conversation struct {
-	ID        uuid.UUID `json:"id"`
-	KbID      uuid.UUID `json:"kb_id"`
-	Title     string    `json:"title"`
-	Mode      string    `json:"mode"`
-	UserID    string    `json:"user_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          uuid.UUID   `json:"id"`
+	KbID        uuid.UUID   `json:"kb_id"`
+	Title       string      `json:"title"`
+	Mode        string      `json:"mode"`
+	UserID      string      `json:"user_id"`
+	CreatedAt   time.Time   `json:"created_at"`
+	UpdatedAt   time.Time   `json:"updated_at"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	AgentID     string      `json:"agent_id"`
 }
 
 type Document struct {
-	ID           uuid.UUID       `json:"id"`
-	KbID         uuid.UUID       `json:"kb_id"`
-	SourceType   string          `json:"source_type"`
-	SourceRef    string          `json:"source_ref"`
-	Title        string          `json:"title"`
-	MimeType     string          `json:"mime_type"`
-	Bytes        int64           `json:"bytes"`
-	Checksum     string          `json:"checksum"`
-	Status       string          `json:"status"`
-	ErrorMessage *string         `json:"error_message"`
-	Metadata     json.RawMessage `json:"metadata"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
+	ID                    uuid.UUID          `json:"id"`
+	KbID                  uuid.UUID          `json:"kb_id"`
+	SourceType            string             `json:"source_type"`
+	SourceRef             string             `json:"source_ref"`
+	Title                 string             `json:"title"`
+	MimeType              string             `json:"mime_type"`
+	Bytes                 int64              `json:"bytes"`
+	Checksum              string             `json:"checksum"`
+	Status                string             `json:"status"`
+	ErrorMessage          *string            `json:"error_message"`
+	Metadata              json.RawMessage    `json:"metadata"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+	ContentRef            *string            `json:"content_ref"`
+	SourceUrl             *string            `json:"source_url"`
+	RemoteRevision        *string            `json:"remote_revision"`
+	OauthAccountID        pgtype.UUID        `json:"oauth_account_id"`
+	PendingContentRef     *string            `json:"pending_content_ref"`
+	PendingChecksum       *string            `json:"pending_checksum"`
+	PendingRemoteRevision *string            `json:"pending_remote_revision"`
+	SyncStatus            string             `json:"sync_status"`
+	LastSyncError         *string            `json:"last_sync_error"`
+	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
 }
 
 type KnowledgeBase struct {
@@ -47,6 +60,7 @@ type KnowledgeBase struct {
 	Settings    json.RawMessage `json:"settings"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+	OwnerUserID pgtype.UUID     `json:"owner_user_id"`
 }
 
 type Message struct {
@@ -58,4 +72,39 @@ type Message struct {
 	ToolCalls      json.RawMessage `json:"tool_calls"`
 	TokenUsage     json.RawMessage `json:"token_usage"`
 	CreatedAt      time.Time       `json:"created_at"`
+}
+
+type OauthAccount struct {
+	ID                    uuid.UUID          `json:"id"`
+	UserID                uuid.UUID          `json:"user_id"`
+	Provider              string             `json:"provider"`
+	ProviderUserID        string             `json:"provider_user_id"`
+	TenantKey             string             `json:"tenant_key"`
+	AccessTokenEncrypted  []byte             `json:"access_token_encrypted"`
+	RefreshTokenEncrypted []byte             `json:"refresh_token_encrypted"`
+	AccessTokenExpiresAt  time.Time          `json:"access_token_expires_at"`
+	RefreshTokenExpiresAt pgtype.Timestamptz `json:"refresh_token_expires_at"`
+	Scopes                []string           `json:"scopes"`
+	ReauthRequired        bool               `json:"reauth_required"`
+	CreatedAt             time.Time          `json:"created_at"`
+	UpdatedAt             time.Time          `json:"updated_at"`
+}
+
+type User struct {
+	ID          uuid.UUID `json:"id"`
+	DisplayName string    `json:"display_name"`
+	AvatarUrl   string    `json:"avatar_url"`
+	Email       *string   `json:"email"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type UserSession struct {
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	TokenHash     []byte    `json:"token_hash"`
+	CsrfTokenHash []byte    `json:"csrf_token_hash"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

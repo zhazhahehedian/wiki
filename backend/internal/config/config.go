@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
@@ -38,6 +39,19 @@ type Config struct {
 	RAGTopK            int
 	RAGMinScore        float32
 	RAGHistoryMessages int
+
+	FeishuEnabled      bool
+	FeishuAppID        string
+	FeishuAppSecret    string
+	FeishuRedirectURL  string
+	FeishuTenantKey    string
+	OAuthEncryptionKey string
+
+	SessionCookieSecure bool
+	SessionTTL          time.Duration
+	FrontendOrigin      string
+
+	BootstrapOwnerFeishuOpenID string
 }
 
 func Load() (*Config, error) {
@@ -46,6 +60,48 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid EMBEDDING_DIM: %w", err)
 	}
 	usePathStyle, _ := strconv.ParseBool(getEnv("S3_USE_PATH_STYLE", "true"))
+
+	sessionCookieSecure, err := strconv.ParseBool(getEnv("SESSION_COOKIE_SECURE", "false"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid SESSION_COOKIE_SECURE: %w", err)
+	}
+	sessionTTL, err := time.ParseDuration(getEnv("SESSION_TTL", "24h"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid SESSION_TTL: %w", err)
+	}
+
+	feishuValues := map[string]string{
+		"FEISHU_APP_ID":        getEnv("FEISHU_APP_ID", ""),
+		"FEISHU_APP_SECRET":    getEnv("FEISHU_APP_SECRET", ""),
+		"FEISHU_REDIRECT_URL":  getEnv("FEISHU_REDIRECT_URL", ""),
+		"FEISHU_TENANT_KEY":    getEnv("FEISHU_TENANT_KEY", ""),
+		"OAUTH_ENCRYPTION_KEY": getEnv("OAUTH_ENCRYPTION_KEY", ""),
+		"FRONTEND_ORIGIN":      getEnv("FRONTEND_ORIGIN", ""),
+	}
+	feishuEnabled := false
+	for _, key := range []string{
+		"FEISHU_APP_ID",
+		"FEISHU_APP_SECRET",
+		"FEISHU_REDIRECT_URL",
+		"FEISHU_TENANT_KEY",
+		"OAUTH_ENCRYPTION_KEY",
+	} {
+		feishuEnabled = feishuEnabled || feishuValues[key] != ""
+	}
+	if feishuEnabled {
+		for _, key := range []string{
+			"FEISHU_APP_ID",
+			"FEISHU_APP_SECRET",
+			"FEISHU_REDIRECT_URL",
+			"FEISHU_TENANT_KEY",
+			"OAUTH_ENCRYPTION_KEY",
+			"FRONTEND_ORIGIN",
+		} {
+			if feishuValues[key] == "" {
+				return nil, fmt.Errorf("missing required env var: %s", key)
+			}
+		}
+	}
 
 	cfg := &Config{
 		Port:             getEnv("PORT", "8080"),
@@ -64,6 +120,19 @@ func Load() (*Config, error) {
 		EmbeddingAPIKey:  getEnv("EMBEDDING_API_KEY", ""),
 		EmbeddingModel:   getEnv("EMBEDDING_MODEL", ""),
 		EmbeddingDim:     dim,
+
+		FeishuEnabled:      feishuEnabled,
+		FeishuAppID:        feishuValues["FEISHU_APP_ID"],
+		FeishuAppSecret:    feishuValues["FEISHU_APP_SECRET"],
+		FeishuRedirectURL:  feishuValues["FEISHU_REDIRECT_URL"],
+		FeishuTenantKey:    feishuValues["FEISHU_TENANT_KEY"],
+		OAuthEncryptionKey: feishuValues["OAUTH_ENCRYPTION_KEY"],
+
+		SessionCookieSecure: sessionCookieSecure,
+		SessionTTL:          sessionTTL,
+		FrontendOrigin:      feishuValues["FRONTEND_ORIGIN"],
+
+		BootstrapOwnerFeishuOpenID: getEnv("BOOTSTRAP_OWNER_FEISHU_OPEN_ID", ""),
 	}
 
 	cfg.TokenizerEncoding = getEnv("TOKENIZER_ENCODING", "cl100k_base")

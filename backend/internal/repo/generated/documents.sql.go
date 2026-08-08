@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countDocumentsByKB = `-- name: CountDocumentsByKB :one
@@ -30,10 +31,34 @@ func (q *Queries) CountDocumentsByKB(ctx context.Context, arg CountDocumentsByKB
 	return count, err
 }
 
+const countDocumentsByKBForOwner = `-- name: CountDocumentsByKBForOwner :one
+SELECT COUNT(*) FROM documents AS d
+JOIN knowledge_bases AS kb ON kb.id = d.kb_id
+WHERE d.kb_id = $1
+  AND kb.owner_user_id = $2
+  AND ($3::text IS NULL OR d.status = $3::text)
+`
+
+type CountDocumentsByKBForOwnerParams struct {
+	KbID        uuid.UUID   `json:"kb_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	Status      *string     `json:"status"`
+}
+
+func (q *Queries) CountDocumentsByKBForOwner(ctx context.Context, arg CountDocumentsByKBForOwnerParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDocumentsByKBForOwner, arg.KbID, arg.OwnerUserID, arg.Status)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createDocument = `-- name: CreateDocument :one
-INSERT INTO documents (kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, metadata)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at
+INSERT INTO documents (
+    kb_id, source_type, source_ref, content_ref, title, mime_type,
+    bytes, checksum, status, metadata
+)
+VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at
 `
 
 type CreateDocumentParams struct {
@@ -75,6 +100,86 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
+const createDocumentForOwner = `-- name: CreateDocumentForOwner :one
+INSERT INTO documents (
+    kb_id, source_type, source_ref, content_ref, title, mime_type,
+    bytes, checksum, status, metadata
+)
+SELECT kb.id, $1, $2,
+       $2, $3, $4,
+       $5, $6, $7,
+       $8
+FROM knowledge_bases AS kb
+WHERE kb.id = $9
+  AND kb.owner_user_id = $10
+RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at
+`
+
+type CreateDocumentForOwnerParams struct {
+	SourceType  string          `json:"source_type"`
+	SourceRef   string          `json:"source_ref"`
+	Title       string          `json:"title"`
+	MimeType    string          `json:"mime_type"`
+	Bytes       int64           `json:"bytes"`
+	Checksum    string          `json:"checksum"`
+	Status      string          `json:"status"`
+	Metadata    json.RawMessage `json:"metadata"`
+	KbID        uuid.UUID       `json:"kb_id"`
+	OwnerUserID pgtype.UUID     `json:"owner_user_id"`
+}
+
+func (q *Queries) CreateDocumentForOwner(ctx context.Context, arg CreateDocumentForOwnerParams) (Document, error) {
+	row := q.db.QueryRow(ctx, createDocumentForOwner,
+		arg.SourceType,
+		arg.SourceRef,
+		arg.Title,
+		arg.MimeType,
+		arg.Bytes,
+		arg.Checksum,
+		arg.Status,
+		arg.Metadata,
+		arg.KbID,
+		arg.OwnerUserID,
+	)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.Title,
+		&i.MimeType,
+		&i.Bytes,
+		&i.Checksum,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
 	)
 	return i, err
 }
@@ -88,8 +193,29 @@ func (q *Queries) DeleteDocument(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const deleteDocumentForOwner = `-- name: DeleteDocumentForOwner :exec
+DELETE FROM documents AS d
+WHERE d.id = $1
+  AND EXISTS (
+      SELECT 1
+      FROM knowledge_bases AS kb
+      WHERE kb.id = d.kb_id
+        AND kb.owner_user_id = $2
+  )
+`
+
+type DeleteDocumentForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) error {
+	_, err := q.db.Exec(ctx, deleteDocumentForOwner, arg.ID, arg.OwnerUserID)
+	return err
+}
+
 const findDocumentByChecksum = `-- name: FindDocumentByChecksum :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at FROM documents WHERE kb_id = $1 AND checksum = $2
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents WHERE kb_id = $1 AND checksum = $2
 `
 
 type FindDocumentByChecksumParams struct {
@@ -114,12 +240,67 @@ func (q *Queries) FindDocumentByChecksum(ctx context.Context, arg FindDocumentBy
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
+const findDocumentByChecksumForOwner = `-- name: FindDocumentByChecksumForOwner :one
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at FROM documents AS d
+JOIN knowledge_bases AS kb ON kb.id = d.kb_id
+WHERE d.kb_id = $1
+  AND d.checksum = $2
+  AND kb.owner_user_id = $3
+`
+
+type FindDocumentByChecksumForOwnerParams struct {
+	KbID        uuid.UUID   `json:"kb_id"`
+	Checksum    string      `json:"checksum"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) FindDocumentByChecksumForOwner(ctx context.Context, arg FindDocumentByChecksumForOwnerParams) (Document, error) {
+	row := q.db.QueryRow(ctx, findDocumentByChecksumForOwner, arg.KbID, arg.Checksum, arg.OwnerUserID)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.Title,
+		&i.MimeType,
+		&i.Bytes,
+		&i.Checksum,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
 	)
 	return i, err
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at FROM documents WHERE id = $1
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents WHERE id = $1
 `
 
 func (q *Queries) GetDocument(ctx context.Context, id uuid.UUID) (Document, error) {
@@ -139,12 +320,64 @@ func (q *Queries) GetDocument(ctx context.Context, id uuid.UUID) (Document, erro
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
+const getDocumentForOwner = `-- name: GetDocumentForOwner :one
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at FROM documents AS d
+JOIN knowledge_bases AS kb ON kb.id = d.kb_id
+WHERE d.id = $1 AND kb.owner_user_id = $2
+`
+
+type GetDocumentForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) GetDocumentForOwner(ctx context.Context, arg GetDocumentForOwnerParams) (Document, error) {
+	row := q.db.QueryRow(ctx, getDocumentForOwner, arg.ID, arg.OwnerUserID)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.Title,
+		&i.MimeType,
+		&i.Bytes,
+		&i.Checksum,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
 	)
 	return i, err
 }
 
 const listDocumentsByKB = `-- name: ListDocumentsByKB :many
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at FROM documents
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents
 WHERE kb_id = $1
   AND ($4::text IS NULL OR status = $4::text)
 ORDER BY created_at DESC
@@ -186,6 +419,84 @@ func (q *Queries) ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBPa
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ContentRef,
+			&i.SourceUrl,
+			&i.RemoteRevision,
+			&i.OauthAccountID,
+			&i.PendingContentRef,
+			&i.PendingChecksum,
+			&i.PendingRemoteRevision,
+			&i.SyncStatus,
+			&i.LastSyncError,
+			&i.LastSyncedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDocumentsByKBForOwner = `-- name: ListDocumentsByKBForOwner :many
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at FROM documents AS d
+JOIN knowledge_bases AS kb ON kb.id = d.kb_id
+WHERE d.kb_id = $1
+  AND kb.owner_user_id = $2
+  AND ($3::text IS NULL OR d.status = $3::text)
+ORDER BY d.created_at DESC
+LIMIT $5 OFFSET $4
+`
+
+type ListDocumentsByKBForOwnerParams struct {
+	KbID        uuid.UUID   `json:"kb_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	Status      *string     `json:"status"`
+	Offset      int32       `json:"offset"`
+	Limit       int32       `json:"limit"`
+}
+
+func (q *Queries) ListDocumentsByKBForOwner(ctx context.Context, arg ListDocumentsByKBForOwnerParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listDocumentsByKBForOwner,
+		arg.KbID,
+		arg.OwnerUserID,
+		arg.Status,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.KbID,
+			&i.SourceType,
+			&i.SourceRef,
+			&i.Title,
+			&i.MimeType,
+			&i.Bytes,
+			&i.Checksum,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ContentRef,
+			&i.SourceUrl,
+			&i.RemoteRevision,
+			&i.OauthAccountID,
+			&i.PendingContentRef,
+			&i.PendingChecksum,
+			&i.PendingRemoteRevision,
+			&i.SyncStatus,
+			&i.LastSyncError,
+			&i.LastSyncedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -211,5 +522,36 @@ type UpdateDocumentStatusParams struct {
 
 func (q *Queries) UpdateDocumentStatus(ctx context.Context, arg UpdateDocumentStatusParams) error {
 	_, err := q.db.Exec(ctx, updateDocumentStatus, arg.ID, arg.Status, arg.ErrorMessage)
+	return err
+}
+
+const updateDocumentStatusForOwner = `-- name: UpdateDocumentStatusForOwner :exec
+UPDATE documents AS d
+SET status = $1,
+    error_message = $2,
+    updated_at = now()
+WHERE d.id = $3
+  AND EXISTS (
+      SELECT 1
+      FROM knowledge_bases AS kb
+      WHERE kb.id = d.kb_id
+        AND kb.owner_user_id = $4
+  )
+`
+
+type UpdateDocumentStatusForOwnerParams struct {
+	Status       string      `json:"status"`
+	ErrorMessage *string     `json:"error_message"`
+	ID           uuid.UUID   `json:"id"`
+	OwnerUserID  pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) UpdateDocumentStatusForOwner(ctx context.Context, arg UpdateDocumentStatusForOwnerParams) error {
+	_, err := q.db.Exec(ctx, updateDocumentStatusForOwner,
+		arg.Status,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.OwnerUserID,
+	)
 	return err
 }
