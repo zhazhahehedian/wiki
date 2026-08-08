@@ -18,6 +18,11 @@ UPDATE documents
 SET content_ref = source_ref
 WHERE source_type = 'local-upload';
 
+DROP INDEX uniq_docs_kb_checksum;
+CREATE UNIQUE INDEX uniq_docs_kb_local_checksum
+    ON documents (kb_id, checksum)
+    WHERE source_type = 'local-upload';
+
 ALTER TABLE documents
     ADD CONSTRAINT uniq_docs_kb_source
         UNIQUE (kb_id, source_type, source_ref);
@@ -33,6 +38,9 @@ CREATE INDEX idx_docs_oauth_sync_status
 -- +goose StatementBegin
 DROP INDEX IF EXISTS idx_docs_oauth_sync_status;
 DROP INDEX IF EXISTS idx_docs_kb_sync_status;
+DROP INDEX IF EXISTS uniq_docs_kb_local_checksum;
+CREATE UNIQUE INDEX uniq_docs_kb_checksum
+    ON documents (kb_id, checksum);
 
 ALTER TABLE documents
     DROP CONSTRAINT IF EXISTS uniq_docs_kb_source,

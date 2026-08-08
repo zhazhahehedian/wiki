@@ -157,6 +157,19 @@ func TestLoadRejectsInvalidSessionConfig(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonPositiveSessionTTL(t *testing.T) {
+	for _, ttl := range []string{"0s", "-1m"} {
+		t.Run(ttl, func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("SESSION_TTL", ttl)
+
+			if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SESSION_TTL") {
+				t.Fatalf("Load() error = %v, want non-positive SESSION_TTL rejection", err)
+			}
+		})
+	}
+}
+
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	clearFeishuEnv(t)

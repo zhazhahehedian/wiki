@@ -3,7 +3,7 @@ INSERT INTO documents (
     kb_id, source_type, source_ref, content_ref, title, mime_type,
     bytes, checksum, status, metadata
 )
-VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, CASE WHEN $2 = 'local-upload' THEN $3 ELSE NULL END, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: CreateDocumentForOwner :one
@@ -12,7 +12,9 @@ INSERT INTO documents (
     bytes, checksum, status, metadata
 )
 SELECT kb.id, sqlc.arg('source_type'), sqlc.arg('source_ref'),
-       sqlc.arg('source_ref'), sqlc.arg('title'), sqlc.arg('mime_type'),
+       CASE WHEN sqlc.arg('source_type') = 'local-upload'
+            THEN sqlc.arg('source_ref') ELSE NULL END,
+       sqlc.arg('title'), sqlc.arg('mime_type'),
        sqlc.arg('bytes'), sqlc.arg('checksum'), sqlc.arg('status'),
        sqlc.arg('metadata')
 FROM knowledge_bases AS kb
@@ -29,13 +31,15 @@ JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.id = $1 AND kb.owner_user_id = $2;
 
 -- name: FindDocumentByChecksum :one
-SELECT * FROM documents WHERE kb_id = $1 AND checksum = $2;
+SELECT * FROM documents
+WHERE kb_id = $1 AND checksum = $2 AND source_type = 'local-upload';
 
 -- name: FindDocumentByChecksumForOwner :one
 SELECT d.* FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.kb_id = $1
   AND d.checksum = $2
+  AND d.source_type = 'local-upload'
   AND kb.owner_user_id = $3;
 
 -- name: ListDocumentsByKB :many

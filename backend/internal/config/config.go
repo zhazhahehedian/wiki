@@ -69,6 +69,9 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid SESSION_TTL: %w", err)
 	}
+	if sessionTTL <= 0 {
+		return nil, fmt.Errorf("invalid SESSION_TTL: must be positive")
+	}
 
 	feishuValues := map[string]string{
 		"FEISHU_APP_ID":        getEnv("FEISHU_APP_ID", ""),

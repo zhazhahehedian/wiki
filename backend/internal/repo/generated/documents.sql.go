@@ -57,7 +57,7 @@ INSERT INTO documents (
     kb_id, source_type, source_ref, content_ref, title, mime_type,
     bytes, checksum, status, metadata
 )
-VALUES ($1, $2, $3, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, CASE WHEN $2 = 'local-upload' THEN $3 ELSE NULL END, $4, $5, $6, $7, $8, $9)
 RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at
 `
 
@@ -120,7 +120,9 @@ INSERT INTO documents (
     bytes, checksum, status, metadata
 )
 SELECT kb.id, $1, $2,
-       $2, $3, $4,
+       CASE WHEN $1 = 'local-upload'
+            THEN $2 ELSE NULL END,
+       $3, $4,
        $5, $6, $7,
        $8
 FROM knowledge_bases AS kb
@@ -215,7 +217,8 @@ func (q *Queries) DeleteDocumentForOwner(ctx context.Context, arg DeleteDocument
 }
 
 const findDocumentByChecksum = `-- name: FindDocumentByChecksum :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents WHERE kb_id = $1 AND checksum = $2
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents
+WHERE kb_id = $1 AND checksum = $2 AND source_type = 'local-upload'
 `
 
 type FindDocumentByChecksumParams struct {
@@ -259,6 +262,7 @@ SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.kb_id = $1
   AND d.checksum = $2
+  AND d.source_type = 'local-upload'
   AND kb.owner_user_id = $3
 `
 
