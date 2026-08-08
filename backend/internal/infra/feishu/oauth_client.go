@@ -14,7 +14,10 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
-const defaultBaseURL = "https://open.feishu.cn"
+const (
+	defaultBaseURL             = "https://open.feishu.cn"
+	maxOAuthErrorResponseBytes = 64 << 10
+)
 
 type OAuthConfig struct {
 	BaseURL     string
@@ -27,6 +30,18 @@ type OAuthConfig struct {
 type OAuthClient struct {
 	config OAuthConfig
 	http   *http.Client
+}
+
+type tokenResponse struct {
+	Code                  int    `json:"code"`
+	Msg                   string `json:"msg"`
+	Error                 string `json:"error"`
+	ErrorDescription      string `json:"error_description"`
+	AccessToken           string `json:"access_token"`
+	RefreshToken          string `json:"refresh_token"`
+	ExpiresIn             int64  `json:"expires_in"`
+	RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in"`
+	Scope                 string `json:"scope"`
 }
 
 func NewOAuthClient(config OAuthConfig, httpClient *http.Client) *OAuthClient {
@@ -124,27 +139,22 @@ func (c *OAuthClient) requestToken(ctx context.Context, payload map[string]strin
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		var response tokenResponse
+		if err := decodeBoundedJSON(resp.Body, &response, maxOAuthErrorResponseBytes); err == nil {
+			if code := normalizeOAuthErrorCode(response.Error); code != "" {
+				return domain.OAuthToken{}, &ports.OAuthError{Code: code, Message: "provider rejected token request"}
+			}
+		}
 		return domain.OAuthToken{}, &ports.OAuthError{Code: "http_error", Message: "provider returned a non-success status"}
 	}
-	var response struct {
-		Code                  int    `json:"code"`
-		Msg                   string `json:"msg"`
-		Error                 string `json:"error"`
-		ErrorDescription      string `json:"error_description"`
-		AccessToken           string `json:"access_token"`
-		RefreshToken          string `json:"refresh_token"`
-		ExpiresIn             int64  `json:"expires_in"`
-		RefreshTokenExpiresIn int64  `json:"refresh_token_expires_in"`
-		Scope                 string `json:"scope"`
-	}
+	var response tokenResponse
 	if err := decodeSingleJSON(resp.Body, &response); err != nil {
 		return domain.OAuthToken{}, &ports.OAuthError{Code: "malformed_response", Message: "provider returned malformed JSON"}
 	}
 	if response.Error != "" || response.Code != 0 {
-		code := response.Error
+		code := normalizeOAuthErrorCode(response.Error)
 		if code == "" {
-			code = fmt.Sprintf("feishu_%d", response.Code)
+			code = "provider_error"
 		}
 		return domain.OAuthToken{}, &ports.OAuthError{Code: code, Message: "provider rejected token request"}
 	}
@@ -163,6 +173,27 @@ func (c *OAuthClient) requestToken(ctx context.Context, payload map[string]strin
 		token.RefreshTokenExpiresAt = &expiresAt
 	}
 	return token, nil
+}
+
+func normalizeOAuthErrorCode(code string) string {
+	normalized := strings.ToLower(strings.TrimSpace(code))
+	switch normalized {
+	case "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client", "unsupported_grant_type", "invalid_scope", "server_error", "temporarily_unavailable":
+		return normalized
+	default:
+		return ""
+	}
+}
+
+func decodeBoundedJSON(body io.Reader, destination any, maxBytes int64) error {
+	data, err := io.ReadAll(io.LimitReader(body, maxBytes+1))
+	if err != nil {
+		return err
+	}
+	if int64(len(data)) > maxBytes {
+		return fmt.Errorf("response exceeds maximum size")
+	}
+	return decodeSingleJSON(bytes.NewReader(data), destination)
 }
 
 func decodeSingleJSON(body io.Reader, destination any) error {

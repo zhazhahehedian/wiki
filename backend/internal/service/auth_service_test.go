@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 	authstore "github.com/zenith-wang/it-wiki/backend/internal/auth"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
+	"github.com/zenith-wang/it-wiki/backend/internal/infra/feishu"
 	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
 
@@ -384,3 +387,27 @@ func timePtr(value time.Time) *time.Time { return &value }
 
 var _ ports.OAuthClient = (*fakeOAuthClient)(nil)
 var _ ports.AuthRepository = (*fakeAuthRepository)(nil)
+
+func TestAuthAccessTokenMarksReauthRequiredFromFeishuHTTPInvalidGrant(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token revoked"}`))
+	}))
+	defer server.Close()
+
+	protector, _ := authstore.NewAESGCMProtector([]byte("0123456789abcdef0123456789abcdef"))
+	accessCipher, _ := protector.Encrypt("expired-access")
+	refreshCipher, _ := protector.Encrypt("invalid-refresh")
+	repo := newFakeAuthRepository()
+	repo.account = domain.OAuthAccount{ID: "account-1", AccessTokenEncrypted: accessCipher, RefreshTokenEncrypted: refreshCipher, AccessTokenExpiresAt: now.Add(-time.Minute)}
+	client := feishu.NewOAuthClient(feishu.OAuthConfig{BaseURL: server.URL, Now: func() time.Time { return now }}, server.Client())
+	svc := service.NewAuth(service.AuthConfig{TenantKey: "tenant-a", SessionTTL: time.Hour, Now: func() time.Time { return now }}, client, protector, authstore.NewMemorySessionStore(func() time.Time { return now }), authstore.NewMemoryOAuthStateStore(func() time.Time { return now }), repo)
+
+	if _, err := svc.AccessToken(context.Background(), "account-1"); !service.IsAuthError(err, service.AuthErrorReauthRequired) {
+		t.Fatalf("AccessToken() error = %v", err)
+	}
+	if !repo.account.ReauthRequired {
+		t.Fatal("oauth account reauth_required = false")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -250,3 +251,78 @@ func TestOAuthClientRejectsTrailingJSONContent(t *testing.T) {
 		}
 	}
 }
+
+func TestOAuthClientPreservesAllowlistedErrorCodeOnHTTPFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":" INVALID_GRANT ","error_description":"refresh token was rejected"}`))
+	}))
+	defer server.Close()
+
+	client := feishu.NewOAuthClient(feishu.OAuthConfig{BaseURL: server.URL}, server.Client())
+	_, err := client.RefreshToken(context.Background(), "refresh-token")
+	var oauthErr *ports.OAuthError
+	if !errors.As(err, &oauthErr) || oauthErr.Code != "invalid_grant" {
+		t.Fatalf("RefreshToken() error = %#v, want invalid_grant", err)
+	}
+}
+
+func TestOAuthClientRejectsProviderControlledErrorCodes(t *testing.T) {
+	const secret = "sensitive-refresh-token"
+	for _, status := range []int{http.StatusOK, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"sensitive-refresh-token","error_description":"sensitive-refresh-token"}`))
+			}))
+			defer server.Close()
+
+			client := feishu.NewOAuthClient(feishu.OAuthConfig{BaseURL: server.URL}, server.Client())
+			_, err := client.RefreshToken(context.Background(), secret)
+			var oauthErr *ports.OAuthError
+			if !errors.As(err, &oauthErr) {
+				t.Fatalf("RefreshToken() error = %#v", err)
+			}
+			wantCode := "provider_error"
+			if status != http.StatusOK {
+				wantCode = "http_error"
+			}
+			if oauthErr.Code != wantCode {
+				t.Fatalf("OAuthError.Code = %q, want %q", oauthErr.Code, wantCode)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Fatalf("RefreshToken() error leaked provider-controlled secret: %v", err)
+			}
+		})
+	}
+}
+
+func TestOAuthClientBoundsNon2xxResponseBody(t *testing.T) {
+	body := &countingReadCloser{reader: strings.NewReader(strings.Repeat("x", 1<<20))}
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Header: make(http.Header), Body: body, Request: request}, nil
+	})}
+	client := feishu.NewOAuthClient(feishu.OAuthConfig{BaseURL: "https://feishu.invalid"}, httpClient)
+
+	_, err := client.RefreshToken(context.Background(), "refresh-token")
+	var oauthErr *ports.OAuthError
+	if !errors.As(err, &oauthErr) || oauthErr.Code != "http_error" {
+		t.Fatalf("RefreshToken() error = %#v, want http_error", err)
+	}
+	if body.bytesRead > 70<<10 {
+		t.Fatalf("non-2xx response bytes read = %d, want at most 70 KiB", body.bytesRead)
+	}
+}
+
+type countingReadCloser struct {
+	reader    io.Reader
+	bytesRead int
+}
+
+func (r *countingReadCloser) Read(buffer []byte) (int, error) {
+	n, err := r.reader.Read(buffer)
+	r.bytesRead += n
+	return n, err
+}
+
+func (r *countingReadCloser) Close() error { return nil }
