@@ -39,6 +39,11 @@ CREATE INDEX idx_docs_oauth_sync_status
 DROP INDEX IF EXISTS idx_docs_oauth_sync_status;
 DROP INDEX IF EXISTS idx_docs_kb_sync_status;
 DROP INDEX IF EXISTS uniq_docs_kb_local_checksum;
+-- The legacy schema cannot represent shared remote checksums, so suffix them
+-- with the document UUID before restoring global checksum uniqueness.
+UPDATE documents
+SET checksum = checksum || ':' || id::text
+WHERE source_type <> 'local-upload';
 CREATE UNIQUE INDEX uniq_docs_kb_checksum
     ON documents (kb_id, checksum);
 
