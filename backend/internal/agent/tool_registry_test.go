@@ -16,9 +16,11 @@ type registryTool struct {
 	callback ports.RetrievalCallback
 }
 
-func (t *registryTool) Name() string                      { return t.name }
-func (t *registryTool) Description() string               { return t.name }
-func (t *registryTool) ParametersSchema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *registryTool) Name() string        { return t.name }
+func (t *registryTool) Description() string { return t.name }
+func (t *registryTool) ParametersSchema() json.RawMessage {
+	return json.RawMessage(`{"type":"object"}`)
+}
 func (t *registryTool) Invoke(ctx context.Context, _ string) (string, error) {
 	if t.callback != nil {
 		if err := t.callback(ctx, &ports.RetrievalResult{Question: t.kbID}); err != nil {
@@ -120,6 +122,76 @@ func TestToolRegistryDoesNotRetainRequestScopedInputs(t *testing.T) {
 	}
 	if firstCalls != 1 || secondCalls != 1 {
 		t.Fatalf("callback calls = (%d, %d), want (1, 1)", firstCalls, secondCalls)
+	}
+}
+
+func TestToolRegistryIsolatesOrderedToolsPerAgent(t *testing.T) {
+	registry := NewToolRegistry()
+	for _, name := range []string{"retrieve", "list", "summarize"} {
+		if err := registry.Register(name, toolBuilder(name, false)); err != nil {
+			t.Fatalf("Register(%q) error = %v", name, err)
+		}
+	}
+	if err := registry.RegisterAgent(ports.DefaultAgentID, "list", "retrieve"); err != nil {
+		t.Fatalf("RegisterAgent(default) error = %v", err)
+	}
+	if err := registry.RegisterAgent("summary-agent", "summarize", "list"); err != nil {
+		t.Fatalf("RegisterAgent(summary) error = %v", err)
+	}
+
+	assertTools := func(agentID, kbID string, wantNames []string) error {
+		tools, err := registry.ToolsFor(context.Background(), agentID, kbID, nil)
+		if err != nil {
+			return err
+		}
+		if len(tools) != len(wantNames) {
+			return fmt.Errorf("ToolsFor(%q) count = %d, want %d", agentID, len(tools), len(wantNames))
+		}
+		for i, tool := range tools {
+			if tool.Name() != wantNames[i] {
+				return fmt.Errorf("ToolsFor(%q)[%d] = %q, want %q", agentID, i, tool.Name(), wantNames[i])
+			}
+			gotKB, err := tool.Invoke(context.Background(), `{}`)
+			if err != nil {
+				return fmt.Errorf("Invoke(%q): %w", tool.Name(), err)
+			}
+			if gotKB != kbID {
+				return fmt.Errorf("Invoke(%q) kb = %q, want %q", tool.Name(), gotKB, kbID)
+			}
+		}
+		return nil
+	}
+
+	for i := 0; i < 5; i++ {
+		if err := assertTools("", fmt.Sprintf("default-kb-%d", i), []string{"list", "retrieve"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := assertTools("summary-agent", fmt.Sprintf("summary-kb-%d", i), []string{"summarize", "list"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const workers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if i%2 == 0 {
+				errs <- assertTools("", fmt.Sprintf("default-concurrent-%d", i), []string{"list", "retrieve"})
+				return
+			}
+			errs <- assertTools("summary-agent", fmt.Sprintf("summary-concurrent-%d", i), []string{"summarize", "list"})
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
 	}
 }
 
