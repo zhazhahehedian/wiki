@@ -3,6 +3,7 @@ package http
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -136,18 +137,39 @@ func (t *callbackTool) Invoke(ctx context.Context, _ string) (string, error) {
 	return "[1] 内容", err
 }
 
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
 func newReActTestServer(t *testing.T, queries service.ChatQueries, llm ports.LLMClient) *httptest.Server {
 	t.Helper()
 	factory := func(kbID string, onRetrieval service.RetrievalCallback) []ports.Tool {
 		return []ports.Tool{&callbackTool{onRetrieval: onRetrieval}}
 	}
 	chatSvc := service.NewChat(queries, nil, llm, "test-model", 0, agent.New(llm, "test-model", 5), factory)
-	router := NewRouter(Handlers{Chat: NewChatHandler(chatSvc)})
+	csrf := "test-csrf"
+	csrfHash := sha256.Sum256([]byte(csrf))
+	authHandler := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{
+		session: domain.Session{UserID: "test-user", CSRFTokenHash: csrfHash[:]},
+	}, fakeUserResolver{user: domain.User{ID: "test-user"}})
+	router := NewRouter(Handlers{Auth: authHandler, Chat: NewChatHandler(chatSvc), FrontendOrigin: "https://app.example.test"})
 	srv := httptest.NewServer(router)
+	baseTransport := srv.Client().Transport
+	srv.Client().Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		clone := req.Clone(req.Context())
+		clone.Header = req.Header.Clone()
+		clone.AddCookie(&http.Cookie{Name: SessionCookieName, Value: "test-session"})
+		if !isSafeMethod(clone.Method) {
+			clone.Header.Set("Origin", "https://app.example.test")
+			clone.Header.Set(CSRFHeaderName, csrf)
+		}
+		return baseTransport.RoundTrip(clone)
+	})
 	t.Cleanup(srv.Close)
 	return srv
 }
-
 func TestStreamReActEmitsToolEventsEndToEnd(t *testing.T) {
 	convID := uuid.New()
 	queries := &fakeE2EQueries{conversation: generated.Conversation{
@@ -159,7 +181,7 @@ func TestStreamReActEmitsToolEventsEndToEnd(t *testing.T) {
 	}}
 	srv := newReActTestServer(t, queries, llm)
 
-	resp, err := http.Post(
+	resp, err := srv.Client().Post(
 		srv.URL+"/api/v1/conversations/"+convID.String()+"/messages/stream",
 		"application/json",
 		strings.NewReader(`{"content":"怎么部署"}`),
@@ -204,7 +226,7 @@ func TestPatchConversationModeEndToEnd(t *testing.T) {
 		srv.URL+"/api/v1/conversations/"+convID.String(),
 		strings.NewReader(`{"mode":"react"}`))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("PATCH: %v", err)
 	}
@@ -218,7 +240,7 @@ func TestPatchConversationModeEndToEnd(t *testing.T) {
 		srv.URL+"/api/v1/conversations/"+convID.String(),
 		strings.NewReader(`{"mode":"bogus"}`))
 	req2.Header.Set("Content-Type", "application/json")
-	resp2, err := http.DefaultClient.Do(req2)
+	resp2, err := srv.Client().Do(req2)
 	if err != nil {
 		t.Fatalf("PATCH: %v", err)
 	}
@@ -234,7 +256,7 @@ func TestCreateConversationAcceptsOptionalMode(t *testing.T) {
 	kbID := uuid.NewString()
 
 	// 无 body（现有前端行为）→ 201 默认 rag
-	resp, err := http.Post(srv.URL+"/api/v1/kbs/"+kbID+"/conversations", "application/json", nil)
+	resp, err := srv.Client().Post(srv.URL+"/api/v1/kbs/"+kbID+"/conversations", "application/json", nil)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
@@ -244,7 +266,7 @@ func TestCreateConversationAcceptsOptionalMode(t *testing.T) {
 	}
 
 	// 带 mode=react → 201
-	resp2, err := http.Post(srv.URL+"/api/v1/kbs/"+kbID+"/conversations", "application/json",
+	resp2, err := srv.Client().Post(srv.URL+"/api/v1/kbs/"+kbID+"/conversations", "application/json",
 		strings.NewReader(`{"mode":"react"}`))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -268,7 +290,7 @@ func TestStreamReActClientDisconnectDoesNotPersistAssistant(t *testing.T) {
 		srv.URL+"/api/v1/conversations/"+convID.String()+"/messages/stream",
 		strings.NewReader(`{"content":"q"}`))
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}

@@ -19,6 +19,10 @@ type Handlers struct {
 }
 
 func NewRouter(h Handlers) http.Handler {
+	if h.Auth == nil {
+		panic("http router requires an auth handler")
+	}
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
@@ -33,19 +37,15 @@ func NewRouter(h Handlers) http.Handler {
 	r.Get("/api/healthz", healthz)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		if h.Auth != nil {
-			r.Route("/auth/feishu", func(r chi.Router) {
-				r.Get("/start", h.Auth.Start)
-				r.Get("/callback", h.Auth.Callback)
-			})
-		}
+		r.Route("/auth/feishu", func(r chi.Router) {
+			r.Get("/start", h.Auth.Start)
+			r.Get("/callback", h.Auth.Callback)
+		})
 
 		r.Group(func(r chi.Router) {
-			if h.Auth != nil {
-				r.Use(h.Auth.Middleware)
-				r.Get("/auth/me", h.Auth.Me)
-				r.Post("/auth/logout", h.Auth.Logout)
-			}
+			r.Use(h.Auth.Middleware)
+			r.Get("/auth/me", h.Auth.Me)
+			r.Post("/auth/logout", h.Auth.Logout)
 
 			r.Post("/kbs", h.KB.Create)
 			r.Get("/kbs", h.KB.List)

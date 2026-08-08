@@ -126,3 +126,13 @@ func TestRouterKeepsHealthAndOAuthPublicButProtectsBusinessRoutes(t *testing.T) 
 		}
 	}
 }
+
+func TestNewRouterRequiresAuthHandler(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewRouter() did not panic without an auth handler")
+		}
+	}()
+
+	_ = NewRouter(Handlers{})
+}

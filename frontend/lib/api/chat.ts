@@ -1,8 +1,6 @@
-import { apiFetch, apiFetchList } from "./client";
+import { apiFetch, apiFetchList, apiRequestInit, apiURL } from "./client";
 import { parseSSEBuffer } from "./sse";
 import type { ChatMessage, ChunkNeighbors, Conversation } from "@/lib/schemas";
-
-const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 export type ChatStreamEvent =
   | {
@@ -44,12 +42,15 @@ export async function streamConversationMessage(
   content: string,
   handlers: { onEvent: (event: ChatStreamEvent) => void; signal?: AbortSignal },
 ): Promise<void> {
-  const response = await fetch(`${BASE}/api/v1/conversations/${conversationId}/messages/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-    body: JSON.stringify({ content }),
-    signal: handlers.signal,
-  });
+  const response = await fetch(
+    apiURL(`/api/v1/conversations/${conversationId}/messages/stream`),
+    apiRequestInit({
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body: JSON.stringify({ content }),
+      signal: handlers.signal,
+    }),
+  );
 
   if (!response.ok || !response.body) {
     const message = await response.text().catch(() => "流式请求失败");

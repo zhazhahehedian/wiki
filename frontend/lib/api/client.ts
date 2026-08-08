@@ -21,16 +21,17 @@ export interface FetchOptions {
   method?: string;
   body?: BodyInit | null;
   headers?: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 export function apiURL(path: string): string {
   return BASE + path;
 }
 
-export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
+export function apiRequestInit(opts: FetchOptions = {}): RequestInit {
   const method = opts.method ?? "GET";
   const csrf = isSafeMethod(method) ? "" : readCookie(CSRF_COOKIE);
-  const res = await fetch(apiURL(path), {
+  return {
     method,
     credentials: "include",
     headers: {
@@ -39,7 +40,12 @@ export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promis
       ...(opts.headers ?? {}),
     },
     body: opts.body,
-  });
+    signal: opts.signal,
+  };
+}
+
+export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promise<T> {
+  const res = await fetch(apiURL(path), apiRequestInit(opts));
 
   if (res.status === 204) {
     return undefined as T;
@@ -63,11 +69,7 @@ export async function apiFetchList<T>(
   path: string,
   opts: FetchOptions = {},
 ): Promise<{ items: T[]; total: number }> {
-  const res = await fetch(apiURL(path), {
-    method: opts.method ?? "GET",
-    credentials: "include",
-    headers: opts.headers,
-  });
+  const res = await fetch(apiURL(path), apiRequestInit(opts));
   if (!res.ok) {
     let body: { error?: { code: string; message: string; details?: Record<string, unknown>; request_id?: string } } = {};
     try {
