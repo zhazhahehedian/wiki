@@ -90,7 +90,10 @@ func (r *URLResolver) Resolve(rawURL string) (domain.ResourceRef, error) {
 	}
 
 	safeURL := url.URL{Scheme: "https", Host: host, Path: canonicalPath, RawQuery: safeQuery.Encode()}
-	ref.CanonicalURL = safeURL.String()
+	ref.CanonicalURL, err = domain.NewSafeURL(safeURL.String())
+	if err != nil {
+		return domain.ResourceRef{}, resolveError(ports.SourceResolveMalformedURL)
+	}
 	ref.Identity = stableResourceIdentity(ref)
 	return ref, nil
 }

@@ -1,10 +1,10 @@
 package domain
 
 import (
+	"bytes"
 	"encoding/json"
-	"net/url"
+	"io"
 	"regexp"
-	"strings"
 	"unicode/utf8"
 )
 
@@ -16,9 +16,11 @@ const (
 	ResourceBitable ResourceType = "bitable"
 	ResourceWiki    ResourceType = "wiki"
 
-	RedactedMetadataValue = "[REDACTED]"
-	maxMetadataKeyBytes   = 64
-	maxMetadataValueBytes = 2048
+	maxSectionPathBytes      = 2048
+	maxSheetNameBytes        = 512
+	maxSourceIdentifierBytes = 256
+	maxRemoteRevisionBytes   = 256
+	maxSourceRow             = 10_000_000
 )
 
 type ResourceRef struct {
@@ -29,80 +31,100 @@ type ResourceRef struct {
 	TableID      string       `json:"table_id,omitempty"`
 	ViewID       string       `json:"view_id,omitempty"`
 	SheetID      string       `json:"sheet_id,omitempty"`
-	CanonicalURL string       `json:"canonical_url"`
+	CanonicalURL SafeURL      `json:"canonical_url"`
 	Identity     string       `json:"identity"`
 }
 
+type SourceMetadataInput struct {
+	SourceType     ResourceType `json:"source_type"`
+	SectionPath    string       `json:"section_path,omitempty"`
+	SheetName      string       `json:"sheet_name,omitempty"`
+	TableID        string       `json:"table_id,omitempty"`
+	ViewID         string       `json:"view_id,omitempty"`
+	SheetID        string       `json:"sheet_id,omitempty"`
+	RowStart       int          `json:"row_start,omitempty"`
+	RowEnd         int          `json:"row_end,omitempty"`
+	RemoteRevision string       `json:"remote_revision,omitempty"`
+	ImageURL       SafeURL      `json:"image_url"`
+	SourceLocator  SafeURL      `json:"source_locator"`
+}
+
 type SourceMetadata struct {
-	values map[string]string
+	values SourceMetadataInput
 }
 
 type SourceMetadataValidationError struct {
 	Reason string
 }
 
-func (e *SourceMetadataValidationError) Error() string {
-	return "invalid source metadata: " + e.Reason
-}
+func (e *SourceMetadataValidationError) Error() string { return "invalid source metadata" }
 
-var metadataKeyPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+var sourceIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
-func NewSourceMetadata(input map[string]string) (SourceMetadata, error) {
-	values := make(map[string]string, len(input))
-	for key, value := range input {
-		if !utf8.ValidString(key) || len(key) == 0 || len(key) > maxMetadataKeyBytes || !metadataKeyPattern.MatchString(key) {
-			return SourceMetadata{}, &SourceMetadataValidationError{Reason: "invalid key"}
-		}
-		if isSensitiveMetadataKey(key) {
-			continue
-		}
-		if !utf8.ValidString(value) || len(value) > maxMetadataValueBytes {
-			return SourceMetadata{}, &SourceMetadataValidationError{Reason: "invalid value"}
-		}
-		values[key] = sanitizeMetadataValue(value)
+func NewSourceMetadata(input SourceMetadataInput) (SourceMetadata, error) {
+	if !validResourceType(input.SourceType) {
+		return SourceMetadata{}, sourceMetadataError("invalid_source_type")
 	}
-	return SourceMetadata{values: values}, nil
+	if !validBoundedText(input.SectionPath, maxSectionPathBytes) || !validBoundedText(input.SheetName, maxSheetNameBytes) || !validBoundedText(input.RemoteRevision, maxRemoteRevisionBytes) {
+		return SourceMetadata{}, sourceMetadataError("invalid_text")
+	}
+	for _, identifier := range []string{input.TableID, input.ViewID, input.SheetID} {
+		if identifier != "" && (len(identifier) > maxSourceIdentifierBytes || !sourceIdentifierPattern.MatchString(identifier)) {
+			return SourceMetadata{}, sourceMetadataError("invalid_identifier")
+		}
+	}
+	if (input.RowStart == 0) != (input.RowEnd == 0) || input.RowStart < 0 || input.RowEnd < 0 || input.RowStart > input.RowEnd || input.RowEnd > maxSourceRow {
+		return SourceMetadata{}, sourceMetadataError("invalid_row_range")
+	}
+	return SourceMetadata{values: input}, nil
 }
 
-func (m SourceMetadata) Values() map[string]string {
-	values := make(map[string]string, len(m.values))
-	for key, value := range m.values {
-		values[key] = value
-	}
-	return values
-}
+func (m SourceMetadata) Values() SourceMetadataInput { return m.values }
 
 func (m SourceMetadata) MarshalJSON() ([]byte, error) {
-	return json.Marshal(m.Values())
+	validated, err := NewSourceMetadata(m.values)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(validated.values)
 }
 
-func isSensitiveMetadataKey(key string) bool {
-	normalized := strings.ToLower(key)
-	for _, marker := range []string{"authorization", "cookie", "password", "secret", "signature", "token", "oauth", "code"} {
-		if strings.Contains(normalized, marker) {
-			return true
-		}
+func (m *SourceMetadata) UnmarshalJSON(data []byte) error {
+	if m == nil {
+		return sourceMetadataError("nil_destination")
 	}
-	return false
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var input SourceMetadataInput
+	if err := decoder.Decode(&input); err != nil {
+		return sourceMetadataError("invalid_json")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return sourceMetadataError("invalid_json")
+	}
+	validated, err := NewSourceMetadata(input)
+	if err != nil {
+		return err
+	}
+	*m = validated
+	return nil
 }
 
-func sanitizeMetadataValue(value string) string {
-	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" && (strings.EqualFold(parsed.Scheme, "http") || strings.EqualFold(parsed.Scheme, "https")) {
-		parsed.Scheme = strings.ToLower(parsed.Scheme)
-		parsed.Host = strings.ToLower(parsed.Host)
-		parsed.User = nil
-		parsed.RawQuery = ""
-		parsed.ForceQuery = false
-		parsed.Fragment = ""
-		return parsed.String()
+func sourceMetadataError(reason string) *SourceMetadataValidationError {
+	return &SourceMetadataValidationError{Reason: reason}
+}
+
+func validResourceType(resourceType ResourceType) bool {
+	switch resourceType {
+	case ResourceDocx, ResourceSheet, ResourceBitable, ResourceWiki:
+		return true
+	default:
+		return false
 	}
-	normalized := strings.ToLower(value)
-	for _, marker := range []string{"authorization:", "bearer ", "access_token=", "refresh_token=", "client_secret=", "api_key=", "password=", "cookie=", "signature=", "token=", "secret=", "code="} {
-		if strings.Contains(normalized, marker) {
-			return RedactedMetadataValue
-		}
-	}
-	return value
+}
+
+func validBoundedText(value string, maxBytes int) bool {
+	return utf8.ValidString(value) && len(value) <= maxBytes
 }
 
 type CanonicalDocument struct {
@@ -110,5 +132,5 @@ type CanonicalDocument struct {
 	Markdown       string         `json:"markdown"`
 	RemoteRevision string         `json:"remote_revision"`
 	SourceMetadata SourceMetadata `json:"source_metadata"`
-	SafeSourceURL  string         `json:"safe_source_url"`
+	SafeSourceURL  SafeURL        `json:"safe_source_url"`
 }

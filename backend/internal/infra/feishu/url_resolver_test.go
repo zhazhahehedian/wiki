@@ -20,22 +20,22 @@ func TestURLResolverResolvesCanonicalResources(t *testing.T) {
 		{
 			name: "docx",
 			raw:  "https://Acme.Feishu.CN/docx/doxcnAb_C-1/?access_token=query-secret#heading",
-			want: domain.ResourceRef{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", Token: "doxcnAb_C-1", CanonicalURL: "https://acme.feishu.cn/docx/doxcnAb_C-1", Identity: "feishu://feishu.cn/docx/doxcnAb_C-1"},
+			want: domain.ResourceRef{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", Token: "doxcnAb_C-1", CanonicalURL: mustSafeURL(t, "https://acme.feishu.cn/docx/doxcnAb_C-1"), Identity: "feishu://feishu.cn/docx/doxcnAb_C-1"},
 		},
 		{
 			name: "sheet",
 			raw:  "https://acme.feishu.cn/sheets/workbook?foo=discard&sheet=sheetA#range=A1",
-			want: domain.ResourceRef{Type: domain.ResourceSheet, ProviderHost: "feishu.cn", Token: "workbook", SheetID: "sheetA", CanonicalURL: "https://acme.feishu.cn/sheets/workbook?sheet=sheetA", Identity: "feishu://feishu.cn/sheet/workbook/sheet/sheetA"},
+			want: domain.ResourceRef{Type: domain.ResourceSheet, ProviderHost: "feishu.cn", Token: "workbook", SheetID: "sheetA", CanonicalURL: mustSafeURL(t, "https://acme.feishu.cn/sheets/workbook?sheet=sheetA"), Identity: "feishu://feishu.cn/sheet/workbook/sheet/sheetA"},
 		},
 		{
 			name: "bitable",
 			raw:  "https://team.larksuite.com/base/baseApp?view=viewB&table=tableA&signature=query-secret",
-			want: domain.ResourceRef{Type: domain.ResourceBitable, ProviderHost: "larksuite.com", Token: "baseApp", TableID: "tableA", ViewID: "viewB", CanonicalURL: "https://team.larksuite.com/base/baseApp?table=tableA&view=viewB", Identity: "feishu://larksuite.com/bitable/baseApp/table/tableA/view/viewB"},
+			want: domain.ResourceRef{Type: domain.ResourceBitable, ProviderHost: "larksuite.com", Token: "baseApp", TableID: "tableA", ViewID: "viewB", CanonicalURL: mustSafeURL(t, "https://team.larksuite.com/base/baseApp?table=tableA&view=viewB"), Identity: "feishu://larksuite.com/bitable/baseApp/table/tableA/view/viewB"},
 		},
 		{
 			name: "wiki",
 			raw:  "https://docs.example.feishu.cn/wiki/wikiNode",
-			want: domain.ResourceRef{Type: domain.ResourceWiki, ProviderHost: "feishu.cn", Token: "wikiNode", CanonicalURL: "https://docs.example.feishu.cn/wiki/wikiNode", Identity: "feishu://feishu.cn/wiki/wikiNode"},
+			want: domain.ResourceRef{Type: domain.ResourceWiki, ProviderHost: "feishu.cn", Token: "wikiNode", CanonicalURL: mustSafeURL(t, "https://docs.example.feishu.cn/wiki/wikiNode"), Identity: "feishu://feishu.cn/wiki/wikiNode"},
 		},
 	}
 
@@ -186,4 +186,13 @@ func TestURLResolverNeverLeaksSecretBearingMalformedURL(t *testing.T) {
 			t.Fatalf("Resolve() leaked %q: %v", value, err)
 		}
 	}
+}
+
+func mustSafeURL(t *testing.T, raw string) domain.SafeURL {
+	t.Helper()
+	value, err := domain.NewSafeURL(raw)
+	if err != nil {
+		t.Fatalf("NewSafeURL(%q) error = %v", raw, err)
+	}
+	return value
 }
