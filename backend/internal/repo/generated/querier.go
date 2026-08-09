@@ -38,7 +38,7 @@ type Querier interface {
 	CreateMessageForOwner(ctx context.Context, arg CreateMessageForOwnerParams) (Message, error)
 	CreateUserSession(ctx context.Context, arg CreateUserSessionParams) (UserSession, error)
 	DeleteDocument(ctx context.Context, id uuid.UUID) error
-	DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) error
+	DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) (DeleteDocumentForOwnerRow, error)
 	DeleteExpiredUserSessions(ctx context.Context, expiresAt time.Time) (int64, error)
 	DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error
 	DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKnowledgeBaseForOwnerParams) error

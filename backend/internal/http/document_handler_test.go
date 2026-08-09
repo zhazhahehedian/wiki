@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +40,26 @@ func (q documentResponseQueries) CountDocumentsByKBForOwner(context.Context, gen
 	return 0, nil
 }
 
-func (q documentResponseQueries) DeleteDocumentForOwner(context.Context, generated.DeleteDocumentForOwnerParams) error {
+func (q documentResponseQueries) DeleteDocumentForOwner(context.Context, generated.DeleteDocumentForOwnerParams) (generated.DeleteDocumentForOwnerRow, error) {
+	return generated.DeleteDocumentForOwnerRow{ContentRef: q.document.ContentRef, PendingContentRef: q.document.PendingContentRef}, nil
+}
+
+func (q documentResponseQueries) FindDocumentByChecksumForOwner(context.Context, generated.FindDocumentByChecksumForOwnerParams) (generated.Document, error) {
+	return generated.Document{}, nil
+}
+
+func (q documentResponseQueries) CreateDocumentForOwner(context.Context, generated.CreateDocumentForOwnerParams) (generated.Document, error) {
+	return q.document, nil
+}
+
+func (q documentResponseQueries) UpdateDocumentStatusForOwner(context.Context, generated.UpdateDocumentStatusForOwnerParams) error {
+	return nil
+}
+
+type recordingDocumentIngestionQueue struct{ calls int }
+
+func (q *recordingDocumentIngestionQueue) EnqueueIngestion(context.Context, string) error {
+	q.calls++
 	return nil
 }
 
@@ -80,7 +100,7 @@ func TestDocumentGetExposesFeishuSyncFieldsWithoutPrivateState(t *testing.T) {
 		PendingBytes:          new(int64),
 		PendingMetadata:       []byte(`{"secret":"must-not-leak"}`),
 	}}
-	handler := NewDocumentHandler(service.NewDocument(queries), nil, 0)
+	handler := NewDocumentHandler(service.NewDocument(queries, nil), nil, 0)
 	router := chi.NewRouter()
 	router.Get("/api/v1/docs/{id}", handler.Get)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/docs/"+docID.String(), nil)
@@ -121,5 +141,40 @@ func TestDocumentGetExposesFeishuSyncFieldsWithoutPrivateState(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotKeys, wantKeys) {
 		t.Fatalf("response keys=%v, want %v; body=%s", gotKeys, wantKeys, recorder.Body.String())
+	}
+}
+
+func TestDocumentReingestRejectsRemoteDocumentWithPublicSyncGuidance(t *testing.T) {
+	userID, kbID, docID := uuid.New(), uuid.New(), uuid.New()
+	privateSourceRef := "provider-token=private-content"
+	queries := documentResponseQueries{document: generated.Document{
+		ID: docID, KbID: kbID, SourceType: "feishu-docx", SourceRef: privateSourceRef,
+		Status: string(domain.StatusReady), Metadata: json.RawMessage(`{}`),
+	}}
+	queue := &recordingDocumentIngestionQueue{}
+	handler := NewDocumentHandler(nil, service.NewIngestion(queries, nil, queue), 0)
+	router := chi.NewRouter()
+	router.Post("/api/v1/docs/{id}/reingest", handler.Reingest)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docs/"+docID.String()+"/reingest", nil)
+	req = req.WithContext(WithCurrentUser(req.Context(), domain.User{ID: userID.String()}))
+	recorder := httptest.NewRecorder()
+
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var body errorEnvelope
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error.Code != CodeUnsupportedOperation || body.Error.Message != "remote documents cannot be reingested; use /sync" {
+		t.Fatalf("error=%+v", body.Error)
+	}
+	if queue.calls != 0 {
+		t.Fatalf("queue calls=%d, want 0", queue.calls)
+	}
+	if bodyText := recorder.Body.String(); len(bodyText) == 0 || strings.Contains(bodyText, privateSourceRef) {
+		t.Fatalf("response leaked private source reference: %s", bodyText)
 	}
 }

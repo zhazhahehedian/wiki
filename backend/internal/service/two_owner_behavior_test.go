@@ -132,13 +132,13 @@ func (r *twoOwnerDocumentRepo) CountDocumentsByKBForOwner(ctx context.Context, a
 	return int64(len(rows)), err
 }
 
-func (r *twoOwnerDocumentRepo) DeleteDocumentForOwner(_ context.Context, arg generated.DeleteDocumentForOwnerParams) error {
+func (r *twoOwnerDocumentRepo) DeleteDocumentForOwner(_ context.Context, arg generated.DeleteDocumentForOwnerParams) (generated.DeleteDocumentForOwnerRow, error) {
 	row, ok := r.docs[arg.ID]
 	if !ok || !r.ownerOwnsKB(arg.OwnerUserID, row.KbID) {
-		return pgx.ErrNoRows
+		return generated.DeleteDocumentForOwnerRow{}, pgx.ErrNoRows
 	}
 	delete(r.docs, arg.ID)
-	return nil
+	return generated.DeleteDocumentForOwnerRow{ContentRef: row.ContentRef, PendingContentRef: row.PendingContentRef}, nil
 }
 
 func (r *twoOwnerDocumentRepo) FindDocumentByChecksumForOwner(_ context.Context, arg generated.FindDocumentByChecksumForOwnerParams) (generated.Document, error) {
@@ -203,8 +203,8 @@ func TestTwoOwnerDocumentUploadAndReingestBehavior(t *testing.T) {
 			docB: {ID: docB, KbID: kbB, SourceType: "local-upload", Status: string(domain.StatusReady), Metadata: []byte("{}")},
 		},
 	}
-	docs := NewDocument(repo)
 	storage, queue := &twoOwnerStorage{}, &twoOwnerIngestionQueue{}
+	docs := NewDocument(repo, storage)
 	ingestion := NewIngestion(repo, storage, queue)
 
 	items, total, err := docs.ListByKB(context.Background(), ownerA.String(), kbA.String(), nil, 20, 0)

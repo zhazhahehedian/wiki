@@ -115,7 +115,7 @@ func TestKnowledgeBaseDocumentAndChatJSONErrorsAreRedacted(t *testing.T) {
 		},
 		{
 			name:    "document",
-			handler: http.HandlerFunc(NewDocumentHandler(service.NewDocument(errorDocumentQueries{}), nil, 1024).Get),
+			handler: http.HandlerFunc(NewDocumentHandler(service.NewDocument(errorDocumentQueries{}, nil), nil, 1024).Get),
 			target:  "/docs/" + uuid.NewString(),
 		},
 		{
@@ -191,8 +191,8 @@ func (errorDocumentQueries) ListDocumentsByKBForOwner(context.Context, generated
 func (errorDocumentQueries) CountDocumentsByKBForOwner(context.Context, generated.CountDocumentsByKBForOwnerParams) (int64, error) {
 	return 0, errors.New(publicErrorSecret)
 }
-func (errorDocumentQueries) DeleteDocumentForOwner(context.Context, generated.DeleteDocumentForOwnerParams) error {
-	return errors.New(publicErrorSecret)
+func (errorDocumentQueries) DeleteDocumentForOwner(context.Context, generated.DeleteDocumentForOwnerParams) (generated.DeleteDocumentForOwnerRow, error) {
+	return generated.DeleteDocumentForOwnerRow{}, errors.New(publicErrorSecret)
 }
 
 type errorChatQueries struct{}

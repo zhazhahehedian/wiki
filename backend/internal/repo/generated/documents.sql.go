@@ -423,7 +423,7 @@ func (q *Queries) DeleteDocument(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const deleteDocumentForOwner = `-- name: DeleteDocumentForOwner :exec
+const deleteDocumentForOwner = `-- name: DeleteDocumentForOwner :one
 DELETE FROM documents AS d
 WHERE d.id = $1
   AND EXISTS (
@@ -432,6 +432,7 @@ WHERE d.id = $1
       WHERE kb.id = d.kb_id
         AND kb.owner_user_id = $2
   )
+RETURNING d.content_ref, d.pending_content_ref
 `
 
 type DeleteDocumentForOwnerParams struct {
@@ -439,9 +440,16 @@ type DeleteDocumentForOwnerParams struct {
 	OwnerUserID pgtype.UUID `json:"owner_user_id"`
 }
 
-func (q *Queries) DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) error {
-	_, err := q.db.Exec(ctx, deleteDocumentForOwner, arg.ID, arg.OwnerUserID)
-	return err
+type DeleteDocumentForOwnerRow struct {
+	ContentRef        *string `json:"content_ref"`
+	PendingContentRef *string `json:"pending_content_ref"`
+}
+
+func (q *Queries) DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) (DeleteDocumentForOwnerRow, error) {
+	row := q.db.QueryRow(ctx, deleteDocumentForOwner, arg.ID, arg.OwnerUserID)
+	var i DeleteDocumentForOwnerRow
+	err := row.Scan(&i.ContentRef, &i.PendingContentRef)
+	return i, err
 }
 
 const failFeishuSync = `-- name: FailFeishuSync :execrows

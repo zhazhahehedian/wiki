@@ -193,7 +193,7 @@ func run() error {
 	}
 
 	kbSvc := service.NewKB(queries, cfg.EmbeddingModel, cfg.EmbeddingDim)
-	docSvc := service.NewDocument(queries)
+	docSvc := service.NewDocument(queries, mc)
 	ingestionSvc := service.NewIngestion(queries, mc, rclient)
 	retrievalSvc := service.NewRetrieval(embed, vstore, cfg.RAGTopK, cfg.RAGMinScore)
 	runnerFactory := agent.NewFactory()

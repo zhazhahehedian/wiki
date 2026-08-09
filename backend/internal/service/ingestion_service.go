@@ -139,6 +139,12 @@ type ErrDocProcessing struct{ ID string }
 
 func (e *ErrDocProcessing) Error() string { return "document is still being processed: " + e.ID }
 
+type ErrRemoteReingestUnsupported struct{}
+
+func (*ErrRemoteReingestUnsupported) Error() string {
+	return "remote documents cannot be reingested; use /sync"
+}
+
 // Reingest 把已入库的文档重新走一遍摄入管线。
 // 仅允许 ready/failed 状态; worker 会在写入新 chunks 前删除旧 chunks。
 func (s *Ingestion) Reingest(ctx context.Context, userID, docID string) (*domain.Document, error) {
@@ -156,6 +162,9 @@ func (s *Ingestion) Reingest(ctx context.Context, userID, docID string) (*domain
 			return nil, &ErrDocNotFound{ID: docID}
 		}
 		return nil, fmt.Errorf("get document: %w", err)
+	}
+	if row.SourceType != "local-upload" {
+		return nil, &ErrRemoteReingestUnsupported{}
 	}
 	switch domain.DocStatus(row.Status) {
 	case domain.StatusReady, domain.StatusFailed:
@@ -208,6 +217,9 @@ func (s *Ingestion) ReingestKB(ctx context.Context, userID, kbID string) (int, e
 			return enqueued, fmt.Errorf("list documents: %w", err)
 		}
 		for _, row := range rows {
+			if row.SourceType != "local-upload" {
+				continue
+			}
 			if _, err := s.Reingest(ctx, userID, row.ID.String()); err != nil {
 				var busy *ErrDocProcessing
 				if errors.As(err, &busy) {

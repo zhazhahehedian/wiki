@@ -617,6 +617,37 @@ func TestFeishuSyncReconcilesExpiredPendingSnapshotAndDeletesOnlySupersededObjec
 	}
 }
 
+func TestFeishuSyncSameChecksumPromotionPreservesActiveAndDeletesOnlySupersededPending(t *testing.T) {
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	markdown := "same body"
+	checksum := sha256Hex([]byte(markdown))
+	state := newSyncState("rev-1", checksum, "active.md")
+	state.doc.SyncStatus = "syncing"
+	state.doc.UpdatedAt = now.Add(-20 * time.Minute)
+	setPendingDocument(&state.doc, PendingFeishuSnapshot{
+		ContentRef: "orphan-pending.md", Checksum: "orphan-sum", RemoteRevision: "rev-orphan",
+		Title: "Orphan", Bytes: 6, Metadata: json.RawMessage(`{}`),
+	})
+	state.claimNow = now
+	storage := newMemoryStorage()
+	storage.objects["active.md"] = []byte(markdown)
+	storage.objects["orphan-pending.md"] = []byte("orphan")
+	worker := newTestFeishuWorker(t, state, canonicalDoc(t, "rev-2", markdown), storage, &fakeStagedIngestionQueue{})
+
+	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err != nil {
+		t.Fatalf("Work() error=%v", err)
+	}
+	if len(storage.deleted) != 1 || storage.deleted[0] != "orphan-pending.md" {
+		t.Fatalf("deleted snapshots=%v, want only superseded pending", storage.deleted)
+	}
+	if _, ok := storage.objects["active.md"]; !ok {
+		t.Fatal("same-checksum promotion deleted the prior active object")
+	}
+	if state.doc.ContentRef == nil || *state.doc.ContentRef == "active.md" {
+		t.Fatalf("new snapshot was not promoted: %+v", state.doc)
+	}
+}
+
 func TestFeishuSyncReclaimedPendingFailureRetainsReferenceAndMarksFailed(t *testing.T) {
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	state := newSyncState("rev-1", "old-sum", "active.md")

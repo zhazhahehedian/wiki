@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ type IngestionWorker struct {
 	batchSize      int
 	cleanupTimeout time.Duration
 	jobTimeout     time.Duration
+	logger         *slog.Logger
 }
 
 type WorkerDeps struct {
@@ -57,6 +59,7 @@ type WorkerDeps struct {
 	BatchSize      int
 	CleanupTimeout time.Duration
 	JobTimeout     time.Duration
+	Logger         *slog.Logger
 }
 
 func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
@@ -80,10 +83,14 @@ func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
 	if d.JobTimeout <= 0 {
 		d.JobTimeout = 20 * time.Minute
 	}
+	if d.Logger == nil {
+		d.Logger = slog.Default()
+	}
 	return &IngestionWorker{
 		queries: d.Queries, storage: d.Storage, parser: d.Parser, splitter: d.Splitter,
 		embedder: d.Embedder, vstore: d.VStore, stagedVStore: staged, citationStore: citation,
 		chunkSize: d.ChunkSize, overlap: d.Overlap, batchSize: d.BatchSize, cleanupTimeout: d.CleanupTimeout, jobTimeout: d.JobTimeout,
+		logger: d.Logger,
 	}
 }
 
@@ -276,6 +283,7 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 			}
 			return failRemote("snapshot promotion failed")
 		}
+		w.deleteSupersededActiveSnapshot(ctx, doc, pending.ContentRef)
 		return nil
 	}
 
@@ -287,6 +295,24 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 	}
 	log.Printf("[worker] doc %s ready (%d chunks)", docID, len(items))
 	return nil
+}
+
+func (w *IngestionWorker) deleteSupersededActiveSnapshot(ctx context.Context, doc generated.Document, currentRef string) {
+	if doc.ContentRef == nil || *doc.ContentRef == "" || *doc.ContentRef == currentRef {
+		return
+	}
+	key := *doc.ContentRef
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cleanupTimeout)
+	defer cancel()
+	if err := w.storage.Delete(cleanupCtx, key); err != nil {
+		w.logger.WarnContext(cleanupCtx, "Feishu snapshot cleanup failed",
+			"event", "feishu_snapshot_cleanup_failed",
+			"error_code", "snapshot_delete_failed",
+			"document_id", doc.ID.String(),
+			"claim_timestamp", doc.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			"storage_key_hash", shortStorageKeyHash(key),
+		)
+	}
 }
 
 func (w *IngestionWorker) setStatus(ctx context.Context, id uuid.UUID, status domain.DocStatus) error {

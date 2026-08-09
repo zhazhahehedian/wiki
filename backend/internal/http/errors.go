@@ -25,6 +25,7 @@ const (
 	CodeSyncInProgress          = "sync_in_progress"
 	CodeUnsupportedFeishuURL    = "unsupported_feishu_url"
 	CodeUnsupportedResource     = "unsupported_resource"
+	CodeUnsupportedOperation    = "unsupported_operation"
 	CodeResourceNotFound        = "resource_not_found"
 	CodeResourceForbidden       = "resource_forbidden"
 	CodeReauthRequired          = "reauth_required"

@@ -164,6 +164,11 @@ func (h *DocumentHandler) Reingest(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, r, NewAPIError(http.StatusConflict, CodeValidationFailed, err.Error()))
 			return
 		}
+		var unsupported *service.ErrRemoteReingestUnsupported
+		if errors.As(err, &unsupported) {
+			WriteError(w, r, NewAPIError(http.StatusUnprocessableEntity, CodeUnsupportedOperation, err.Error()))
+			return
+		}
 		WriteError(w, r, err)
 		return
 	}

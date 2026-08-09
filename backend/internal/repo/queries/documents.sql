@@ -270,7 +270,7 @@ WHERE id = sqlc.arg('id')
 -- name: DeleteDocument :exec
 DELETE FROM documents WHERE id = $1;
 
--- name: DeleteDocumentForOwner :exec
+-- name: DeleteDocumentForOwner :one
 DELETE FROM documents AS d
 WHERE d.id = $1
   AND EXISTS (
@@ -278,4 +278,5 @@ WHERE d.id = $1
       FROM knowledge_bases AS kb
       WHERE kb.id = d.kb_id
         AND kb.owner_user_id = $2
-  );
+  )
+RETURNING d.content_ref, d.pending_content_ref;
