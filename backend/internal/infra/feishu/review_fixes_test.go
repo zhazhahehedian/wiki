@@ -70,9 +70,9 @@ func TestLoadersEnforceSharedCumulativeBudgets(t *testing.T) {
 
 func TestDocxRendererHonorsDepthAndCancellation(t *testing.T) {
 	blocks := map[string]docxBlock{
-		"a": {BlockID: "a", BlockType: 1, Children: []string{"b"}},
-		"b": {BlockID: "b", BlockType: 1, Children: []string{"c"}},
-		"c": {BlockID: "c", BlockType: 1},
+		"a": {BlockID: "a", BlockType: 1, Page: &docxText{}, Children: []string{"b"}},
+		"b": {BlockID: "b", BlockType: 1, Page: &docxText{}, Children: []string{"c"}},
+		"c": {BlockID: "c", BlockType: 1, Page: &docxText{}},
 	}
 	renderer := docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{MaxDepth: 1}), blocks: blocks, normalizer: NewMarkdownNormalizer()}
 	_, err := renderer.renderBlock("a", 0, map[string]bool{})

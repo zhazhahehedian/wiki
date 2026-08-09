@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -89,7 +90,7 @@ func TestDocxLoaderChargesRetainedOrphanBlockBytes(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"document":{"document_id":"docA","revision_id":1,"title":"Doc"}}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"block_id":"root","block_type":1,"children":[]},{"block_id":"orphan","block_type":2,"text":{"elements":[{"text_run":{"content":"` + strings.Repeat("x", 500) + `"}}]}}],"has_more":false}}`))
+		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"block_id":"root","block_type":1,"page":{"elements":[]},"children":[]},{"block_id":"orphan","block_type":2,"text":{"elements":[{"text_run":{"content":"` + strings.Repeat("x", 500) + `"}}]}}],"has_more":false}}`))
 	}))
 	defer server.Close()
 	client := NewClient(ClientConfig{BaseURL: server.URL, ResourceLimits: ResourceLimits{MaxOutputBytes: 100}}, server.Client())
@@ -140,6 +141,9 @@ func TestDocxRendererGenericVariantsAndTodoState(t *testing.T) {
 	}
 	blocks := map[string]docxBlock{}
 	for _, block := range page.Items {
+		if block.BlockID == "root" {
+			block.Page = &docxText{}
+		}
 		blocks[block.BlockID] = block
 	}
 	got, err := (docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{}), blocks: blocks, normalizer: NewMarkdownNormalizer()}).renderBlock("root", 0, map[string]bool{})
@@ -162,7 +166,7 @@ func TestDocxTableTraversalCarriesParentDepth(t *testing.T) {
 		Cells []string `json:"cells"`
 	}{Cells: []string{"cell"}}}
 	table.Table.Property.RowSize, table.Table.Property.ColumnSize = 1, 1
-	blocks := map[string]docxBlock{"root": {BlockID: "root", BlockType: 1, Children: []string{"table"}}, "table": table, "cell": {BlockID: "cell", BlockType: 32, Children: []string{"text"}}, "text": {BlockID: "text", BlockType: 2, Text: &docxText{}}}
+	blocks := map[string]docxBlock{"root": {BlockID: "root", BlockType: 1, Page: &docxText{}, Children: []string{"table"}}, "table": table, "cell": {BlockID: "cell", BlockType: 32, Children: []string{"text"}}, "text": {BlockID: "text", BlockType: 2, Text: &docxText{}}}
 	renderer := docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{MaxDepth: 2}), blocks: blocks, normalizer: NewMarkdownNormalizer()}
 	_, err := renderer.renderBlock("root", 0, map[string]bool{})
 	assertLoadCode(t, err, ports.SourceLoadTooLarge)
@@ -177,5 +181,80 @@ func TestBitableNormalizationEnforcesDepthAndCancellation(t *testing.T) {
 	_, err = normalizeBitableValue(ctx, newResourceBudget(ResourceLimits{}), []any{"value"}, 0)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("normalize error = %v", err)
+	}
+}
+
+func TestDocxLoaderChargesAllRetainedInlineAndStyleFields(t *testing.T) {
+	for _, test := range []struct{ name, orphan string }{
+		{name: "code language", orphan: `{"block_id":"orphan","block_type":14,"code":{"elements":[],"style":{"language":"` + strings.Repeat("x", 500) + `"}}}`},
+		{name: "equation mention", orphan: `{"block_id":"orphan","block_type":16,"equation":{"elements":[{"mention_doc":{"title":"` + strings.Repeat("x", 500) + `"}}]}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/documents/docA") {
+					_, _ = w.Write([]byte(`{"code":0,"data":{"document":{"document_id":"docA","revision_id":1,"title":"Doc"}}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"block_id":"root","block_type":1,"page":{"elements":[]}},` + test.orphan + `],"has_more":false}}`))
+			}))
+			defer server.Close()
+			client := NewClient(ClientConfig{BaseURL: server.URL, ResourceLimits: ResourceLimits{MaxOutputBytes: 100}}, server.Client())
+			_, err := NewDocxLoader(client).Load(context.Background(), mustResourceRef(t, domain.ResourceDocx, "docA", ""), "token")
+			assertLoadCode(t, err, ports.SourceLoadTooLarge)
+		})
+	}
+}
+
+func TestDocxLoaderRejectsMultipleInlineUnionMembers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/documents/docA") {
+			_, _ = w.Write([]byte(`{"code":0,"data":{"document":{"document_id":"docA","revision_id":1,"title":"Doc"}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"block_id":"root","block_type":1,"page":{"elements":[]},"children":["bad"]},{"block_id":"bad","block_type":2,"text":{"elements":[{"text_run":{"content":"visible"},"mention_doc":{"title":"also"}}]}}],"has_more":false}}`))
+	}))
+	defer server.Close()
+	_, err := NewDocxLoader(NewClient(ClientConfig{BaseURL: server.URL}, server.Client())).Load(context.Background(), mustResourceRef(t, domain.ResourceDocx, "docA", ""), "token")
+	assertLoadCode(t, err, ports.SourceLoadMalformed)
+}
+
+func TestDocxRendererRejectsKnownTypesMissingPayload(t *testing.T) {
+	for _, blockType := range []int{2, 14, 16, 27, 31} {
+		t.Run(strconv.Itoa(blockType), func(t *testing.T) {
+			block := docxBlock{BlockID: "bad", BlockType: blockType}
+			_, err := (docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{}), blocks: map[string]docxBlock{"bad": block}, normalizer: NewMarkdownNormalizer()}).renderBlock("bad", 0, map[string]bool{})
+			assertLoadCode(t, err, ports.SourceLoadMalformed)
+		})
+	}
+}
+
+func TestDocxTableCellsRenderValidKnownAndFutureVariants(t *testing.T) {
+	table := docxBlock{BlockID: "table", BlockType: 31, Table: &struct {
+		Property struct {
+			RowSize    int `json:"row_size"`
+			ColumnSize int `json:"column_size"`
+		} `json:"property"`
+		Cells []string `json:"cells"`
+	}{Cells: []string{"cell"}}}
+	table.Table.Property.RowSize, table.Table.Property.ColumnSize = 1, 1
+	heading := &docxText{}
+	heading.Elements = []docxTextElement{{TextRun: &struct {
+		Content string `json:"content"`
+	}{Content: "Heading"}}}
+	blocks := map[string]docxBlock{
+		"table":   table,
+		"cell":    {BlockID: "cell", BlockType: 32, Children: []string{"heading", "divider", "future"}},
+		"heading": {BlockID: "heading", BlockType: 6, Heading4: heading},
+		"divider": {BlockID: "divider", BlockType: 22},
+		"future":  {BlockID: "future", BlockType: 60},
+	}
+	got, err := (docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{}), blocks: blocks, normalizer: NewMarkdownNormalizer()}).renderBlock("table", 0, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Heading", "---", "Unsupported block type 60"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("table %q missing %q", got, want)
+		}
 	}
 }

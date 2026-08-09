@@ -167,7 +167,11 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 			if !validDocxReferences(block) {
 				return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
-			if err := budget.RetainedBytes(docxRetainedBytes(block)); err != nil {
+			retainedBytes, err := docxRetainedBytes(block)
+			if err != nil {
+				return domain.CanonicalDocument{}, err
+			}
+			if err := budget.RetainedBytes(retainedBytes); err != nil {
 				return domain.CanonicalDocument{}, err
 			}
 			if _, exists := blocks[block.BlockID]; exists {
@@ -281,6 +285,9 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 	block, ok := r.blocks[id]
 	if !ok || stack[id] {
 		return "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+	}
+	if err := validateDocxBlockPayload(block); err != nil {
+		return "", err
 	}
 	stack[id] = true
 	defer delete(stack, id)
@@ -402,38 +409,29 @@ func (r docxRenderer) renderTable(block docxBlock, depth int, stack map[string]b
 	return result, nil
 }
 
-func docxRetainedBytes(block docxBlock) int {
-	total := len(block.BlockID)
+func docxRetainedBytes(block docxBlock) (int, error) {
+	if err := validateDocxBlockPayload(block); err != nil {
+		return 0, err
+	}
+	total := len(block.BlockID) + 8
 	for _, child := range block.Children {
 		total += len(child)
 	}
 	texts := []*docxText{block.Text, block.Page, block.Heading1, block.Heading2, block.Heading3, block.Heading4, block.Heading5, block.Heading6, block.Heading7, block.Heading8, block.Heading9, block.Bullet, block.Ordered, block.Quote, block.Code, block.Todo}
 	for _, text := range texts {
-		if text == nil {
-			continue
+		textBytes, err := docxTextRetainedBytes(text)
+		if err != nil {
+			return 0, err
 		}
-		for _, element := range text.Elements {
-			switch {
-			case element.TextRun != nil:
-				total += len(element.TextRun.Content)
-			case element.MentionUser != nil:
-				total += len(element.MentionUser.UserID)
-			case element.MentionDoc != nil:
-				total += len(element.MentionDoc.Title)
-			case element.Equation != nil:
-				total += len(element.Equation.Content)
-			case element.File != nil:
-				total += len(element.File.Name)
-			}
-		}
+		total += textBytes
 	}
 	if block.Equation != nil {
 		total += len(block.Equation.Content)
-		for _, element := range block.Equation.Elements {
-			if element.TextRun != nil {
-				total += len(element.TextRun.Content)
-			}
+		elementBytes, err := docxTextRetainedBytes(&docxText{Elements: block.Equation.Elements})
+		if err != nil {
+			return 0, err
 		}
+		total += elementBytes
 	}
 	if block.File != nil {
 		total += len(block.File.Name)
@@ -442,11 +440,188 @@ func docxRetainedBytes(block docxBlock) int {
 		total += len(block.Image.Token)
 	}
 	if block.Table != nil {
+		total += 16
 		for _, cell := range block.Table.Cells {
 			total += len(cell)
 		}
 	}
-	return total
+	return total, nil
+}
+
+func docxTextRetainedBytes(text *docxText) (int, error) {
+	if text == nil {
+		return 0, nil
+	}
+	total := retainedAnyBytes(text.Style.Language) + 1
+	for _, element := range text.Elements {
+		members := 0
+		if element.TextRun != nil {
+			members++
+			total += len(element.TextRun.Content)
+		}
+		if element.MentionUser != nil {
+			members++
+			total += len(element.MentionUser.UserID)
+		}
+		if element.MentionDoc != nil {
+			members++
+			total += len(element.MentionDoc.Title)
+		}
+		if element.Equation != nil {
+			members++
+			total += len(element.Equation.Content)
+		}
+		if element.File != nil {
+			members++
+			total += len(element.File.Name)
+		}
+		if members != 1 {
+			return 0, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		}
+	}
+	return total, nil
+}
+
+func retainedAnyBytes(value any) int {
+	switch value := value.(type) {
+	case nil:
+		return 0
+	case string:
+		return len(value)
+	case bool:
+		return 1
+	case float64:
+		return 8
+	case []any:
+		total := 0
+		for _, item := range value {
+			total += retainedAnyBytes(item)
+		}
+		return total
+	case map[string]any:
+		total := 0
+		for key, item := range value {
+			total += len(key) + retainedAnyBytes(item)
+		}
+		return total
+	default:
+		return 8
+	}
+}
+
+func validateDocxBlockPayload(block docxBlock) error {
+	payloads := 0
+	for _, present := range []bool{
+		block.Page != nil, block.Text != nil, block.Heading1 != nil, block.Heading2 != nil, block.Heading3 != nil,
+		block.Heading4 != nil, block.Heading5 != nil, block.Heading6 != nil, block.Heading7 != nil, block.Heading8 != nil,
+		block.Heading9 != nil, block.Bullet != nil, block.Ordered != nil, block.Code != nil, block.Quote != nil,
+		block.Equation != nil, block.Todo != nil, block.Bitable != nil, block.Callout != nil, block.ChatCard != nil,
+		block.Diagram != nil, block.File != nil, block.Grid != nil, block.GridColumn != nil, block.Iframe != nil,
+		block.Image != nil, block.ISV != nil, block.Mindnote != nil, block.Sheet != nil, block.Table != nil,
+		block.View != nil, block.QuoteContainer != nil, block.Task != nil, block.OKR != nil, block.OKRObjective != nil,
+		block.OKRKeyResult != nil, block.AddOns != nil, block.JiraIssue != nil, block.WikiCatalog != nil, block.Board != nil,
+	} {
+		if present {
+			payloads++
+		}
+	}
+	expected := false
+	switch block.BlockType {
+	case 1:
+		expected = block.Page != nil
+	case 2:
+		expected = block.Text != nil
+	case 3:
+		expected = block.Heading1 != nil
+	case 4:
+		expected = block.Heading2 != nil
+	case 5:
+		expected = block.Heading3 != nil
+	case 6:
+		expected = block.Heading4 != nil
+	case 7:
+		expected = block.Heading5 != nil
+	case 8:
+		expected = block.Heading6 != nil
+	case 9:
+		expected = block.Heading7 != nil
+	case 10:
+		expected = block.Heading8 != nil
+	case 11:
+		expected = block.Heading9 != nil
+	case 12:
+		expected = block.Bullet != nil
+	case 13:
+		expected = block.Ordered != nil
+	case 14:
+		expected = block.Code != nil
+	case 15:
+		expected = block.Quote != nil
+	case 16:
+		expected = block.Equation != nil
+	case 17:
+		expected = block.Todo != nil
+	case 18:
+		expected = block.Bitable != nil
+	case 19:
+		expected = block.Callout != nil
+	case 20:
+		expected = block.ChatCard != nil
+	case 21:
+		expected = block.Diagram != nil
+	case 22, 32:
+		if payloads != 0 {
+			return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		}
+		return nil
+	case 23:
+		expected = block.File != nil
+	case 24:
+		expected = block.Grid != nil
+	case 25:
+		expected = block.GridColumn != nil
+	case 26:
+		expected = block.Iframe != nil
+	case 27:
+		expected = block.Image != nil
+	case 28:
+		expected = block.ISV != nil
+	case 29:
+		expected = block.Mindnote != nil
+	case 30:
+		expected = block.Sheet != nil
+	case 31:
+		expected = block.Table != nil
+	case 33:
+		expected = block.View != nil
+	case 34:
+		expected = block.QuoteContainer != nil
+	case 35:
+		expected = block.Task != nil
+	case 36:
+		expected = block.OKR != nil
+	case 37:
+		expected = block.OKRObjective != nil
+	case 38:
+		expected = block.OKRKeyResult != nil
+	case 39:
+		expected = block.AddOns != nil
+	case 40:
+		expected = block.JiraIssue != nil
+	case 41:
+		expected = block.WikiCatalog != nil
+	case 42:
+		expected = block.Board != nil
+	default:
+		if payloads != 0 {
+			return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		}
+		return nil
+	}
+	if !expected || payloads != 1 {
+		return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+	}
+	return nil
 }
 
 func validDocxReferences(block docxBlock) bool {
@@ -482,6 +657,9 @@ func (r docxRenderer) plainChildren(ids []string, depth int, stack map[string]bo
 		if !ok || stack[id] {
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 		}
+		if err := validateDocxBlockPayload(block); err != nil {
+			return nil, err
+		}
 		stack[id] = true
 		var value markdownTableCell
 		switch {
@@ -493,6 +671,18 @@ func (r docxRenderer) plainChildren(ids []string, depth int, stack map[string]bo
 			value.text = docxPlainText(block.Heading2)
 		case block.Heading3 != nil:
 			value.text = docxPlainText(block.Heading3)
+		case block.Heading4 != nil:
+			value.text = docxPlainText(block.Heading4)
+		case block.Heading5 != nil:
+			value.text = docxPlainText(block.Heading5)
+		case block.Heading6 != nil:
+			value.text = docxPlainText(block.Heading6)
+		case block.Heading7 != nil:
+			value.text = docxPlainText(block.Heading7)
+		case block.Heading8 != nil:
+			value.text = docxPlainText(block.Heading8)
+		case block.Heading9 != nil:
+			value.text = docxPlainText(block.Heading9)
 		case block.Bullet != nil:
 			value.text = docxPlainText(block.Bullet)
 		case block.Ordered != nil:
@@ -509,11 +699,16 @@ func (r docxRenderer) plainChildren(ids []string, depth int, stack map[string]bo
 			value.text = block.File.Name
 		case block.Image != nil:
 			value.safeMarkdown = r.normalizer.UnsupportedInlineImage("", r.sourceURL)
+		case block.BlockType == 22:
+			value.text = "---"
 		case documentedDocxLeafLabel(block) != "":
 			value.text = "Unsupported " + documentedDocxLeafLabel(block)
-		case block.BlockType != 32 && block.BlockType != 1 && block.Callout == nil && block.Grid == nil && block.GridColumn == nil && block.QuoteContainer == nil:
-			delete(stack, id)
-			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		case block.Table != nil:
+			value.text = "Unsupported table"
+		case block.BlockType == 1 || block.BlockType == 32 || block.Callout != nil || block.Grid != nil || block.GridColumn != nil || block.QuoteContainer != nil:
+			// Containers contribute their children only.
+		default:
+			value.text = "Unsupported block type " + strconv.Itoa(block.BlockType)
 		}
 		children, err := r.plainChildren(block.Children, depth+1, stack)
 		delete(stack, id)
