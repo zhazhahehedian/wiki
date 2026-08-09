@@ -59,7 +59,7 @@ http://localhost:8080/api/v1/auth/feishu/callback
 
 飞书 API base、HTTP timeout、重试和资源大小目前没有环境变量。当前代码固定使用 `https://open.feishu.cn`、每请求 15s timeout、最多 3 次重试（429、5xx、网络或读取错误，遵循 `Retry-After`，退避上限 30s）、单响应 8 MiB、默认最多 10,000 行和 10 MiB canonical output。不要配置未实现的 `FEISHU_API_*` 或 row-size 变量；需要改变这些限制时先增加 `config.go` 支持和测试。
 
-`.env.example` 使用占位符。不要提交真实 app secret、OAuth 加密 key、用户 token 或飞书文档正文。
+`.env.example` 故意把 `OAUTH_ENCRYPTION_KEY` 留空；复制模板后，任何其他飞书配置为非空而 key 仍为空都会让 `config.Load` fail fast。运行 `openssl rand -hex 16` 生成恰好 32 个随机 ASCII 字符并填入该变量。不可使用模板值，也不要提交真实 app secret、OAuth 加密 key、用户 token 或飞书文档正文。
 
 ## 3. Cookie、CORS 与 CSRF
 
@@ -68,7 +68,7 @@ http://localhost:8080/api/v1/auth/feishu/callback
 - `it_wiki_session`：`HttpOnly`，浏览器脚本不可读。
 - `it_wiki_csrf`：非 `HttpOnly`，前端读取后在 mutation 上发送 `X-CSRF-Token`。
 
-两个 cookie 在 `SESSION_COOKIE_SECURE=true` 时都带 `Secure`。前端 API client 固定使用 `credentials: "include"`。所有 POST/PATCH/DELETE 请求必须同时满足：请求 `Origin` 精确等于 `FRONTEND_ORIGIN`，session 有效，`X-CSRF-Token` 与该 session 绑定的 CSRF hash 匹配。CORS 只回显这个单一 origin，并发送 `Access-Control-Allow-Credentials: true`。
+两个 cookie 在 `SESSION_COOKIE_SECURE=true` 时都带 `Secure`。前端 API client 固定使用 `credentials: "include"`。所有 POST/PATCH/DELETE 请求必须同时满足：请求 `Origin` 精确等于 `FRONTEND_ORIGIN`，session 有效，`X-CSRF-Token` header 与该 session 绑定的 CSRF hash 匹配。后端不直接读取 `it_wiki_csrf` cookie；它只是前端取得 token 并构造 header 的载体，cookie 缺失会让当前前端无法发送 header。CORS 只回显这个单一 origin，并发送 `Access-Control-Allow-Credentials: true`。
 
 生产环境应让反向代理终止 HTTPS，设置 `SESSION_COOKIE_SECURE=true`，并保证浏览器看到的前端 origin 与 `FRONTEND_ORIGIN` 一致。当前 cookie 是 `SameSite=Lax`，不支持跨站点第三方 cookie 部署；前后端应同站点，最好由同一 HTTPS 域名反代。不要在代理层重写 callback path 或把 HTTP callback 暴露给生产用户。
 
@@ -170,4 +170,4 @@ pnpm test
 pnpm build
 ```
 
-E2E 覆盖 start → callback state/cookie → token/user info → local session → 带 credentials/CSRF/Origin 的 import/sync，以及第二用户的 cross-owner 拒绝。测试使用 TLS `httptest.Server`，不会访问真实飞书，也不依赖 PostgreSQL 或 MinIO。完整 migration、PostgreSQL/pgvector、MinIO 和 River 运行态仍应在可用 Docker 环境中另行验证。
+E2E 覆盖 start → callback state/cookie → token/user info → local session → 带 credentials/CSRF/Origin 的 import/sync，以及第二用户的 cross-owner 拒绝。HTTP 边界明确断言 `202 Accepted` 返回时只记录 sync job、尚未访问 fake Feishu API；随后测试显式调用 in-memory `DrainNext` composition driver，才通过真实 `Auth.AccessToken`、URL resolver 和 Docx loader 访问 TLS fake Feishu API 并核对 canonical snapshot。这个 driver 只是已接受的 worker seam，不是 River、MinIO、ingestion 或 atomic promotion 的替身；这些边界由 worker/unit integration tests 覆盖，live stack 仍需人工验证。测试不会访问真实飞书，也不依赖 PostgreSQL 或 MinIO。完整 migration、PostgreSQL/pgvector、MinIO 和 River 运行态仍应在可用 Docker 环境中另行验证。
