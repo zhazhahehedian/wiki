@@ -153,15 +153,249 @@ func TestCanonicalDocumentUsesOpaqueSafeSourceURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSourceMetadata() error = %v", err)
 	}
-	document := domain.CanonicalDocument{
+	document, err := domain.NewCanonicalDocument(domain.CanonicalDocumentInput{
+		Title:          "Title",
+		Markdown:       "# Title",
+		RemoteRevision: "revision-1",
+		SourceMetadata: metadata,
+		SafeSourceURL:  mustSafeURL(t, "https://acme.feishu.cn/docx/token"),
+	})
+	if err != nil {
+		t.Fatalf("NewCanonicalDocument() error = %v", err)
+	}
+	if document.SafeSourceURL.String() == "" || document.SourceMetadata.Values().SectionPath != "Overview" {
+		t.Fatalf("CanonicalDocument = %+v", document)
+	}
+}
+
+func TestResourceRefJSONRejectsInvalidPersistedState(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "empty token",
+			raw:  `{"type":"docx","provider_host":"feishu.cn","token":"","canonical_url":"https://acme.feishu.cn/docx/token","original_url":"https://acme.feishu.cn/docx/token","identity":"feishu://feishu.cn/docx/"}`,
+		},
+		{
+			name: "invalid type",
+			raw:  `{"type":"slides","provider_host":"feishu.cn","token":"token","canonical_url":"https://acme.feishu.cn/docx/token","original_url":"https://acme.feishu.cn/docx/token","identity":"feishu://feishu.cn/slides/token"}`,
+		},
+		{
+			name: "null required URL",
+			raw:  `{"type":"docx","provider_host":"feishu.cn","token":"token","canonical_url":null,"original_url":"https://acme.feishu.cn/docx/token","identity":"feishu://feishu.cn/docx/token"}`,
+		},
+		{
+			name: "null required original URL",
+			raw:  `{"type":"docx","provider_host":"feishu.cn","token":"token","canonical_url":"https://acme.feishu.cn/docx/token","original_url":null,"identity":"feishu://feishu.cn/docx/token"}`,
+		},
+		{
+			name: "inconsistent identity",
+			raw:  `{"type":"docx","provider_host":"feishu.cn","token":"token","canonical_url":"https://acme.feishu.cn/docx/token","original_url":"https://acme.feishu.cn/docx/token","identity":"feishu://feishu.cn/docx/other"}`,
+		},
+		{
+			name: "type-incompatible selector",
+			raw:  `{"type":"docx","provider_host":"feishu.cn","token":"token","table_id":"tableA","canonical_url":"https://acme.feishu.cn/docx/token","original_url":"https://acme.feishu.cn/docx/token","identity":"feishu://feishu.cn/docx/token"}`,
+		},
+		{
+			name: "unknown field",
+			raw:  `{"type":"docx","provider_host":"feishu.cn","token":"token","canonical_url":"https://acme.feishu.cn/docx/token","original_url":"https://acme.feishu.cn/docx/token","identity":"feishu://feishu.cn/docx/token","access_token":"secret"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var ref domain.ResourceRef
+			if err := json.Unmarshal([]byte(tt.raw), &ref); err == nil {
+				t.Fatalf("Unmarshal(%s) error = nil", tt.name)
+			} else if strings.Contains(err.Error(), "secret") {
+				t.Fatalf("Unmarshal() leaked secret-bearing input: %v", err)
+			}
+		})
+	}
+}
+
+func TestCanonicalDocumentJSONRejectsInvalidPersistedState(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "missing source metadata",
+			raw:  `{"title":"Title","markdown":"# Title","remote_revision":"revision-1","safe_source_url":"https://acme.feishu.cn/docx/token"}`,
+		},
+		{
+			name: "null required source URL",
+			raw:  `{"title":"Title","markdown":"# Title","remote_revision":"revision-1","source_metadata":{"source_type":"docx"},"safe_source_url":null}`,
+		},
+		{
+			name: "missing title",
+			raw:  `{"markdown":"# Title","remote_revision":"revision-1","source_metadata":{"source_type":"docx"},"safe_source_url":"https://acme.feishu.cn/docx/token"}`,
+		},
+		{
+			name: "missing remote revision",
+			raw:  `{"title":"Title","markdown":"# Title","source_metadata":{"source_type":"docx"},"safe_source_url":"https://acme.feishu.cn/docx/token"}`,
+		},
+		{
+			name: "unknown field",
+			raw:  `{"title":"Title","markdown":"# Title","remote_revision":"revision-1","source_metadata":{"source_type":"docx"},"safe_source_url":"https://acme.feishu.cn/docx/token","authorization":"Bearer secret"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var document domain.CanonicalDocument
+			if err := json.Unmarshal([]byte(tt.raw), &document); err == nil {
+				t.Fatalf("Unmarshal(%s) error = nil", tt.name)
+			} else if strings.Contains(err.Error(), "secret") {
+				t.Fatalf("Unmarshal() leaked secret-bearing input: %v", err)
+			}
+		})
+	}
+}
+
+func TestNewResourceRefValidatesConstructionAndComputesIdentity(t *testing.T) {
+	canonicalURL := mustSafeURL(t, "https://docs.acme.feishu.cn/base/baseToken?table=tableA&view=viewA")
+	input := domain.ResourceRefInput{
+		Type:         domain.ResourceBitable,
+		ProviderHost: "feishu.cn",
+		Token:        "baseToken",
+		TableID:      "tableA",
+		ViewID:       "viewA",
+		CanonicalURL: canonicalURL,
+		OriginalURL:  canonicalURL,
+	}
+	ref, err := domain.NewResourceRef(input)
+	if err != nil {
+		t.Fatalf("NewResourceRef() error = %v", err)
+	}
+	if ref.Identity != "feishu://feishu.cn/bitable/baseToken/table/tableA/view/viewA" {
+		t.Fatalf("Identity = %q", ref.Identity)
+	}
+	if ref.OriginalURL.String() != canonicalURL.String() {
+		t.Fatalf("OriginalURL = %q, want %q", ref.OriginalURL.String(), canonicalURL.String())
+	}
+
+	invalid := []domain.ResourceRefInput{
+		{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", CanonicalURL: canonicalURL, OriginalURL: canonicalURL},
+		{Type: "slides", ProviderHost: "feishu.cn", Token: "token", CanonicalURL: canonicalURL, OriginalURL: canonicalURL},
+		{Type: domain.ResourceDocx, ProviderHost: "acme.feishu.cn", Token: "token", CanonicalURL: canonicalURL, OriginalURL: canonicalURL},
+		{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", Token: "token", TableID: "tableA", CanonicalURL: canonicalURL, OriginalURL: canonicalURL},
+		{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", Token: "token"},
+	}
+	for _, invalidInput := range invalid {
+		_, err := domain.NewResourceRef(invalidInput)
+		var validationErr *domain.ResourceRefValidationError
+		if !errors.As(err, &validationErr) {
+			t.Fatalf("NewResourceRef(%+v) error = %#v, want validation error", invalidInput, err)
+		}
+	}
+}
+
+func TestResourceRefJSONRoundTripsThroughValidation(t *testing.T) {
+	safeURL := mustSafeURL(t, "https://acme.feishu.cn/sheets/workbook?sheet=sheetA")
+	want, err := domain.NewResourceRef(domain.ResourceRefInput{
+		Type:         domain.ResourceSheet,
+		ProviderHost: "feishu.cn",
+		Token:        "workbook",
+		SheetID:      "sheetA",
+		CanonicalURL: safeURL,
+		OriginalURL:  safeURL,
+	})
+	if err != nil {
+		t.Fatalf("NewResourceRef() error = %v", err)
+	}
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var got domain.ResourceRef
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("roundtrip = %+v, want %+v", got, want)
+	}
+	if err := json.Unmarshal(append(encoded, []byte(` {}`)...), &got); err == nil {
+		t.Fatal("Unmarshal() trailing JSON error = nil")
+	}
+}
+
+func TestResourceRefJSONMarshalRejectsMutatedInvalidState(t *testing.T) {
+	safeURL := mustSafeURL(t, "https://acme.feishu.cn/docx/token")
+	ref, err := domain.NewResourceRef(domain.ResourceRefInput{
+		Type:         domain.ResourceDocx,
+		ProviderHost: "feishu.cn",
+		Token:        "token",
+		CanonicalURL: safeURL,
+		OriginalURL:  safeURL,
+	})
+	if err != nil {
+		t.Fatalf("NewResourceRef() error = %v", err)
+	}
+	ref.Identity = "feishu://feishu.cn/docx/other"
+	if _, err := json.Marshal(ref); err == nil {
+		t.Fatal("Marshal() inconsistent identity error = nil")
+	}
+}
+
+func TestResourceRefIdentityIgnoresVerifiedTenantAlias(t *testing.T) {
+	safeURL := mustSafeURL(t, "https://acme.feishu.cn/docx/token")
+	newRef := func(tenant string) domain.ResourceRef {
+		t.Helper()
+		ref, err := domain.NewResourceRef(domain.ResourceRefInput{
+			Type:         domain.ResourceDocx,
+			ProviderHost: "feishu.cn",
+			Tenant:       tenant,
+			Token:        "token",
+			CanonicalURL: safeURL,
+			OriginalURL:  safeURL,
+		})
+		if err != nil {
+			t.Fatalf("NewResourceRef(tenant=%q) error = %v", tenant, err)
+		}
+		return ref
+	}
+	alpha := newRef("tenant.alpha.example")
+	beta := newRef("tenant.beta.example")
+	if alpha.Identity != beta.Identity {
+		t.Fatalf("tenant alias affected identity: %q != %q", alpha.Identity, beta.Identity)
+	}
+}
+
+func TestCanonicalDocumentConstructionAndJSONRoundTrip(t *testing.T) {
+	metadata, err := domain.NewSourceMetadata(domain.SourceMetadataInput{SourceType: domain.ResourceDocx, SectionPath: "Overview"})
+	if err != nil {
+		t.Fatalf("NewSourceMetadata() error = %v", err)
+	}
+	input := domain.CanonicalDocumentInput{
 		Title:          "Title",
 		Markdown:       "# Title",
 		RemoteRevision: "revision-1",
 		SourceMetadata: metadata,
 		SafeSourceURL:  mustSafeURL(t, "https://acme.feishu.cn/docx/token"),
 	}
-	if document.SafeSourceURL.String() == "" || document.SourceMetadata.Values().SectionPath != "Overview" {
-		t.Fatalf("CanonicalDocument = %+v", document)
+	want, err := domain.NewCanonicalDocument(input)
+	if err != nil {
+		t.Fatalf("NewCanonicalDocument() error = %v", err)
+	}
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var got domain.CanonicalDocument
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("roundtrip = %+v, want %+v", got, want)
+	}
+	if err := json.Unmarshal(append(encoded, []byte(` {}`)...), &got); err == nil {
+		t.Fatal("Unmarshal() trailing JSON error = nil")
+	}
+	want.SafeSourceURL = domain.SafeURL{}
+	if _, err := json.Marshal(want); err == nil {
+		t.Fatal("Marshal() missing required source URL error = nil")
 	}
 }
 

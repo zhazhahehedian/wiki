@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"regexp"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -20,20 +21,9 @@ const (
 	maxSheetNameBytes        = 512
 	maxSourceIdentifierBytes = 256
 	maxRemoteRevisionBytes   = 256
+	maxCanonicalTitleBytes   = 512
 	maxSourceRow             = 10_000_000
 )
-
-type ResourceRef struct {
-	Type         ResourceType `json:"type"`
-	ProviderHost string       `json:"provider_host"`
-	Tenant       string       `json:"tenant,omitempty"`
-	Token        string       `json:"token"`
-	TableID      string       `json:"table_id,omitempty"`
-	ViewID       string       `json:"view_id,omitempty"`
-	SheetID      string       `json:"sheet_id,omitempty"`
-	CanonicalURL SafeURL      `json:"canonical_url"`
-	Identity     string       `json:"identity"`
-}
 
 type SourceMetadataInput struct {
 	SourceType     ResourceType `json:"source_type"`
@@ -133,4 +123,93 @@ type CanonicalDocument struct {
 	RemoteRevision string         `json:"remote_revision"`
 	SourceMetadata SourceMetadata `json:"source_metadata"`
 	SafeSourceURL  SafeURL        `json:"safe_source_url"`
+}
+
+type CanonicalDocumentInput struct {
+	Title          string         `json:"title"`
+	Markdown       string         `json:"markdown"`
+	RemoteRevision string         `json:"remote_revision"`
+	SourceMetadata SourceMetadata `json:"source_metadata"`
+	SafeSourceURL  SafeURL        `json:"safe_source_url"`
+}
+
+type CanonicalDocumentValidationError struct {
+	Reason string
+}
+
+func (e *CanonicalDocumentValidationError) Error() string { return "invalid canonical document" }
+
+func NewCanonicalDocument(input CanonicalDocumentInput) (CanonicalDocument, error) {
+	document := CanonicalDocument{
+		Title:          input.Title,
+		Markdown:       input.Markdown,
+		RemoteRevision: input.RemoteRevision,
+		SourceMetadata: input.SourceMetadata,
+		SafeSourceURL:  input.SafeSourceURL,
+	}
+	if err := validateCanonicalDocument(document); err != nil {
+		return CanonicalDocument{}, err
+	}
+	return document, nil
+}
+
+func (d CanonicalDocument) MarshalJSON() ([]byte, error) {
+	if err := validateCanonicalDocument(d); err != nil {
+		return nil, err
+	}
+	return json.Marshal(CanonicalDocumentInput{
+		Title:          d.Title,
+		Markdown:       d.Markdown,
+		RemoteRevision: d.RemoteRevision,
+		SourceMetadata: d.SourceMetadata,
+		SafeSourceURL:  d.SafeSourceURL,
+	})
+}
+
+func (d *CanonicalDocument) UnmarshalJSON(data []byte) error {
+	if d == nil {
+		return canonicalDocumentError("nil_destination")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var input CanonicalDocumentInput
+	if err := decoder.Decode(&input); err != nil {
+		return canonicalDocumentError("invalid_json")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return canonicalDocumentError("invalid_json")
+	}
+	validated, err := NewCanonicalDocument(input)
+	if err != nil {
+		return err
+	}
+	*d = validated
+	return nil
+}
+
+func validateCanonicalDocument(document CanonicalDocument) error {
+	if !utf8.ValidString(document.Title) || strings.TrimSpace(document.Title) == "" || len(document.Title) > maxCanonicalTitleBytes {
+		return canonicalDocumentError("invalid_title")
+	}
+	if !utf8.ValidString(document.Markdown) {
+		return canonicalDocumentError("invalid_markdown")
+	}
+	if !validBoundedText(document.RemoteRevision, maxRemoteRevisionBytes) || strings.TrimSpace(document.RemoteRevision) == "" {
+		return canonicalDocumentError("invalid_remote_revision")
+	}
+	if _, err := NewSourceMetadata(document.SourceMetadata.Values()); err != nil {
+		return canonicalDocumentError("invalid_source_metadata")
+	}
+	if document.SafeSourceURL.IsZero() {
+		return canonicalDocumentError("missing_source_url")
+	}
+	validatedURL, err := NewSafeURL(document.SafeSourceURL.String())
+	if err != nil || validatedURL != document.SafeSourceURL {
+		return canonicalDocumentError("invalid_source_url")
+	}
+	return nil
+}
+
+func canonicalDocumentError(reason string) *CanonicalDocumentValidationError {
+	return &CanonicalDocumentValidationError{Reason: reason}
 }

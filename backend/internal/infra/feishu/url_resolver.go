@@ -2,11 +2,14 @@ package feishu
 
 import (
 	"net/url"
+	"regexp"
 	"strings"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
+
+var resourceIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 const (
 	maxSourceURLBytes          = 4096
@@ -61,40 +64,44 @@ func (r *URLResolver) Resolve(rawURL string) (domain.ResourceRef, error) {
 		return domain.ResourceRef{}, resolveError(ports.SourceResolveInvalidSelector)
 	}
 
-	ref := domain.ResourceRef{Type: resourceType, ProviderHost: providerHost, Token: token}
+	refInput := domain.ResourceRefInput{Type: resourceType, ProviderHost: providerHost, Token: token}
 	safeQuery := make(url.Values)
 	switch resourceType {
 	case domain.ResourceSheet:
-		ref.SheetID, err = selector(query, "sheet")
+		refInput.SheetID, err = selector(query, "sheet")
 		if err != nil {
 			return domain.ResourceRef{}, err
 		}
-		if ref.SheetID != "" {
-			safeQuery.Set("sheet", ref.SheetID)
+		if refInput.SheetID != "" {
+			safeQuery.Set("sheet", refInput.SheetID)
 		}
 	case domain.ResourceBitable:
-		ref.TableID, err = selector(query, "table")
+		refInput.TableID, err = selector(query, "table")
 		if err != nil {
 			return domain.ResourceRef{}, err
 		}
-		ref.ViewID, err = selector(query, "view")
+		refInput.ViewID, err = selector(query, "view")
 		if err != nil {
 			return domain.ResourceRef{}, err
 		}
-		if ref.TableID != "" {
-			safeQuery.Set("table", ref.TableID)
+		if refInput.TableID != "" {
+			safeQuery.Set("table", refInput.TableID)
 		}
-		if ref.ViewID != "" {
-			safeQuery.Set("view", ref.ViewID)
+		if refInput.ViewID != "" {
+			safeQuery.Set("view", refInput.ViewID)
 		}
 	}
 
 	safeURL := url.URL{Scheme: "https", Host: host, Path: canonicalPath, RawQuery: safeQuery.Encode()}
-	ref.CanonicalURL, err = domain.NewSafeURL(safeURL.String())
+	refInput.CanonicalURL, err = domain.NewSafeURL(safeURL.String())
 	if err != nil {
 		return domain.ResourceRef{}, resolveError(ports.SourceResolveMalformedURL)
 	}
-	ref.Identity = stableResourceIdentity(ref)
+	refInput.OriginalURL = refInput.CanonicalURL
+	ref, err := domain.NewResourceRef(refInput)
+	if err != nil {
+		return domain.ResourceRef{}, resolveError(ports.SourceResolveMalformedURL)
+	}
 	return ref, nil
 }
 

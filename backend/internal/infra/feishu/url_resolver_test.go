@@ -1,6 +1,7 @@
 package feishu_test
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -20,22 +21,22 @@ func TestURLResolverResolvesCanonicalResources(t *testing.T) {
 		{
 			name: "docx",
 			raw:  "https://Acme.Feishu.CN/docx/doxcnAb_C-1/?access_token=query-secret#heading",
-			want: domain.ResourceRef{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", Token: "doxcnAb_C-1", CanonicalURL: mustSafeURL(t, "https://acme.feishu.cn/docx/doxcnAb_C-1"), Identity: "feishu://feishu.cn/docx/doxcnAb_C-1"},
+			want: domain.ResourceRef{Type: domain.ResourceDocx, ProviderHost: "feishu.cn", Token: "doxcnAb_C-1", CanonicalURL: mustSafeURL(t, "https://acme.feishu.cn/docx/doxcnAb_C-1"), OriginalURL: mustSafeURL(t, "https://acme.feishu.cn/docx/doxcnAb_C-1"), Identity: "feishu://feishu.cn/docx/doxcnAb_C-1"},
 		},
 		{
 			name: "sheet",
 			raw:  "https://acme.feishu.cn/sheets/workbook?foo=discard&sheet=sheetA#range=A1",
-			want: domain.ResourceRef{Type: domain.ResourceSheet, ProviderHost: "feishu.cn", Token: "workbook", SheetID: "sheetA", CanonicalURL: mustSafeURL(t, "https://acme.feishu.cn/sheets/workbook?sheet=sheetA"), Identity: "feishu://feishu.cn/sheet/workbook/sheet/sheetA"},
+			want: domain.ResourceRef{Type: domain.ResourceSheet, ProviderHost: "feishu.cn", Token: "workbook", SheetID: "sheetA", CanonicalURL: mustSafeURL(t, "https://acme.feishu.cn/sheets/workbook?sheet=sheetA"), OriginalURL: mustSafeURL(t, "https://acme.feishu.cn/sheets/workbook?sheet=sheetA"), Identity: "feishu://feishu.cn/sheet/workbook/sheet/sheetA"},
 		},
 		{
 			name: "bitable",
 			raw:  "https://team.larksuite.com/base/baseApp?view=viewB&table=tableA&signature=query-secret",
-			want: domain.ResourceRef{Type: domain.ResourceBitable, ProviderHost: "larksuite.com", Token: "baseApp", TableID: "tableA", ViewID: "viewB", CanonicalURL: mustSafeURL(t, "https://team.larksuite.com/base/baseApp?table=tableA&view=viewB"), Identity: "feishu://larksuite.com/bitable/baseApp/table/tableA/view/viewB"},
+			want: domain.ResourceRef{Type: domain.ResourceBitable, ProviderHost: "larksuite.com", Token: "baseApp", TableID: "tableA", ViewID: "viewB", CanonicalURL: mustSafeURL(t, "https://team.larksuite.com/base/baseApp?table=tableA&view=viewB"), OriginalURL: mustSafeURL(t, "https://team.larksuite.com/base/baseApp?table=tableA&view=viewB"), Identity: "feishu://larksuite.com/bitable/baseApp/table/tableA/view/viewB"},
 		},
 		{
 			name: "wiki",
 			raw:  "https://docs.example.feishu.cn/wiki/wikiNode",
-			want: domain.ResourceRef{Type: domain.ResourceWiki, ProviderHost: "feishu.cn", Token: "wikiNode", CanonicalURL: mustSafeURL(t, "https://docs.example.feishu.cn/wiki/wikiNode"), Identity: "feishu://feishu.cn/wiki/wikiNode"},
+			want: domain.ResourceRef{Type: domain.ResourceWiki, ProviderHost: "feishu.cn", Token: "wikiNode", CanonicalURL: mustSafeURL(t, "https://docs.example.feishu.cn/wiki/wikiNode"), OriginalURL: mustSafeURL(t, "https://docs.example.feishu.cn/wiki/wikiNode"), Identity: "feishu://feishu.cn/wiki/wikiNode"},
 		},
 	}
 
@@ -85,6 +86,36 @@ func TestURLResolverIdentityUsesProviderAndSelectionSemantics(t *testing.T) {
 	}
 	if sheetA.Identity == sheetB.Identity {
 		t.Fatalf("sheet did not affect identity: %q", sheetA.Identity)
+	}
+}
+
+func TestURLResolverSanitizesOriginalURLForNavigation(t *testing.T) {
+	ref, err := feishu.NewURLResolver().Resolve("https://Docs.Acme.Feishu.CN/base/baseToken?table=tableA&view=viewA&access_token=query-secret#record=recA")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	encoded, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var persisted struct {
+		OriginalURL string `json:"original_url"`
+	}
+	if err := json.Unmarshal(encoded, &persisted); err != nil {
+		t.Fatalf("Unmarshal persisted ref: %v", err)
+	}
+	const want = "https://docs.acme.feishu.cn/base/baseToken?table=tableA&view=viewA"
+	if ref.OriginalURL.String() != want {
+		t.Fatalf("ResourceRef.OriginalURL = %q, want %q", ref.OriginalURL.String(), want)
+	}
+	if persisted.OriginalURL != want {
+		t.Fatalf("OriginalURL = %q, want %q", persisted.OriginalURL, want)
+	}
+	for _, secret := range []string{"query-secret", "access_token", "recA"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("persisted ResourceRef leaked %q: %s", secret, encoded)
+		}
 	}
 }
 
