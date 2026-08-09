@@ -236,6 +236,42 @@ func TestOwnerChunkReadsRejectMismatchedDocumentKB(t *testing.T) {
 	}
 }
 
+func TestTwoOwnerChunkSearchAndNeighborBehavior(t *testing.T) {
+	ownerA, ownerB := uuid.NewString(), uuid.NewString()
+	createdAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	db := &twoOwnerChunkDB{
+		fakeDB:  &fakeDB{},
+		ownerID: ownerA,
+		chunkRow: []any{
+			"chunk-a", "kb-a", "doc-a", 4, "owner A content", 3, []byte(`{}`), createdAt,
+		},
+		searchRow: []any{
+			"chunk-a", "kb-a", "doc-a", "Owner A", 4, "owner A content", float32(0.95), []byte(`{}`),
+		},
+	}
+	store := &Pgvector{pool: db}
+
+	chunks, total, err := store.ListByDocument(context.Background(), ownerA, "doc-a", 20, 0)
+	if err != nil || total != 1 || len(chunks) != 1 || chunks[0].ID != "chunk-a" {
+		t.Fatalf("owner A ListByDocument chunks=%#v total=%d err=%v", chunks, total, err)
+	}
+	if chunks, total, err := store.ListByDocument(context.Background(), ownerB, "doc-a", 20, 0); err != nil || total != 0 || len(chunks) != 0 {
+		t.Fatalf("owner B ListByDocument chunks=%#v total=%d err=%v", chunks, total, err)
+	}
+	if chunk, err := store.GetChunk(context.Background(), ownerB, "kb-a", "chunk-a"); err == nil || chunk != nil {
+		t.Fatalf("owner B GetChunk chunk=%#v err=%v", chunk, err)
+	}
+	if neighbors, err := store.ListNeighbors(context.Background(), ownerB, "kb-a", "doc-a", 4, 2); err != nil || len(neighbors) != 0 {
+		t.Fatalf("owner B ListNeighbors neighbors=%#v err=%v", neighbors, err)
+	}
+	if hits, err := store.SearchForOwner(context.Background(), ownerB, "kb-a", []float32{0.1}, ports.VectorSearchOptions{TopK: 5}); err != nil || len(hits) != 0 {
+		t.Fatalf("owner B SearchForOwner hits=%#v err=%v", hits, err)
+	}
+	if hits, err := store.SearchForOwner(context.Background(), ownerA, "kb-a", []float32{0.1}, ports.VectorSearchOptions{TopK: 5}); err != nil || len(hits) != 1 || hits[0].ChunkID != "chunk-a" {
+		t.Fatalf("owner A SearchForOwner hits=%#v err=%v", hits, err)
+	}
+}
+
 func compactSQL(sql string) string {
 	return strings.Join(strings.Fields(sql), " ")
 }
@@ -457,6 +493,62 @@ type fakeDB struct {
 	tx pgx.Tx
 
 	rejectMismatchedChunk bool
+}
+
+type twoOwnerChunkDB struct {
+	*fakeDB
+	ownerID   string
+	chunkRow  []any
+	searchRow []any
+}
+
+func (d *twoOwnerChunkDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+	return &twoOwnerChunkTx{fakeTx: &fakeTx{}, ownerID: d.ownerID, searchRow: d.searchRow}, nil
+}
+
+func (d *twoOwnerChunkDB) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	d.querySQL, d.queryArgs = sql, args
+	ownerArg := 1
+	if strings.Contains(sql, "c.seq BETWEEN") {
+		ownerArg = 2
+	}
+	if len(args) <= ownerArg || args[ownerArg] != d.ownerID {
+		return &fakeRows{}, nil
+	}
+	return &fakeRows{values: [][]any{d.chunkRow}}, nil
+}
+
+func (d *twoOwnerChunkDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	d.rowSQL, d.rowArgs = sql, args
+	ownerArg := 1
+	if !strings.Contains(sql, "COUNT(*)") {
+		ownerArg = 2
+	}
+	if len(args) <= ownerArg || args[ownerArg] != d.ownerID {
+		if strings.Contains(sql, "COUNT(*)") {
+			return &fakeRow{values: []any{0}}
+		}
+		return &fakeRow{err: pgx.ErrNoRows}
+	}
+	if strings.Contains(sql, "COUNT(*)") {
+		return &fakeRow{values: []any{1}}
+	}
+	return &fakeRow{values: d.chunkRow}
+}
+
+type twoOwnerChunkTx struct {
+	*fakeTx
+	ownerID   string
+	searchRow []any
+}
+
+func (t *twoOwnerChunkTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	t.ops = append(t.ops, "query")
+	t.querySQL, t.queryArgs = sql, args
+	if len(args) <= 1 || args[1] != t.ownerID {
+		return &fakeRows{}, nil
+	}
+	return &fakeRows{values: [][]any{t.searchRow}}, nil
 }
 
 func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
