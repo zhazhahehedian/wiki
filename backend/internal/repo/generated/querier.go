@@ -13,6 +13,8 @@ import (
 )
 
 type Querier interface {
+	ClaimFeishuSync(ctx context.Context, id uuid.UUID) (Document, error)
+	CompleteUnchangedFeishuSync(ctx context.Context, arg CompleteUnchangedFeishuSyncParams) (int64, error)
 	CountConversationsByKB(ctx context.Context, arg CountConversationsByKBParams) (int64, error)
 	CountConversationsByKBForOwner(ctx context.Context, arg CountConversationsByKBForOwnerParams) (int64, error)
 	CountDocumentsByKB(ctx context.Context, arg CountDocumentsByKBParams) (int64, error)
@@ -25,6 +27,7 @@ type Querier interface {
 	CreateConversationForOwner(ctx context.Context, arg CreateConversationForOwnerParams) (Conversation, error)
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error)
 	CreateDocumentForOwner(ctx context.Context, arg CreateDocumentForOwnerParams) (Document, error)
+	CreateFeishuDocumentForOwner(ctx context.Context, arg CreateFeishuDocumentForOwnerParams) (Document, error)
 	CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBaseParams) (KnowledgeBase, error)
 	CreateKnowledgeBaseForOwner(ctx context.Context, arg CreateKnowledgeBaseForOwnerParams) (KnowledgeBase, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
@@ -35,6 +38,8 @@ type Querier interface {
 	DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error
 	DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKnowledgeBaseForOwnerParams) error
 	DeleteUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
+	FailFeishuImportEnqueue(ctx context.Context, arg FailFeishuImportEnqueueParams) (int64, error)
+	FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) (int64, error)
 	FindDocumentByChecksum(ctx context.Context, arg FindDocumentByChecksumParams) (Document, error)
 	FindDocumentByChecksumForOwner(ctx context.Context, arg FindDocumentByChecksumForOwnerParams) (Document, error)
 	GetAuthUser(ctx context.Context, id uuid.UUID) (User, error)
@@ -58,6 +63,8 @@ type Querier interface {
 	ListRecentMessagesByConversation(ctx context.Context, arg ListRecentMessagesByConversationParams) ([]Message, error)
 	ListRecentMessagesByConversationForUser(ctx context.Context, arg ListRecentMessagesByConversationForUserParams) ([]Message, error)
 	MarkOAuthAccountReauthRequired(ctx context.Context, id uuid.UUID) error
+	PromoteFeishuSnapshot(ctx context.Context, arg PromoteFeishuSnapshotParams) (int64, error)
+	StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapshotParams) (int64, error)
 	TouchConversation(ctx context.Context, id uuid.UUID) error
 	TouchConversationForOwner(ctx context.Context, arg TouchConversationForOwnerParams) error
 	TouchConversationForUser(ctx context.Context, arg TouchConversationForUserParams) error

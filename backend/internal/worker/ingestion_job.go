@@ -1,12 +1,20 @@
 package worker
 
 import (
+	"encoding/json"
+
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
 
 type IngestionJobArgs struct {
-	DocumentID string `json:"document_id"`
+	DocumentID            string          `json:"document_id"`
+	PendingContentRef     string          `json:"pending_content_ref,omitempty"`
+	PendingChecksum       string          `json:"pending_checksum,omitempty"`
+	PendingRemoteRevision string          `json:"pending_remote_revision,omitempty"`
+	Title                 string          `json:"title,omitempty"`
+	Bytes                 int64           `json:"bytes,omitempty"`
+	Metadata              json.RawMessage `json:"metadata,omitempty"`
 }
 
 func (IngestionJobArgs) Kind() string { return "ingestion" }

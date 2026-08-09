@@ -2,9 +2,28 @@ package ports
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 
+	"github.com/google/uuid"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 )
+
+var ErrStaleDocumentPromotion = errors.New("stale document promotion")
+
+type PendingDocumentPromotion struct {
+	DocumentID     uuid.UUID
+	ContentRef     string
+	Checksum       string
+	RemoteRevision string
+	Title          string
+	Bytes          int64
+	Metadata       json.RawMessage
+}
+
+type StagedVectorStore interface {
+	ReplaceChunksAndPromote(ctx context.Context, promotion PendingDocumentPromotion, items []domain.ChunkWithEmbedding) error
+}
 
 type VectorSearchOptions struct {
 	TopK     int

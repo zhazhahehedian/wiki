@@ -13,6 +13,80 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimFeishuSync = `-- name: ClaimFeishuSync :one
+UPDATE documents
+SET sync_status = 'syncing',
+    last_sync_error = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND source_type LIKE 'feishu-%'
+  AND sync_status IN ('idle', 'failed')
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL
+RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at
+`
+
+func (q *Queries) ClaimFeishuSync(ctx context.Context, id uuid.UUID) (Document, error) {
+	row := q.db.QueryRow(ctx, claimFeishuSync, id)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.Title,
+		&i.MimeType,
+		&i.Bytes,
+		&i.Checksum,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
+const completeUnchangedFeishuSync = `-- name: CompleteUnchangedFeishuSync :execrows
+UPDATE documents
+SET sync_status = 'idle',
+    last_sync_error = NULL,
+    last_synced_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND sync_status = 'syncing'
+  AND remote_revision IS NOT DISTINCT FROM $2::text
+  AND checksum = $3
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL
+`
+
+type CompleteUnchangedFeishuSyncParams struct {
+	ID             uuid.UUID `json:"id"`
+	RemoteRevision *string   `json:"remote_revision"`
+	Checksum       string    `json:"checksum"`
+}
+
+func (q *Queries) CompleteUnchangedFeishuSync(ctx context.Context, arg CompleteUnchangedFeishuSyncParams) (int64, error) {
+	result, err := q.db.Exec(ctx, completeUnchangedFeishuSync, arg.ID, arg.RemoteRevision, arg.Checksum)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countDocumentsByKB = `-- name: CountDocumentsByKB :one
 SELECT COUNT(*) FROM documents
 WHERE kb_id = $1
@@ -186,6 +260,73 @@ func (q *Queries) CreateDocumentForOwner(ctx context.Context, arg CreateDocument
 	return i, err
 }
 
+const createFeishuDocumentForOwner = `-- name: CreateFeishuDocumentForOwner :one
+INSERT INTO documents (
+    kb_id, source_type, source_ref, source_url, oauth_account_id,
+    title, mime_type, bytes, checksum, status, metadata
+)
+SELECT kb.id, $1, $2,
+       $3, oa.id,
+       $4, 'text/markdown', 0, '', 'pending', '{}'::jsonb
+FROM knowledge_bases AS kb
+JOIN oauth_accounts AS oa
+  ON oa.id = $5
+ AND oa.user_id = $6
+ AND oa.provider = 'feishu'
+WHERE kb.id = $7
+  AND kb.owner_user_id = $6
+RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at
+`
+
+type CreateFeishuDocumentForOwnerParams struct {
+	SourceType     string    `json:"source_type"`
+	SourceRef      string    `json:"source_ref"`
+	SourceUrl      *string   `json:"source_url"`
+	Title          string    `json:"title"`
+	OauthAccountID uuid.UUID `json:"oauth_account_id"`
+	OwnerUserID    uuid.UUID `json:"owner_user_id"`
+	KbID           uuid.UUID `json:"kb_id"`
+}
+
+func (q *Queries) CreateFeishuDocumentForOwner(ctx context.Context, arg CreateFeishuDocumentForOwnerParams) (Document, error) {
+	row := q.db.QueryRow(ctx, createFeishuDocumentForOwner,
+		arg.SourceType,
+		arg.SourceRef,
+		arg.SourceUrl,
+		arg.Title,
+		arg.OauthAccountID,
+		arg.OwnerUserID,
+		arg.KbID,
+	)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.Title,
+		&i.MimeType,
+		&i.Bytes,
+		&i.Checksum,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
+	)
+	return i, err
+}
+
 const deleteDocument = `-- name: DeleteDocument :exec
 DELETE FROM documents WHERE id = $1
 `
@@ -214,6 +355,75 @@ type DeleteDocumentForOwnerParams struct {
 func (q *Queries) DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) error {
 	_, err := q.db.Exec(ctx, deleteDocumentForOwner, arg.ID, arg.OwnerUserID)
 	return err
+}
+
+const failFeishuImportEnqueue = `-- name: FailFeishuImportEnqueue :execrows
+UPDATE documents
+SET sync_status = 'failed',
+    last_sync_error = $1,
+    status = 'failed',
+    error_message = $1,
+    updated_at = now()
+WHERE id = $2
+  AND source_type LIKE 'feishu-%'
+  AND sync_status = 'idle'
+  AND status = 'pending'
+  AND content_ref IS NULL
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL
+`
+
+type FailFeishuImportEnqueueParams struct {
+	SafeError *string   `json:"safe_error"`
+	ID        uuid.UUID `json:"id"`
+}
+
+func (q *Queries) FailFeishuImportEnqueue(ctx context.Context, arg FailFeishuImportEnqueueParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failFeishuImportEnqueue, arg.SafeError, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failFeishuSync = `-- name: FailFeishuSync :execrows
+UPDATE documents
+SET pending_content_ref = NULL,
+    pending_checksum = NULL,
+    pending_remote_revision = NULL,
+    sync_status = 'failed',
+    last_sync_error = $1,
+    status = CASE WHEN content_ref IS NULL THEN 'failed' ELSE status END,
+    error_message = CASE WHEN content_ref IS NULL THEN $1 ELSE error_message END,
+    updated_at = now()
+WHERE id = $2
+  AND sync_status = 'syncing'
+  AND pending_content_ref IS NOT DISTINCT FROM $3::text
+  AND pending_checksum IS NOT DISTINCT FROM $4::text
+  AND pending_remote_revision IS NOT DISTINCT FROM $5::text
+`
+
+type FailFeishuSyncParams struct {
+	SafeError             *string   `json:"safe_error"`
+	ID                    uuid.UUID `json:"id"`
+	PendingContentRef     *string   `json:"pending_content_ref"`
+	PendingChecksum       *string   `json:"pending_checksum"`
+	PendingRemoteRevision *string   `json:"pending_remote_revision"`
+}
+
+func (q *Queries) FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) (int64, error) {
+	result, err := q.db.Exec(ctx, failFeishuSync,
+		arg.SafeError,
+		arg.ID,
+		arg.PendingContentRef,
+		arg.PendingChecksum,
+		arg.PendingRemoteRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const findDocumentByChecksum = `-- name: FindDocumentByChecksum :one
@@ -510,6 +720,96 @@ func (q *Queries) ListDocumentsByKBForOwner(ctx context.Context, arg ListDocumen
 		return nil, err
 	}
 	return items, nil
+}
+
+const promoteFeishuSnapshot = `-- name: PromoteFeishuSnapshot :execrows
+UPDATE documents
+SET content_ref = pending_content_ref,
+    checksum = pending_checksum,
+    remote_revision = pending_remote_revision,
+    title = $1,
+    mime_type = 'text/markdown',
+    bytes = $2,
+    metadata = $3,
+    pending_content_ref = NULL,
+    pending_checksum = NULL,
+    pending_remote_revision = NULL,
+    sync_status = 'idle',
+    last_sync_error = NULL,
+    last_synced_at = now(),
+    status = 'ready',
+    error_message = NULL,
+    updated_at = now()
+WHERE id = $4
+  AND sync_status = 'syncing'
+  AND pending_content_ref = $5
+  AND pending_checksum = $6
+  AND pending_remote_revision = $7
+`
+
+type PromoteFeishuSnapshotParams struct {
+	Title                 string          `json:"title"`
+	Bytes                 int64           `json:"bytes"`
+	Metadata              json.RawMessage `json:"metadata"`
+	ID                    uuid.UUID       `json:"id"`
+	PendingContentRef     *string         `json:"pending_content_ref"`
+	PendingChecksum       *string         `json:"pending_checksum"`
+	PendingRemoteRevision *string         `json:"pending_remote_revision"`
+}
+
+func (q *Queries) PromoteFeishuSnapshot(ctx context.Context, arg PromoteFeishuSnapshotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, promoteFeishuSnapshot,
+		arg.Title,
+		arg.Bytes,
+		arg.Metadata,
+		arg.ID,
+		arg.PendingContentRef,
+		arg.PendingChecksum,
+		arg.PendingRemoteRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const stageFeishuSnapshot = `-- name: StageFeishuSnapshot :execrows
+UPDATE documents
+SET pending_content_ref = $1,
+    pending_checksum = $2,
+    pending_remote_revision = $3,
+    updated_at = now()
+WHERE id = $4
+  AND sync_status = 'syncing'
+  AND remote_revision IS NOT DISTINCT FROM $5::text
+  AND checksum = $6
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL
+`
+
+type StageFeishuSnapshotParams struct {
+	PendingContentRef      *string   `json:"pending_content_ref"`
+	PendingChecksum        *string   `json:"pending_checksum"`
+	PendingRemoteRevision  *string   `json:"pending_remote_revision"`
+	ID                     uuid.UUID `json:"id"`
+	ExpectedRemoteRevision *string   `json:"expected_remote_revision"`
+	ExpectedChecksum       string    `json:"expected_checksum"`
+}
+
+func (q *Queries) StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapshotParams) (int64, error) {
+	result, err := q.db.Exec(ctx, stageFeishuSnapshot,
+		arg.PendingContentRef,
+		arg.PendingChecksum,
+		arg.PendingRemoteRevision,
+		arg.ID,
+		arg.ExpectedRemoteRevision,
+		arg.ExpectedChecksum,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateDocumentStatus = `-- name: UpdateDocumentStatus :exec

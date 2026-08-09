@@ -22,6 +22,23 @@ WHERE kb.id = sqlc.arg('kb_id')
   AND kb.owner_user_id = sqlc.arg('owner_user_id')
 RETURNING documents.*;
 
+-- name: CreateFeishuDocumentForOwner :one
+INSERT INTO documents (
+    kb_id, source_type, source_ref, source_url, oauth_account_id,
+    title, mime_type, bytes, checksum, status, metadata
+)
+SELECT kb.id, sqlc.arg('source_type'), sqlc.arg('source_ref'),
+       sqlc.arg('source_url'), oa.id,
+       sqlc.arg('title'), 'text/markdown', 0, '', 'pending', '{}'::jsonb
+FROM knowledge_bases AS kb
+JOIN oauth_accounts AS oa
+  ON oa.id = sqlc.arg('oauth_account_id')
+ AND oa.user_id = sqlc.arg('owner_user_id')
+ AND oa.provider = 'feishu'
+WHERE kb.id = sqlc.arg('kb_id')
+  AND kb.owner_user_id = sqlc.arg('owner_user_id')
+RETURNING documents.*;
+
 -- name: GetDocument :one
 SELECT * FROM documents WHERE id = $1;
 
@@ -87,6 +104,103 @@ WHERE d.id = sqlc.arg('id')
       WHERE kb.id = d.kb_id
         AND kb.owner_user_id = sqlc.arg('owner_user_id')
   );
+
+-- name: ClaimFeishuSync :one
+UPDATE documents
+SET sync_status = 'syncing',
+    last_sync_error = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND source_type LIKE 'feishu-%'
+  AND sync_status IN ('idle', 'failed')
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL
+RETURNING *;
+
+-- name: CompleteUnchangedFeishuSync :execrows
+UPDATE documents
+SET sync_status = 'idle',
+    last_sync_error = NULL,
+    last_synced_at = now(),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND sync_status = 'syncing'
+  AND remote_revision IS NOT DISTINCT FROM sqlc.narg('remote_revision')::text
+  AND checksum = sqlc.arg('checksum')
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL;
+
+-- name: StageFeishuSnapshot :execrows
+UPDATE documents
+SET pending_content_ref = sqlc.arg('pending_content_ref'),
+    pending_checksum = sqlc.arg('pending_checksum'),
+    pending_remote_revision = sqlc.arg('pending_remote_revision'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND sync_status = 'syncing'
+  AND remote_revision IS NOT DISTINCT FROM sqlc.narg('expected_remote_revision')::text
+  AND checksum = sqlc.arg('expected_checksum')
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL;
+
+-- name: PromoteFeishuSnapshot :execrows
+UPDATE documents
+SET content_ref = pending_content_ref,
+    checksum = pending_checksum,
+    remote_revision = pending_remote_revision,
+    title = sqlc.arg('title'),
+    mime_type = 'text/markdown',
+    bytes = sqlc.arg('bytes'),
+    metadata = sqlc.arg('metadata'),
+    pending_content_ref = NULL,
+    pending_checksum = NULL,
+    pending_remote_revision = NULL,
+    sync_status = 'idle',
+    last_sync_error = NULL,
+    last_synced_at = now(),
+    status = 'ready',
+    error_message = NULL,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND sync_status = 'syncing'
+  AND pending_content_ref = sqlc.arg('pending_content_ref')
+  AND pending_checksum = sqlc.arg('pending_checksum')
+  AND pending_remote_revision = sqlc.arg('pending_remote_revision');
+
+-- name: FailFeishuSync :execrows
+UPDATE documents
+SET pending_content_ref = NULL,
+    pending_checksum = NULL,
+    pending_remote_revision = NULL,
+    sync_status = 'failed',
+    last_sync_error = sqlc.arg('safe_error'),
+    status = CASE WHEN content_ref IS NULL THEN 'failed' ELSE status END,
+    error_message = CASE WHEN content_ref IS NULL THEN sqlc.arg('safe_error') ELSE error_message END,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND sync_status = 'syncing'
+  AND pending_content_ref IS NOT DISTINCT FROM sqlc.narg('pending_content_ref')::text
+  AND pending_checksum IS NOT DISTINCT FROM sqlc.narg('pending_checksum')::text
+  AND pending_remote_revision IS NOT DISTINCT FROM sqlc.narg('pending_remote_revision')::text;
+
+-- name: FailFeishuImportEnqueue :execrows
+UPDATE documents
+SET sync_status = 'failed',
+    last_sync_error = sqlc.arg('safe_error'),
+    status = 'failed',
+    error_message = sqlc.arg('safe_error'),
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND source_type LIKE 'feishu-%'
+  AND sync_status = 'idle'
+  AND status = 'pending'
+  AND content_ref IS NULL
+  AND pending_content_ref IS NULL
+  AND pending_checksum IS NULL
+  AND pending_remote_revision IS NULL;
 
 -- name: DeleteDocument :exec
 DELETE FROM documents WHERE id = $1;

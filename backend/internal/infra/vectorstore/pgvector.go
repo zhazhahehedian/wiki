@@ -12,6 +12,7 @@ import (
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
+	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
 type pgxDB interface {
@@ -38,39 +39,72 @@ func (v *Pgvector) ReplaceChunks(ctx context.Context, documentID string, items [
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
-		return fmt.Errorf("delete old chunks: %w", err)
-	}
-
-	if len(items) > 0 {
-		batch := &pgx.Batch{}
-		for _, it := range items {
-			metaJSON, err := json.Marshal(it.Metadata)
-			if err != nil {
-				return fmt.Errorf("marshal metadata: %w", err)
-			}
-			batch.Queue(
-				`INSERT INTO chunks (kb_id, document_id, seq, content, token_count, embedding, metadata)
-				 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				it.KBID, it.DocumentID, it.Seq, it.Content, it.TokenCount,
-				pgvector.NewVector(it.Embedding), metaJSON,
-			)
-		}
-
-		br := tx.SendBatch(ctx, batch)
-		for i := 0; i < len(items); i++ {
-			if _, err := br.Exec(); err != nil {
-				br.Close()
-				return fmt.Errorf("insert chunk %d: %w", i, err)
-			}
-		}
-		if err := br.Close(); err != nil {
-			return fmt.Errorf("close batch: %w", err)
-		}
+	if err := replaceChunksInTx(ctx, tx, documentID, items); err != nil {
+		return err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func (v *Pgvector) ReplaceChunksAndPromote(ctx context.Context, promotion ports.PendingDocumentPromotion, items []domain.ChunkWithEmbedding) error {
+	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	if err := replaceChunksInTx(ctx, tx, promotion.DocumentID.String(), items); err != nil {
+		return err
+	}
+	contentRef, checksum, revision := promotion.ContentRef, promotion.Checksum, promotion.RemoteRevision
+	rows, err := generated.New(tx).PromoteFeishuSnapshot(ctx, generated.PromoteFeishuSnapshotParams{
+		ID: promotion.DocumentID, PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
+		Title: promotion.Title, Bytes: promotion.Bytes, Metadata: promotion.Metadata,
+	})
+	if err != nil {
+		return fmt.Errorf("promote staged document: %w", err)
+	}
+	if rows != 1 {
+		return ports.ErrStaleDocumentPromotion
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func replaceChunksInTx(ctx context.Context, tx pgx.Tx, documentID string, items []domain.ChunkWithEmbedding) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM chunks WHERE document_id = $1`, documentID); err != nil {
+		return fmt.Errorf("delete old chunks: %w", err)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for _, it := range items {
+		metaJSON, err := json.Marshal(it.Metadata)
+		if err != nil {
+			return fmt.Errorf("marshal metadata: %w", err)
+		}
+		batch.Queue(
+			`INSERT INTO chunks (kb_id, document_id, seq, content, token_count, embedding, metadata)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			it.KBID, it.DocumentID, it.Seq, it.Content, it.TokenCount,
+			pgvector.NewVector(it.Embedding), metaJSON,
+		)
+	}
+	br := tx.SendBatch(ctx, batch)
+	for i := 0; i < len(items); i++ {
+		if _, err := br.Exec(); err != nil {
+			br.Close()
+			return fmt.Errorf("insert chunk %d: %w", i, err)
+		}
+	}
+	if err := br.Close(); err != nil {
+		return fmt.Errorf("close batch: %w", err)
 	}
 	return nil
 }

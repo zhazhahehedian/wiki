@@ -40,13 +40,18 @@ func buildAuthHandler(cfg *config.Config, db generated.DBTX) (*httpx.AuthHandler
 }
 
 func buildAuthHandlerWithClient(cfg *config.Config, db generated.DBTX, httpClient *stdhttp.Client) (*httpx.AuthHandler, error) {
+	handler, _, err := buildAuthRuntime(cfg, db, httpClient)
+	return handler, err
+}
+
+func buildAuthRuntime(cfg *config.Config, db generated.DBTX, httpClient *stdhttp.Client) (*httpx.AuthHandler, *service.Auth, error) {
 	if !cfg.FeishuEnabled {
-		return httpx.NewDisabledAuthHandler(), nil
+		return httpx.NewDisabledAuthHandler(), nil, nil
 	}
 
 	protector, err := authstore.NewAESGCMProtector([]byte(cfg.OAuthEncryptionKey))
 	if err != nil {
-		return nil, fmt.Errorf("oauth token protector: %w", err)
+		return nil, nil, fmt.Errorf("oauth token protector: %w", err)
 	}
 	repository := repo.NewAuthRepository(db)
 	sessions := authstore.NewPersistentSessionStore(repository, nil)
@@ -64,7 +69,7 @@ func buildAuthHandlerWithClient(cfg *config.Config, db generated.DBTX, httpClien
 		CookieSecure: cfg.SessionCookieSecure, SessionTTL: cfg.SessionTTL,
 	}, authService, sessions, repository)
 	if err != nil {
-		return nil, fmt.Errorf("auth http handler: %w", err)
+		return nil, nil, fmt.Errorf("auth http handler: %w", err)
 	}
-	return handler, nil
+	return handler, authService, nil
 }

@@ -20,9 +20,11 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/agent"
 	agenttools "github.com/zenith-wang/it-wiki/backend/internal/agent/tools"
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/embedder"
+	"github.com/zenith-wang/it-wiki/backend/internal/infra/feishu"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/llm"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/parser"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/splitter"
@@ -95,6 +97,10 @@ func run() error {
 	}
 
 	queries := generated.New(pool)
+	authHandler, authService, err := buildAuthRuntime(cfg, pool, stdhttp.DefaultClient)
+	if err != nil {
+		return fmt.Errorf("build auth runtime: %w", err)
+	}
 	parserDispatcher := parser.NewDispatcher()
 	split := splitter.New()
 	embed := embedder.New(embedder.Config{
@@ -113,10 +119,34 @@ func run() error {
 	ingestionWorker := worker.NewIngestionWorker(worker.WorkerDeps{
 		Pool: pool, Queries: queries, Storage: mc,
 		Parser:   parserDispatcher,
-		Splitter: split, Embedder: embed, VStore: vstore,
+		Splitter: split, Embedder: embed, VStore: vstore, StagedVStore: vstore,
 		ChunkSize: cfg.ChunkSize, Overlap: cfg.ChunkOverlap, BatchSize: cfg.EmbedBatchSize,
 	})
-	rclient, err := worker.NewClient(bootCtx, pool, ingestionWorker, cfg.RiverMaxWorkers)
+	var rclient *worker.Client
+	var feishuSyncWorker *worker.FeishuSyncWorker
+	if authService != nil {
+		apiClient := feishu.NewClient(feishu.ClientConfig{}, stdhttp.DefaultClient)
+		docxLoader := feishu.NewDocxLoader(apiClient)
+		sheetLoader := feishu.NewSheetLoader(apiClient)
+		bitableLoader := feishu.NewBitableLoader(apiClient, feishu.BitableConfig{})
+		wikiLoader := feishu.NewWikiLoader(apiClient, docxLoader, sheetLoader, bitableLoader)
+		feishuSyncWorker = worker.NewFeishuSyncWorker(worker.FeishuSyncWorkerDeps{
+			Repository: worker.NewSQLFeishuSyncRepository(queries),
+			Resolver:   feishu.NewURLResolver(),
+			Loaders: map[domain.ResourceType]ports.SourceLoader{
+				domain.ResourceDocx: docxLoader, domain.ResourceSheet: sheetLoader,
+				domain.ResourceBitable: bitableLoader, domain.ResourceWiki: wikiLoader,
+			},
+			Tokens: authService, Storage: mc,
+			Ingestion: worker.StagedIngestionEnqueuerFunc(func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueStagedIngestion(ctx, snapshot)
+			}),
+		})
+	}
+	rclient, err = worker.NewClient(bootCtx, pool, ingestionWorker, cfg.RiverMaxWorkers, feishuSyncWorker)
 	if err != nil {
 		return fmt.Errorf("river client: %w", err)
 	}
@@ -150,10 +180,6 @@ func run() error {
 		return fmt.Errorf("register knowledge-rag tools: %w", err)
 	}
 	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, agentRegistry, toolRegistry)
-	authHandler, err := buildAuthHandler(cfg, pool)
-	if err != nil {
-		return fmt.Errorf("build auth handler: %w", err)
-	}
 	router := httpx.NewRouter(httpx.Handlers{
 		KB:    httpx.NewKBHandler(kbSvc),
 		Doc:   httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),

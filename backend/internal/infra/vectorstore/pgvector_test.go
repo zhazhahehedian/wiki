@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -204,6 +205,45 @@ func TestReplaceChunksRollsBackWhenDeleteFails(t *testing.T) {
 	}
 }
 
+func TestReplaceChunksAndPromoteUsesOneTransactionAndConditionalSQLCUpdate(t *testing.T) {
+	tx := &fakeTx{execTags: []pgconn.CommandTag{pgconn.NewCommandTag("DELETE 2"), pgconn.NewCommandTag("UPDATE 1")}}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{
+		DocumentID: uuid.MustParse("74ecb70f-b708-4a8e-ad85-40a9026f38ad"),
+		ContentRef: "feishu/74ec/snapshot.md", Checksum: "new-sum", RemoteRevision: "rev-2",
+	}
+	items := []domain.ChunkWithEmbedding{{Chunk: domain.Chunk{KBID: "kb-1", DocumentID: promotion.DocumentID.String(), Content: "new chunk"}, Embedding: []float32{0.1}}}
+
+	if err := store.ReplaceChunksAndPromote(context.Background(), promotion, items); err != nil {
+		t.Fatalf("ReplaceChunksAndPromote() error = %v", err)
+	}
+	if !tx.committed || tx.rolledBack {
+		t.Fatalf("transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+	if len(tx.ops) != 4 || !strings.Contains(tx.ops[0], "DELETE FROM chunks") || tx.ops[1] != "sendbatch" || !strings.Contains(tx.ops[2], "UPDATE documents") || tx.ops[3] != "commit" {
+		t.Fatalf("transaction operations = %#v", tx.ops)
+	}
+	if !strings.Contains(tx.execSQL, "pending_content_ref") || !strings.Contains(tx.execSQL, "sync_status = 'syncing'") {
+		t.Fatalf("promotion SQL is not conditional: %s", tx.execSQL)
+	}
+}
+
+func TestReplaceChunksAndPromoteRollsBackWhenSnapshotIsStale(t *testing.T) {
+	tx := &fakeTx{execTags: []pgconn.CommandTag{pgconn.NewCommandTag("DELETE 2"), pgconn.NewCommandTag("UPDATE 0")}}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{
+		DocumentID: uuid.New(), ContentRef: "snapshot.md", Checksum: "sum", RemoteRevision: "rev",
+	}
+
+	err := store.ReplaceChunksAndPromote(context.Background(), promotion, nil)
+	if !errors.Is(err, ports.ErrStaleDocumentPromotion) {
+		t.Fatalf("ReplaceChunksAndPromote() error = %v, want stale promotion", err)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Fatalf("stale transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+}
+
 func TestDeleteByDocumentIssuesDelete(t *testing.T) {
 	db := &fakeDB{}
 	store := &Pgvector{pool: db}
@@ -278,6 +318,7 @@ type fakeTx struct {
 	execSQL    string
 	execArgs   []any
 	execErr    error
+	execTags   []pgconn.CommandTag
 	batch      *pgx.Batch
 	committed  bool
 	rolledBack bool
@@ -299,7 +340,9 @@ func (t *fakeTx) Commit(context.Context) error {
 }
 
 func (t *fakeTx) Rollback(context.Context) error {
-	t.rolledBack = true
+	if !t.committed {
+		t.rolledBack = true
+	}
 	return nil
 }
 
@@ -323,6 +366,11 @@ func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	t.ops = append(t.ops, "exec:"+sql)
 	t.execSQL = sql
 	t.execArgs = args
+	if len(t.execTags) > 0 {
+		tag := t.execTags[0]
+		t.execTags = t.execTags[1:]
+		return tag, t.execErr
+	}
 	return pgconn.CommandTag{}, t.execErr
 }
 
