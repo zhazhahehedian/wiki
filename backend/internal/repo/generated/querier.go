@@ -61,6 +61,7 @@ type Querier interface {
 	ListMessagesByConversationForUser(ctx context.Context, arg ListMessagesByConversationForUserParams) ([]Message, error)
 	ListRecentMessagesByConversation(ctx context.Context, arg ListRecentMessagesByConversationParams) ([]Message, error)
 	ListRecentMessagesByConversationForUser(ctx context.Context, arg ListRecentMessagesByConversationForUserParams) ([]Message, error)
+	ListStaleFeishuSyncs(ctx context.Context, arg ListStaleFeishuSyncsParams) ([]Document, error)
 	MarkOAuthAccountReauthRequired(ctx context.Context, id uuid.UUID) error
 	PromoteFeishuSnapshot(ctx context.Context, arg PromoteFeishuSnapshotParams) (int64, error)
 	StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapshotParams) (int64, error)

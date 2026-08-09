@@ -18,25 +18,73 @@ const claimFeishuSync = `-- name: ClaimFeishuSync :one
 UPDATE documents
 SET sync_status = 'syncing',
     last_sync_error = NULL,
+    pending_content_ref = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_content_ref ELSE NULL END,
+    pending_checksum = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_checksum ELSE NULL END,
+    pending_remote_revision = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_remote_revision ELSE NULL END,
+    pending_title = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_title ELSE NULL END,
+    pending_bytes = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_bytes ELSE NULL END,
+    pending_metadata = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_metadata ELSE NULL END,
     updated_at = now()
 WHERE id = $1
   AND source_type LIKE 'feishu-%'
   AND remote_revision IS NOT DISTINCT FROM $2::text
   AND (
       sync_status IN ('idle', 'failed')
-      OR (sync_status = 'syncing' AND updated_at < $3)
+      OR (sync_status = 'syncing' AND updated_at < now() - ($3::bigint * interval '1 second'))
   )
-RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at
+RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata
 `
 
 type ClaimFeishuSyncParams struct {
 	ID                     uuid.UUID `json:"id"`
 	ExpectedRemoteRevision *string   `json:"expected_remote_revision"`
-	StaleBefore            time.Time `json:"stale_before"`
+	LeaseSeconds           int64     `json:"lease_seconds"`
 }
 
 func (q *Queries) ClaimFeishuSync(ctx context.Context, arg ClaimFeishuSyncParams) (Document, error) {
-	row := q.db.QueryRow(ctx, claimFeishuSync, arg.ID, arg.ExpectedRemoteRevision, arg.StaleBefore)
+	row := q.db.QueryRow(ctx, claimFeishuSync, arg.ID, arg.ExpectedRemoteRevision, arg.LeaseSeconds)
 	var i Document
 	err := row.Scan(
 		&i.ID,
@@ -62,6 +110,9 @@ func (q *Queries) ClaimFeishuSync(ctx context.Context, arg ClaimFeishuSyncParams
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
@@ -74,6 +125,9 @@ SET sync_status = 'idle',
     pending_content_ref = NULL,
     pending_checksum = NULL,
     pending_remote_revision = NULL,
+    pending_title = NULL,
+    pending_bytes = NULL,
+    pending_metadata = NULL,
     updated_at = now()
 WHERE id = $1
   AND sync_status = 'syncing'
@@ -156,7 +210,7 @@ INSERT INTO documents (
     bytes, checksum, status, metadata
 )
 VALUES ($1, $2, $3, CASE WHEN $2 = 'local-upload' THEN $3 ELSE NULL END, $4, $5, $6, $7, $8, $9)
-RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at
+RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata
 `
 
 type CreateDocumentParams struct {
@@ -208,6 +262,9 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
@@ -226,7 +283,7 @@ SELECT kb.id, $1, $2,
 FROM knowledge_bases AS kb
 WHERE kb.id = $9
   AND kb.owner_user_id = $10
-RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at
+RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at, documents.pending_title, documents.pending_bytes, documents.pending_metadata
 `
 
 type CreateDocumentForOwnerParams struct {
@@ -280,6 +337,9 @@ func (q *Queries) CreateDocumentForOwner(ctx context.Context, arg CreateDocument
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
@@ -299,7 +359,7 @@ JOIN oauth_accounts AS oa
  AND oa.provider = 'feishu'
 WHERE kb.id = $7
   AND kb.owner_user_id = $6
-RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at
+RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at, documents.pending_title, documents.pending_bytes, documents.pending_metadata
 `
 
 type CreateFeishuDocumentForOwnerParams struct {
@@ -347,6 +407,9 @@ func (q *Queries) CreateFeishuDocumentForOwner(ctx context.Context, arg CreateFe
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
@@ -421,7 +484,7 @@ func (q *Queries) FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) 
 }
 
 const findDocumentByChecksum = `-- name: FindDocumentByChecksum :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents
 WHERE kb_id = $1 AND checksum = $2 AND source_type = 'local-upload'
 `
 
@@ -457,12 +520,15 @@ func (q *Queries) FindDocumentByChecksum(ctx context.Context, arg FindDocumentBy
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
 
 const findDocumentByChecksumForOwner = `-- name: FindDocumentByChecksumForOwner :one
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.kb_id = $1
   AND d.checksum = $2
@@ -503,12 +569,15 @@ func (q *Queries) FindDocumentByChecksumForOwner(ctx context.Context, arg FindDo
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents WHERE id = $1
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents WHERE id = $1
 `
 
 func (q *Queries) GetDocument(ctx context.Context, id uuid.UUID) (Document, error) {
@@ -538,12 +607,15 @@ func (q *Queries) GetDocument(ctx context.Context, id uuid.UUID) (Document, erro
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
 
 const getDocumentForOwner = `-- name: GetDocumentForOwner :one
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.id = $1 AND kb.owner_user_id = $2
 `
@@ -580,12 +652,15 @@ func (q *Queries) GetDocumentForOwner(ctx context.Context, arg GetDocumentForOwn
 		&i.SyncStatus,
 		&i.LastSyncError,
 		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
 	)
 	return i, err
 }
 
 const listDocumentsByKB = `-- name: ListDocumentsByKB :many
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at FROM documents
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents
 WHERE kb_id = $1
   AND ($4::text IS NULL OR status = $4::text)
 ORDER BY created_at DESC
@@ -637,6 +712,9 @@ func (q *Queries) ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBPa
 			&i.SyncStatus,
 			&i.LastSyncError,
 			&i.LastSyncedAt,
+			&i.PendingTitle,
+			&i.PendingBytes,
+			&i.PendingMetadata,
 		); err != nil {
 			return nil, err
 		}
@@ -649,7 +727,7 @@ func (q *Queries) ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBPa
 }
 
 const listDocumentsByKBForOwner = `-- name: ListDocumentsByKBForOwner :many
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.kb_id = $1
   AND kb.owner_user_id = $2
@@ -705,6 +783,79 @@ func (q *Queries) ListDocumentsByKBForOwner(ctx context.Context, arg ListDocumen
 			&i.SyncStatus,
 			&i.LastSyncError,
 			&i.LastSyncedAt,
+			&i.PendingTitle,
+			&i.PendingBytes,
+			&i.PendingMetadata,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStaleFeishuSyncs = `-- name: ListStaleFeishuSyncs :many
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata
+FROM documents
+WHERE source_type LIKE 'feishu-%'
+  AND sync_status = 'syncing'
+  AND updated_at < now() - ($1::bigint * interval '1 second')
+  AND (updated_at, id) > ($2::timestamptz, $3::uuid)
+ORDER BY updated_at, id
+LIMIT $4
+`
+
+type ListStaleFeishuSyncsParams struct {
+	LeaseSeconds   int64     `json:"lease_seconds"`
+	AfterUpdatedAt time.Time `json:"after_updated_at"`
+	AfterID        uuid.UUID `json:"after_id"`
+	BatchSize      int32     `json:"batch_size"`
+}
+
+func (q *Queries) ListStaleFeishuSyncs(ctx context.Context, arg ListStaleFeishuSyncsParams) ([]Document, error) {
+	rows, err := q.db.Query(ctx, listStaleFeishuSyncs,
+		arg.LeaseSeconds,
+		arg.AfterUpdatedAt,
+		arg.AfterID,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Document{}
+	for rows.Next() {
+		var i Document
+		if err := rows.Scan(
+			&i.ID,
+			&i.KbID,
+			&i.SourceType,
+			&i.SourceRef,
+			&i.Title,
+			&i.MimeType,
+			&i.Bytes,
+			&i.Checksum,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ContentRef,
+			&i.SourceUrl,
+			&i.RemoteRevision,
+			&i.OauthAccountID,
+			&i.PendingContentRef,
+			&i.PendingChecksum,
+			&i.PendingRemoteRevision,
+			&i.SyncStatus,
+			&i.LastSyncError,
+			&i.LastSyncedAt,
+			&i.PendingTitle,
+			&i.PendingBytes,
+			&i.PendingMetadata,
 		); err != nil {
 			return nil, err
 		}
@@ -721,43 +872,40 @@ UPDATE documents
 SET content_ref = pending_content_ref,
     checksum = pending_checksum,
     remote_revision = pending_remote_revision,
-    title = $1,
+    title = pending_title,
     mime_type = 'text/markdown',
-    bytes = $2,
-    metadata = $3,
+    bytes = pending_bytes,
+    metadata = pending_metadata,
     pending_content_ref = NULL,
     pending_checksum = NULL,
     pending_remote_revision = NULL,
+    pending_title = NULL,
+    pending_bytes = NULL,
+    pending_metadata = NULL,
     sync_status = 'idle',
     last_sync_error = NULL,
     last_synced_at = now(),
     status = 'ready',
     error_message = NULL,
     updated_at = now()
-WHERE id = $4
+WHERE id = $1
   AND sync_status = 'syncing'
-  AND updated_at = $5
-  AND pending_content_ref = $6
-  AND pending_checksum = $7
-  AND pending_remote_revision = $8
+  AND updated_at = $2
+  AND pending_content_ref = $3
+  AND pending_checksum = $4
+  AND pending_remote_revision = $5
 `
 
 type PromoteFeishuSnapshotParams struct {
-	Title                 string          `json:"title"`
-	Bytes                 int64           `json:"bytes"`
-	Metadata              json.RawMessage `json:"metadata"`
-	ID                    uuid.UUID       `json:"id"`
-	ClaimToken            time.Time       `json:"claim_token"`
-	PendingContentRef     *string         `json:"pending_content_ref"`
-	PendingChecksum       *string         `json:"pending_checksum"`
-	PendingRemoteRevision *string         `json:"pending_remote_revision"`
+	ID                    uuid.UUID `json:"id"`
+	ClaimToken            time.Time `json:"claim_token"`
+	PendingContentRef     *string   `json:"pending_content_ref"`
+	PendingChecksum       *string   `json:"pending_checksum"`
+	PendingRemoteRevision *string   `json:"pending_remote_revision"`
 }
 
 func (q *Queries) PromoteFeishuSnapshot(ctx context.Context, arg PromoteFeishuSnapshotParams) (int64, error) {
 	result, err := q.db.Exec(ctx, promoteFeishuSnapshot,
-		arg.Title,
-		arg.Bytes,
-		arg.Metadata,
 		arg.ID,
 		arg.ClaimToken,
 		arg.PendingContentRef,
@@ -774,21 +922,27 @@ const stageFeishuSnapshot = `-- name: StageFeishuSnapshot :execrows
 UPDATE documents
 SET pending_content_ref = $1,
     pending_checksum = $2,
-    pending_remote_revision = $3
-WHERE id = $4
+    pending_remote_revision = $3,
+    pending_title = $4,
+    pending_bytes = $5,
+    pending_metadata = $6
+WHERE id = $7
   AND sync_status = 'syncing'
-  AND updated_at = $5
-  AND remote_revision IS NOT DISTINCT FROM $6::text
-  AND checksum = $7
-  AND pending_content_ref IS NOT DISTINCT FROM $8::text
-  AND pending_checksum IS NOT DISTINCT FROM $9::text
-  AND pending_remote_revision IS NOT DISTINCT FROM $10::text
+  AND updated_at = $8
+  AND remote_revision IS NOT DISTINCT FROM $9::text
+  AND checksum = $10
+  AND pending_content_ref IS NOT DISTINCT FROM $11::text
+  AND pending_checksum IS NOT DISTINCT FROM $12::text
+  AND pending_remote_revision IS NOT DISTINCT FROM $13::text
 `
 
 type StageFeishuSnapshotParams struct {
 	PendingContentRef             *string   `json:"pending_content_ref"`
 	PendingChecksum               *string   `json:"pending_checksum"`
 	PendingRemoteRevision         *string   `json:"pending_remote_revision"`
+	PendingTitle                  *string   `json:"pending_title"`
+	PendingBytes                  *int64    `json:"pending_bytes"`
+	PendingMetadata               []byte    `json:"pending_metadata"`
 	ID                            uuid.UUID `json:"id"`
 	ClaimToken                    time.Time `json:"claim_token"`
 	ExpectedRemoteRevision        *string   `json:"expected_remote_revision"`
@@ -803,6 +957,9 @@ func (q *Queries) StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapsh
 		arg.PendingContentRef,
 		arg.PendingChecksum,
 		arg.PendingRemoteRevision,
+		arg.PendingTitle,
+		arg.PendingBytes,
+		arg.PendingMetadata,
 		arg.ID,
 		arg.ClaimToken,
 		arg.ExpectedRemoteRevision,

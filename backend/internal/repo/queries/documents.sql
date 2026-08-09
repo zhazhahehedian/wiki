@@ -109,15 +109,73 @@ WHERE d.id = sqlc.arg('id')
 UPDATE documents
 SET sync_status = 'syncing',
     last_sync_error = NULL,
+    pending_content_ref = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_content_ref ELSE NULL END,
+    pending_checksum = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_checksum ELSE NULL END,
+    pending_remote_revision = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_remote_revision ELSE NULL END,
+    pending_title = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_title ELSE NULL END,
+    pending_bytes = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_bytes ELSE NULL END,
+    pending_metadata = CASE
+        WHEN pending_content_ref IS NOT NULL
+         AND pending_checksum IS NOT NULL
+         AND pending_remote_revision IS NOT NULL
+         AND pending_title IS NOT NULL
+         AND pending_bytes IS NOT NULL
+         AND pending_metadata IS NOT NULL
+        THEN pending_metadata ELSE NULL END,
     updated_at = now()
 WHERE id = $1
   AND source_type LIKE 'feishu-%'
   AND remote_revision IS NOT DISTINCT FROM sqlc.narg('expected_remote_revision')::text
   AND (
       sync_status IN ('idle', 'failed')
-      OR (sync_status = 'syncing' AND updated_at < sqlc.arg('stale_before'))
+      OR (sync_status = 'syncing' AND updated_at < now() - (sqlc.arg('lease_seconds')::bigint * interval '1 second'))
   )
 RETURNING *;
+
+-- name: ListStaleFeishuSyncs :many
+SELECT *
+FROM documents
+WHERE source_type LIKE 'feishu-%'
+  AND sync_status = 'syncing'
+  AND updated_at < now() - (sqlc.arg('lease_seconds')::bigint * interval '1 second')
+  AND (updated_at, id) > (sqlc.arg('after_updated_at')::timestamptz, sqlc.arg('after_id')::uuid)
+ORDER BY updated_at, id
+LIMIT sqlc.arg('batch_size');
 
 -- name: CompleteUnchangedFeishuSync :execrows
 UPDATE documents
@@ -127,6 +185,9 @@ SET sync_status = 'idle',
     pending_content_ref = NULL,
     pending_checksum = NULL,
     pending_remote_revision = NULL,
+    pending_title = NULL,
+    pending_bytes = NULL,
+    pending_metadata = NULL,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND sync_status = 'syncing'
@@ -141,7 +202,10 @@ WHERE id = sqlc.arg('id')
 UPDATE documents
 SET pending_content_ref = sqlc.arg('pending_content_ref'),
     pending_checksum = sqlc.arg('pending_checksum'),
-    pending_remote_revision = sqlc.arg('pending_remote_revision')
+    pending_remote_revision = sqlc.arg('pending_remote_revision'),
+    pending_title = sqlc.arg('pending_title'),
+    pending_bytes = sqlc.arg('pending_bytes'),
+    pending_metadata = sqlc.arg('pending_metadata')
 WHERE id = sqlc.arg('id')
   AND sync_status = 'syncing'
   AND updated_at = sqlc.arg('claim_token')
@@ -156,13 +220,16 @@ UPDATE documents
 SET content_ref = pending_content_ref,
     checksum = pending_checksum,
     remote_revision = pending_remote_revision,
-    title = sqlc.arg('title'),
+    title = pending_title,
     mime_type = 'text/markdown',
-    bytes = sqlc.arg('bytes'),
-    metadata = sqlc.arg('metadata'),
+    bytes = pending_bytes,
+    metadata = pending_metadata,
     pending_content_ref = NULL,
     pending_checksum = NULL,
     pending_remote_revision = NULL,
+    pending_title = NULL,
+    pending_bytes = NULL,
+    pending_metadata = NULL,
     sync_status = 'idle',
     last_sync_error = NULL,
     last_synced_at = now(),

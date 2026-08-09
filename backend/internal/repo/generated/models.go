@@ -48,6 +48,9 @@ type Document struct {
 	SyncStatus            string             `json:"sync_status"`
 	LastSyncError         *string            `json:"last_sync_error"`
 	LastSyncedAt          pgtype.Timestamptz `json:"last_synced_at"`
+	PendingTitle          *string            `json:"pending_title"`
+	PendingBytes          *int64             `json:"pending_bytes"`
+	PendingMetadata       []byte             `json:"pending_metadata"`
 }
 
 type KnowledgeBase struct {

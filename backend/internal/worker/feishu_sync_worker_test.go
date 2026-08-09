@@ -484,7 +484,7 @@ func TestFeishuSyncReclaimsExpiredLease(t *testing.T) {
 		Repository: state, Resolver: feishu.NewURLResolver(),
 		Loaders: map[domain.ResourceType]ports.SourceLoader{domain.ResourceDocx: &fakeSourceLoader{document: canonicalDoc(t, "rev-2", "changed")}},
 		Tokens:  fakeTokenProvider{token: "token"}, Storage: newMemoryStorage(), Ingestion: queue,
-		Now: func() time.Time { return now }, SyncLease: 10 * time.Minute,
+		SyncLease: 10 * time.Minute,
 	})
 
 	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err != nil {
@@ -505,7 +505,7 @@ func TestFeishuSyncDoesNotReclaimLiveLease(t *testing.T) {
 	worker := NewFeishuSyncWorker(FeishuSyncWorkerDeps{
 		Repository: state, Resolver: feishu.NewURLResolver(), Loaders: map[domain.ResourceType]ports.SourceLoader{},
 		Tokens: tokens, Storage: newMemoryStorage(), Ingestion: &fakeStagedIngestionQueue{},
-		Now: func() time.Time { return now }, SyncLease: 10 * time.Minute,
+		SyncLease: 10 * time.Minute,
 	})
 
 	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err != nil {
@@ -521,12 +521,12 @@ func TestFeishuSyncOldAttemptCannotStageAfterLeaseReclaim(t *testing.T) {
 	t2 := t1.Add(20 * time.Minute)
 	state := newSyncState("rev-1", "sum-1", "active.md")
 	state.claimNow = t1
-	first, err := state.ClaimFeishuSync(context.Background(), state.doc.ID, ptr("rev-1"), t1.Add(-time.Minute))
+	first, err := state.ClaimFeishuSync(context.Background(), state.doc.ID, ptr("rev-1"), time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	state.claimNow = t2
-	second, err := state.ClaimFeishuSync(context.Background(), state.doc.ID, ptr("rev-1"), t2.Add(-10*time.Minute))
+	second, err := state.ClaimFeishuSync(context.Background(), state.doc.ID, ptr("rev-1"), 10*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,7 +551,7 @@ func TestFeishuSyncReconcilesExpiredPendingSnapshotAndDeletesOnlySupersededObjec
 	state := newSyncState("rev-1", "old-sum", "active.md")
 	state.doc.SyncStatus = "syncing"
 	state.doc.UpdatedAt = now.Add(-20 * time.Minute)
-	state.doc.PendingContentRef, state.doc.PendingChecksum, state.doc.PendingRemoteRevision = ptr("orphan-pending.md"), ptr("orphan-sum"), ptr("rev-orphan")
+	setPendingDocument(&state.doc, PendingFeishuSnapshot{ContentRef: "orphan-pending.md", Checksum: "orphan-sum", RemoteRevision: "rev-orphan", Title: "Orphan", Bytes: 6, Metadata: json.RawMessage(`{}`)})
 	state.claimNow = now
 	storage := newMemoryStorage()
 	storage.objects["active.md"] = []byte("active")
@@ -561,7 +561,7 @@ func TestFeishuSyncReconcilesExpiredPendingSnapshotAndDeletesOnlySupersededObjec
 		Repository: state, Resolver: feishu.NewURLResolver(),
 		Loaders: map[domain.ResourceType]ports.SourceLoader{domain.ResourceDocx: &fakeSourceLoader{document: canonicalDoc(t, "rev-2", "replacement")}},
 		Tokens:  fakeTokenProvider{token: "token"}, Storage: storage, Ingestion: queue,
-		Now: func() time.Time { return now }, SyncLease: 10 * time.Minute,
+		SyncLease: 10 * time.Minute,
 	})
 
 	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err != nil {
@@ -583,13 +583,13 @@ func TestFeishuSyncReclaimedPendingFailureRetainsReferenceAndMarksFailed(t *test
 	state := newSyncState("rev-1", "old-sum", "active.md")
 	state.doc.SyncStatus = "syncing"
 	state.doc.UpdatedAt = now.Add(-20 * time.Minute)
-	state.doc.PendingContentRef, state.doc.PendingChecksum, state.doc.PendingRemoteRevision = ptr("pending.md"), ptr("pending-sum"), ptr("rev-pending")
+	setPendingDocument(&state.doc, PendingFeishuSnapshot{ContentRef: "pending.md", Checksum: "pending-sum", RemoteRevision: "rev-pending", Title: "Pending", Bytes: 7, Metadata: json.RawMessage(`{}`)})
 	state.claimNow = now
 	worker := NewFeishuSyncWorker(FeishuSyncWorkerDeps{
 		Repository: state, Resolver: feishu.NewURLResolver(),
 		Loaders: map[domain.ResourceType]ports.SourceLoader{domain.ResourceDocx: &fakeSourceLoader{err: errors.New("provider failed")}},
 		Tokens:  fakeTokenProvider{token: "token"}, Storage: newMemoryStorage(), Ingestion: &fakeStagedIngestionQueue{},
-		Now: func() time.Time { return now }, SyncLease: 10 * time.Minute,
+		SyncLease: 10 * time.Minute,
 	})
 
 	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err == nil {
@@ -805,15 +805,22 @@ func newSyncState(revision, checksum, contentRef string) *memorySyncRepository {
 	}}
 }
 
-func (m *memorySyncRepository) ClaimFeishuSync(_ context.Context, _ uuid.UUID, expectedRemoteRevision *string, staleBefore time.Time) (generated.Document, error) {
+func (m *memorySyncRepository) ClaimFeishuSync(_ context.Context, _ uuid.UUID, expectedRemoteRevision *string, lease time.Duration) (generated.Document, error) {
+	now := m.claimNow
+	if now.IsZero() {
+		now = time.Now()
+	}
+	staleBefore := now.Add(-lease)
 	if !sameString(m.doc.RemoteRevision, expectedRemoteRevision) || (m.doc.SyncStatus == "syncing" && !m.doc.UpdatedAt.Before(staleBefore)) {
 		return generated.Document{}, pgx.ErrNoRows
 	}
+	if snapshotFromDocument(m.doc) == nil {
+		m.doc.PendingContentRef, m.doc.PendingChecksum, m.doc.PendingRemoteRevision = nil, nil, nil
+		m.doc.PendingTitle, m.doc.PendingBytes, m.doc.PendingMetadata = nil, nil, nil
+	}
 	m.doc.SyncStatus = "syncing"
 	m.doc.LastSyncError = nil
-	if !m.claimNow.IsZero() {
-		m.doc.UpdatedAt = m.claimNow
-	}
+	m.doc.UpdatedAt = now
 	return m.doc, nil
 }
 func (m *memorySyncRepository) CompleteUnchangedFeishuSync(_ context.Context, in FeishuSyncExpectation) (bool, error) {
@@ -822,6 +829,7 @@ func (m *memorySyncRepository) CompleteUnchangedFeishuSync(_ context.Context, in
 	}
 	m.doc.SyncStatus = "idle"
 	m.doc.PendingContentRef, m.doc.PendingChecksum, m.doc.PendingRemoteRevision = nil, nil, nil
+	m.doc.PendingTitle, m.doc.PendingBytes, m.doc.PendingMetadata = nil, nil, nil
 	m.doc.LastSyncedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	return true, nil
 }
@@ -829,7 +837,7 @@ func (m *memorySyncRepository) StageFeishuSnapshot(_ context.Context, in StageFe
 	if m.doc.SyncStatus != "syncing" || m.doc.UpdatedAt != in.Expected.ClaimToken || !sameString(m.doc.RemoteRevision, in.Expected.RemoteRevision) || m.doc.Checksum != in.Expected.Checksum || !m.matchesExpectedPending(in.Expected.Pending) {
 		return false, nil
 	}
-	m.doc.PendingContentRef, m.doc.PendingChecksum, m.doc.PendingRemoteRevision = ptr(in.Snapshot.ContentRef), ptr(in.Snapshot.Checksum), ptr(in.Snapshot.RemoteRevision)
+	setPendingDocument(&m.doc, in.Snapshot)
 	return true, nil
 }
 
@@ -853,9 +861,10 @@ func (m *memorySyncRepository) PromoteFeishuSnapshot(_ context.Context, in Pendi
 	if !m.matchesPending(in) {
 		return false, nil
 	}
-	m.doc.ContentRef, m.doc.Checksum, m.doc.RemoteRevision = ptr(in.ContentRef), in.Checksum, ptr(in.RemoteRevision)
-	m.doc.Title, m.doc.MimeType, m.doc.Bytes, m.doc.Metadata = in.Title, "text/markdown", in.Bytes, append([]byte(nil), in.Metadata...)
+	m.doc.ContentRef, m.doc.Checksum, m.doc.RemoteRevision = ptr(*m.doc.PendingContentRef), *m.doc.PendingChecksum, ptr(*m.doc.PendingRemoteRevision)
+	m.doc.Title, m.doc.MimeType, m.doc.Bytes, m.doc.Metadata = *m.doc.PendingTitle, "text/markdown", *m.doc.PendingBytes, append([]byte(nil), m.doc.PendingMetadata...)
 	m.doc.PendingContentRef, m.doc.PendingChecksum, m.doc.PendingRemoteRevision = nil, nil, nil
+	m.doc.PendingTitle, m.doc.PendingBytes, m.doc.PendingMetadata = nil, nil, nil
 	m.doc.SyncStatus, m.doc.Status, m.doc.LastSyncError = "idle", "ready", nil
 	m.doc.LastSyncedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	return true, nil
@@ -879,6 +888,12 @@ func (m *memorySyncRepository) matchesExpectedPending(in *PendingFeishuSnapshot)
 		return m.doc.PendingContentRef == nil && m.doc.PendingChecksum == nil && m.doc.PendingRemoteRevision == nil
 	}
 	return m.matchesPending(*in)
+}
+
+func setPendingDocument(doc *generated.Document, snapshot PendingFeishuSnapshot) {
+	doc.PendingContentRef, doc.PendingChecksum, doc.PendingRemoteRevision = ptr(snapshot.ContentRef), ptr(snapshot.Checksum), ptr(snapshot.RemoteRevision)
+	doc.PendingTitle, doc.PendingBytes = ptr(snapshot.Title), &snapshot.Bytes
+	doc.PendingMetadata = append([]byte(nil), snapshot.Metadata...)
 }
 
 func assertActive(t *testing.T, doc generated.Document, revision, checksum, contentRef string) {

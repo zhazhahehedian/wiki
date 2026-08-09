@@ -84,7 +84,7 @@ type FailFeishuSyncInput struct {
 }
 
 type FeishuSyncRepository interface {
-	ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, staleBefore time.Time) (generated.Document, error)
+	ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, lease time.Duration) (generated.Document, error)
 	CompleteUnchangedFeishuSync(ctx context.Context, input FeishuSyncExpectation) (bool, error)
 	StageFeishuSnapshot(ctx context.Context, input StageFeishuSnapshotInput) (bool, error)
 	StageFeishuSnapshotAndEnqueue(ctx context.Context, input StageFeishuSnapshotInput, enqueuer StagedIngestionEnqueuer) (bool, error)
@@ -101,7 +101,6 @@ type FeishuSyncWorkerDeps struct {
 	Ingestion      StagedIngestionEnqueuer
 	CleanupTimeout time.Duration
 	SyncLease      time.Duration
-	Now            func() time.Time
 	CitationStore  ports.CitationPromotionStore
 }
 
@@ -115,7 +114,6 @@ type FeishuSyncWorker struct {
 	ingestion      StagedIngestionEnqueuer
 	cleanupTimeout time.Duration
 	syncLease      time.Duration
-	now            func() time.Time
 	citationStore  ports.CitationPromotionStore
 }
 
@@ -126,10 +124,7 @@ func NewFeishuSyncWorker(deps FeishuSyncWorkerDeps) *FeishuSyncWorker {
 	if deps.SyncLease <= 0 {
 		deps.SyncLease = 15 * time.Minute
 	}
-	if deps.Now == nil {
-		deps.Now = time.Now
-	}
-	return &FeishuSyncWorker{repo: deps.Repository, resolver: deps.Resolver, loaders: deps.Loaders, tokens: deps.Tokens, storage: deps.Storage, ingestion: deps.Ingestion, cleanupTimeout: deps.CleanupTimeout, syncLease: deps.SyncLease, now: deps.Now, citationStore: deps.CitationStore}
+	return &FeishuSyncWorker{repo: deps.Repository, resolver: deps.Resolver, loaders: deps.Loaders, tokens: deps.Tokens, storage: deps.Storage, ingestion: deps.Ingestion, cleanupTimeout: deps.CleanupTimeout, syncLease: deps.SyncLease, citationStore: deps.CitationStore}
 }
 
 func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJobArgs]) error {
@@ -138,7 +133,7 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 		return errors.New("invalid document ID")
 	}
 	expectedRevision := requestedActiveRevision(job.Args.RequestedRevision)
-	doc, err := w.repo.ClaimFeishuSync(ctx, documentID, expectedRevision, w.now().Add(-w.syncLease))
+	doc, err := w.repo.ClaimFeishuSync(ctx, documentID, expectedRevision, w.syncLease)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -280,12 +275,14 @@ func (w *FeishuSyncWorker) deleteSupersededPending(ctx context.Context, doc gene
 }
 
 func snapshotFromDocument(doc generated.Document) *PendingFeishuSnapshot {
-	if doc.PendingContentRef == nil || doc.PendingChecksum == nil || doc.PendingRemoteRevision == nil {
+	if doc.PendingContentRef == nil || doc.PendingChecksum == nil || doc.PendingRemoteRevision == nil ||
+		doc.PendingTitle == nil || doc.PendingBytes == nil || doc.PendingMetadata == nil {
 		return nil
 	}
 	return &PendingFeishuSnapshot{
 		DocumentID: doc.ID, ContentRef: *doc.PendingContentRef, Checksum: *doc.PendingChecksum,
-		RemoteRevision: *doc.PendingRemoteRevision, ClaimToken: doc.UpdatedAt,
+		RemoteRevision: *doc.PendingRemoteRevision, Title: *doc.PendingTitle, Bytes: *doc.PendingBytes,
+		Metadata: append(json.RawMessage(nil), doc.PendingMetadata...), ClaimToken: doc.UpdatedAt,
 	}
 }
 
@@ -346,8 +343,8 @@ func NewSQLFeishuSyncRepository(pool syncTxBeginner) *SQLFeishuSyncRepository {
 	return repository
 }
 
-func (r *SQLFeishuSyncRepository) ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, staleBefore time.Time) (generated.Document, error) {
-	return r.queries.ClaimFeishuSync(ctx, generated.ClaimFeishuSyncParams{ID: documentID, ExpectedRemoteRevision: expectedRemoteRevision, StaleBefore: staleBefore})
+func (r *SQLFeishuSyncRepository) ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, lease time.Duration) (generated.Document, error) {
+	return r.queries.ClaimFeishuSync(ctx, generated.ClaimFeishuSyncParams{ID: documentID, ExpectedRemoteRevision: expectedRemoteRevision, LeaseSeconds: durationSecondsCeil(lease)})
 }
 
 func (r *SQLFeishuSyncRepository) CompleteUnchangedFeishuSync(ctx context.Context, input FeishuSyncExpectation) (bool, error) {
@@ -364,12 +361,14 @@ func (r *SQLFeishuSyncRepository) CompleteUnchangedFeishuSync(ctx context.Contex
 
 func (r *SQLFeishuSyncRepository) StageFeishuSnapshot(ctx context.Context, input StageFeishuSnapshotInput) (bool, error) {
 	contentRef, checksum, revision := input.Snapshot.ContentRef, input.Snapshot.Checksum, input.Snapshot.RemoteRevision
+	title, bytes := input.Snapshot.Title, input.Snapshot.Bytes
 	var oldContentRef, oldChecksum, oldRevision *string
 	if input.Expected.Pending != nil {
 		oldContentRef, oldChecksum, oldRevision = &input.Expected.Pending.ContentRef, &input.Expected.Pending.Checksum, &input.Expected.Pending.RemoteRevision
 	}
 	rows, err := r.queries.StageFeishuSnapshot(ctx, generated.StageFeishuSnapshotParams{
 		PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
+		PendingTitle: &title, PendingBytes: &bytes, PendingMetadata: input.Snapshot.Metadata,
 		ID: input.Expected.DocumentID, ExpectedRemoteRevision: input.Expected.RemoteRevision, ExpectedChecksum: input.Expected.Checksum,
 		ClaimToken:                input.Expected.ClaimToken,
 		ExpectedPendingContentRef: oldContentRef, ExpectedPendingChecksum: oldChecksum, ExpectedPendingRemoteRevision: oldRevision,
@@ -411,10 +410,16 @@ func (r *SQLFeishuSyncRepository) PromoteFeishuSnapshot(ctx context.Context, sna
 	contentRef, checksum, revision := snapshot.ContentRef, snapshot.Checksum, snapshot.RemoteRevision
 	rows, err := r.queries.PromoteFeishuSnapshot(ctx, generated.PromoteFeishuSnapshotParams{
 		ID: snapshot.DocumentID, PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
-		Title: snapshot.Title, Bytes: snapshot.Bytes, Metadata: snapshot.Metadata,
 		ClaimToken: snapshot.ClaimToken,
 	})
 	return rows == 1, err
+}
+
+func durationSecondsCeil(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	return int64((duration + time.Second - 1) / time.Second)
 }
 
 func (r *SQLFeishuSyncRepository) FailFeishuSync(ctx context.Context, input FailFeishuSyncInput) (bool, error) {

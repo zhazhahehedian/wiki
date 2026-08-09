@@ -72,3 +72,38 @@ func TestDocumentSyncDownMakesRemoteChecksumsLegacyUniqueBeforeRestoringIndex(t 
 		t.Fatalf("Down migration order must be drop, rewrite, restore; positions = %d, %d, %d", dropAt, rewriteAt, restoreAt)
 	}
 }
+
+func TestPendingSnapshotPayloadMigrationIsAtomicAndReversible(t *testing.T) {
+	raw, err := EmbedMigrations.ReadFile("0010_document_pending_snapshot_payload.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	sql := strings.Join(strings.Fields(string(raw)), " ")
+	parts := strings.SplitN(sql, "-- +goose Down", 2)
+	if len(parts) != 2 {
+		t.Fatal("migration is missing a goose Down section")
+	}
+	up, down := parts[0], parts[1]
+	for _, required := range []string{
+		"ADD COLUMN pending_title TEXT",
+		"ADD COLUMN pending_bytes BIGINT",
+		"ADD COLUMN pending_metadata JSONB",
+		"UPDATE documents SET pending_content_ref = NULL",
+		"ADD CONSTRAINT chk_documents_pending_snapshot_complete",
+		"pending_bytes >= 0",
+	} {
+		if !strings.Contains(up, required) {
+			t.Errorf("Up migration missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"DROP CONSTRAINT IF EXISTS chk_documents_pending_snapshot_complete",
+		"DROP COLUMN IF EXISTS pending_metadata",
+		"DROP COLUMN IF EXISTS pending_bytes",
+		"DROP COLUMN IF EXISTS pending_title",
+	} {
+		if !strings.Contains(down, required) {
+			t.Errorf("Down migration missing %q", required)
+		}
+	}
+}

@@ -123,7 +123,7 @@ func promoteDocumentInTx(ctx context.Context, tx pgx.Tx, promotion ports.Pending
 	contentRef, checksum, revision := promotion.ContentRef, promotion.Checksum, promotion.RemoteRevision
 	rows, err := generated.New(tx).PromoteFeishuSnapshot(ctx, generated.PromoteFeishuSnapshotParams{
 		ID: promotion.DocumentID, PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
-		Title: promotion.Title, Bytes: promotion.Bytes, Metadata: promotion.Metadata, ClaimToken: promotion.ClaimToken,
+		ClaimToken: promotion.ClaimToken,
 	})
 	if err != nil {
 		return fmt.Errorf("promote staged document: %w", err)
