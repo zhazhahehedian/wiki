@@ -135,7 +135,7 @@ func TestBitableLoaderChargesEntitiesAndNamesBeforeRecordRequests(t *testing.T) 
 
 func TestDocxRendererGenericVariantsAndTodoState(t *testing.T) {
 	var page docxBlocksData
-	payload := `{"items":[{"block_id":"root","block_type":1,"children":["todo","future","undefined","okr_progress","agenda","link_preview","synced","sub_page","ai","reference","project","meeting","vc","minutes"]},{"block_id":"todo","block_type":17,"todo":{"elements":[{"text_run":{"content":"Done"}}],"style":{"done":true}}},{"block_id":"future","block_type":60,"children":["child"]},{"block_id":"child","block_type":0},{"block_id":"undefined","block_type":0},{"block_id":"okr_progress","block_type":50,"okr_progress":{}},{"block_id":"agenda","block_type":51,"agenda":{}},{"block_id":"link_preview","block_type":52,"link_preview":{}},{"block_id":"synced","block_type":53,"synced":{}},{"block_id":"sub_page","block_type":54,"sub_page":{}},{"block_id":"ai","block_type":55,"ai":{}},{"block_id":"reference","block_type":56,"reference":{}},{"block_id":"project","block_type":57,"project":{}},{"block_id":"meeting","block_type":58,"meeting":{}},{"block_id":"vc","block_type":59,"vc":{}},{"block_id":"minutes","block_type":61,"minutes":{}}]}`
+	payload := `{"items":[{"block_id":"root","block_type":1,"children":["todo","future","undefined","agenda","link_preview","synced","sub_page","ai","reference","project","meeting","vc","minutes"]},{"block_id":"todo","block_type":17,"todo":{"elements":[{"text_run":{"content":"Done"}}],"style":{"done":true}}},{"block_id":"future","block_type":60,"children":["child"]},{"block_id":"child","block_type":0},{"block_id":"undefined","block_type":0},{"block_id":"agenda","block_type":51,"agenda":{}},{"block_id":"link_preview","block_type":52,"link_preview":{}},{"block_id":"synced","block_type":53,"synced":{}},{"block_id":"sub_page","block_type":54,"sub_page":{}},{"block_id":"ai","block_type":55,"ai":{}},{"block_id":"reference","block_type":56,"reference":{}},{"block_id":"project","block_type":57,"project":{}},{"block_id":"meeting","block_type":58,"meeting":{}},{"block_id":"vc","block_type":59,"vc":{}},{"block_id":"minutes","block_type":61,"minutes":{}}]}`
 	if err := decodeExactJSON([]byte(payload), &page); err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +201,90 @@ func TestDocxLoaderChargesAllRetainedInlineAndStyleFields(t *testing.T) {
 			client := NewClient(ClientConfig{BaseURL: server.URL, ResourceLimits: ResourceLimits{MaxOutputBytes: 100}}, server.Client())
 			_, err := NewDocxLoader(client).Load(context.Background(), mustResourceRef(t, domain.ResourceDocx, "docA", ""), "token")
 			assertLoadCode(t, err, ports.SourceLoadTooLarge)
+		})
+	}
+}
+
+func TestDocxLoaderRejectsContainerCodeLanguage(t *testing.T) {
+	language := `[[` + strings.TrimSuffix(strings.Repeat(`null,`, 2_000), ",") + `]]`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/documents/docA") {
+			_, _ = w.Write([]byte(`{"code":0,"data":{"document":{"document_id":"docA","revision_id":1,"title":"Doc"}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"block_id":"root","block_type":1,"page":{"elements":[]},"children":["code"]},{"block_id":"code","block_type":14,"code":{"elements":[],"style":{"language":` + language + `}}}],"has_more":false}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, ResourceLimits: ResourceLimits{MaxOutputBytes: 100}}, server.Client())
+	_, err := NewDocxLoader(client).Load(context.Background(), mustResourceRef(t, domain.ResourceDocx, "docA", ""), "token")
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || (loadErr.Code != ports.SourceLoadMalformed && loadErr.Code != ports.SourceLoadTooLarge) {
+		t.Fatalf("Load() error = %#v, want malformed or too_large", err)
+	}
+}
+
+func TestDocxCodeLanguageSupportsBoundedScalars(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		language string
+		want     string
+	}{
+		{name: "numeric enum", language: `1`, want: "plaintext"},
+		{name: "string identifier", language: `"go"`, want: "go"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var page docxBlocksData
+			payload := `{"items":[{"block_id":"code","block_type":14,"code":{"elements":[],"style":{"language":` + test.language + `}}}]}`
+			if err := decodeExactJSON([]byte(payload), &page); err != nil {
+				t.Fatal(err)
+			}
+			got, err := (docxRenderer{blocks: map[string]docxBlock{"code": page.Items[0]}, normalizer: NewMarkdownNormalizer()}).renderBlock("code", 0, map[string]bool{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(got, "```"+test.want+"\n") {
+				t.Fatalf("rendered code = %q, want language %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestDocxCodeLanguageRejectsNullAndObjectValues(t *testing.T) {
+	for _, language := range []string{`null`, `{}`} {
+		var page docxBlocksData
+		payload := `{"items":[{"block_id":"code","block_type":14,"code":{"elements":[],"style":{"language":` + language + `}}}]}`
+		if err := decodeExactJSON([]byte(payload), &page); err == nil {
+			t.Fatalf("decode language %s error = nil", language)
+		}
+	}
+}
+
+func TestDocxRendererUsesOfficialBlockTypes39Through43(t *testing.T) {
+	for _, test := range []struct {
+		blockType int
+		payload   string
+		want      string
+	}{
+		{blockType: 39, payload: `"okr_progress":{}`, want: "Unsupported OKR progress"},
+		{blockType: 40, payload: `"add_ons":{}`, want: `Unsupported add\-on`},
+		{blockType: 41, payload: `"jira_issue":{}`, want: "Unsupported Jira issue"},
+		{blockType: 42, payload: `"wiki_catalog":{}`, want: "Unsupported wiki catalog"},
+		{blockType: 43, payload: `"board":{}`, want: "Unsupported board"},
+	} {
+		t.Run(strconv.Itoa(test.blockType), func(t *testing.T) {
+			var page docxBlocksData
+			payload := `{"items":[{"block_id":"leaf","block_type":` + strconv.Itoa(test.blockType) + `,` + test.payload + `}]}`
+			if err := decodeExactJSON([]byte(payload), &page); err != nil {
+				t.Fatal(err)
+			}
+			got, err := (docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{}), blocks: map[string]docxBlock{"leaf": page.Items[0]}, normalizer: NewMarkdownNormalizer()}).renderBlock("leaf", 0, map[string]bool{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("renderBlock() = %q, want %q", got, test.want)
+			}
 		})
 	}
 }

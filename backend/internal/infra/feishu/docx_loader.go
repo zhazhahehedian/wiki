@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/url"
 	"strconv"
 	"strings"
@@ -78,6 +79,7 @@ type docxBlock struct {
 	OKR            *struct{} `json:"okr"`
 	OKRObjective   *struct{} `json:"okr_objective"`
 	OKRKeyResult   *struct{} `json:"okr_key_result"`
+	OKRProgress    *struct{} `json:"okr_progress"`
 	AddOns         *struct{} `json:"add_ons"`
 	JiraIssue      *struct{} `json:"jira_issue"`
 	WikiCatalog    *struct{} `json:"wiki_catalog"`
@@ -97,9 +99,41 @@ type docxBlock struct {
 type docxText struct {
 	Elements []docxTextElement `json:"elements"`
 	Style    struct {
-		Language any  `json:"language"`
-		Done     bool `json:"done"`
+		Language docxLanguage `json:"language"`
+		Done     bool         `json:"done"`
 	} `json:"style"`
+}
+
+type docxLanguage struct {
+	value         string
+	retainedBytes int
+}
+
+func (l *docxLanguage) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 {
+		return errors.New("empty code language")
+	}
+	if data[0] == '"' {
+		var value string
+		if err := json.Unmarshal(data, &value); err != nil {
+			return err
+		}
+		*l = docxLanguage{retainedBytes: len(value)}
+		if len(value) <= maxResourceIdentifierBytes && resourceIdentifierPattern.MatchString(value) {
+			l.value = value
+		}
+		return nil
+	}
+	number, err := strconv.ParseFloat(string(data), 64)
+	if err != nil {
+		return errors.New("unsupported code language")
+	}
+	*l = docxLanguage{retainedBytes: 8}
+	if number == 1 {
+		l.value = "plaintext"
+	}
+	return nil
 }
 
 type docxTextElement struct {
@@ -480,7 +514,7 @@ func docxTextRetainedBytes(text *docxText) (int, error) {
 	if text == nil {
 		return 0, nil
 	}
-	total := retainedAnyBytes(text.Style.Language) + 1
+	total := text.Style.Language.retainedBytes + 1
 	for _, element := range text.Elements {
 		members := element.unknownMembers
 		if element.TextRun != nil {
@@ -510,33 +544,6 @@ func docxTextRetainedBytes(text *docxText) (int, error) {
 	return total, nil
 }
 
-func retainedAnyBytes(value any) int {
-	switch value := value.(type) {
-	case nil:
-		return 0
-	case string:
-		return len(value)
-	case bool:
-		return 1
-	case float64:
-		return 8
-	case []any:
-		total := 0
-		for _, item := range value {
-			total += retainedAnyBytes(item)
-		}
-		return total
-	case map[string]any:
-		total := 0
-		for key, item := range value {
-			total += len(key) + retainedAnyBytes(item)
-		}
-		return total
-	default:
-		return 8
-	}
-}
-
 func validateDocxBlockPayload(block docxBlock) error {
 	if err := validateDocxInlineElements(block); err != nil {
 		return err
@@ -550,7 +557,8 @@ func validateDocxBlockPayload(block docxBlock) error {
 		block.Diagram != nil, block.File != nil, block.Grid != nil, block.GridColumn != nil, block.Iframe != nil,
 		block.Image != nil, block.ISV != nil, block.Mindnote != nil, block.Sheet != nil, block.Table != nil,
 		block.View != nil, block.QuoteContainer != nil, block.Task != nil, block.OKR != nil, block.OKRObjective != nil,
-		block.OKRKeyResult != nil, block.AddOns != nil, block.JiraIssue != nil, block.WikiCatalog != nil, block.Board != nil,
+		block.OKRKeyResult != nil, block.OKRProgress != nil, block.AddOns != nil, block.JiraIssue != nil, block.WikiCatalog != nil,
+		block.Board != nil,
 	} {
 		if present {
 			payloads++
@@ -636,12 +644,14 @@ func validateDocxBlockPayload(block docxBlock) error {
 	case 38:
 		expected = block.OKRKeyResult != nil
 	case 39:
-		expected = block.AddOns != nil
+		expected = block.OKRProgress != nil
 	case 40:
-		expected = block.JiraIssue != nil
+		expected = block.AddOns != nil
 	case 41:
-		expected = block.WikiCatalog != nil
+		expected = block.JiraIssue != nil
 	case 42:
+		expected = block.WikiCatalog != nil
+	case 43:
 		expected = block.Board != nil
 	default:
 		if payloads != 0 {
@@ -803,6 +813,8 @@ func documentedDocxLeafLabel(block docxBlock) string {
 		return "OKR objective"
 	case block.OKRKeyResult != nil:
 		return "OKR key result"
+	case block.OKRProgress != nil:
+		return "OKR progress"
 	case block.AddOns != nil:
 		return "add-on"
 	case block.JiraIssue != nil:
@@ -816,15 +828,8 @@ func documentedDocxLeafLabel(block docxBlock) string {
 	}
 }
 
-func docxCodeLanguage(value any) string {
-	language, ok := value.(string)
-	if ok && resourceIdentifierPattern.MatchString(language) {
-		return language
-	}
-	if number, ok := value.(float64); ok && number == 1 {
-		return "plaintext"
-	}
-	return ""
+func docxCodeLanguage(value docxLanguage) string {
+	return value.value
 }
 
 func codeFence(content string) string {
