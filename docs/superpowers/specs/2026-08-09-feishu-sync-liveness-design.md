@@ -27,6 +27,8 @@ For each stale document:
 
 Existing sync and ingestion active-state uniqueness makes insertion a no-op while the original job still exists. Discarded terminal jobs do not block recovery.
 
+A per-document enqueue failure emits a redacted warning containing only fixed event fields, the document UUID, and the fixed recovery category. Reconciliation continues across the remaining bounded rows and pages, then returns a constant-size typed aggregate with failure counts by category so River records the run as failed. Context cancellation and page-scan failures still stop the run immediately; the next periodic run can retry any row whose enqueue failed.
+
 ## Lease And Timeouts
 
 `ClaimFeishuSync` and stale reconciliation both compare `updated_at` against PostgreSQL `now() - lease_seconds * interval '1 second'`. Claim creation already sets `updated_at = now()`, so creation and expiry share one clock. Application time is not used for SQL lease decisions.

@@ -1,9 +1,12 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -163,6 +166,137 @@ func TestFeishuReconcilerRedactsRecoveryEnqueueFailures(t *testing.T) {
 	}
 }
 
+func TestFeishuReconcilerContinuesAfterEnqueueFailureAcrossPages(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	secretURL := "https://secret.example/docx/provider-token"
+	documents := []generated.Document{
+		{ID: uuid.New(), SourceType: "feishu-docx", SourceUrl: &secretURL, SyncStatus: "syncing", UpdatedAt: base},
+		{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base.Add(time.Second)},
+		{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base.Add(2 * time.Second)},
+	}
+	queue := &recordingRecoveryQueue{
+		syncErrors: map[string]error{documents[0].ID.String(): errors.New("oldest row SECRET failure")},
+	}
+	var logOutput bytes.Buffer
+	worker := NewFeishuReconcileWorker(FeishuReconcileWorkerDeps{
+		Repository: &fakeReconcileRepository{documents: documents}, Queue: queue,
+		SyncLease: time.Hour, BatchSize: 2, MaxBatches: 2,
+		Logger: slog.New(slog.NewJSONHandler(&logOutput, nil)),
+	})
+
+	err := worker.Work(context.Background(), &river.Job[FeishuReconcileJobArgs]{})
+	if !errors.Is(err, errFeishuRecoveryEnqueue) || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if len(queue.syncs) != len(documents) {
+		t.Fatalf("sync recovery calls = %+v, want all %d documents", queue.syncs, len(documents))
+	}
+	var aggregate *FeishuReconcileError
+	if !errors.As(err, &aggregate) || aggregate.Failures != 1 || aggregate.Sync != 1 || aggregate.Ingestion != 0 || aggregate.MetadataOnly != 0 {
+		t.Fatalf("aggregate error = %#v", err)
+	}
+	var warning map[string]any
+	if decodeErr := json.Unmarshal(logOutput.Bytes(), &warning); decodeErr != nil {
+		t.Fatalf("decode warning = %v; output=%q", decodeErr, logOutput.String())
+	}
+	allowed := map[string]bool{
+		"time": true, "level": true, "msg": true, "event": true, "error_code": true,
+		"document_id": true, "recovery_type": true,
+	}
+	for field := range warning {
+		if !allowed[field] {
+			t.Fatalf("unexpected warning field %q in %+v", field, warning)
+		}
+	}
+	if warning["level"] != "WARN" || warning["msg"] != "Feishu reconciliation enqueue failed" ||
+		warning["event"] != "feishu_recovery_enqueue_failed" || warning["error_code"] != "recovery_enqueue_failed" ||
+		warning["document_id"] != documents[0].ID.String() || warning["recovery_type"] != "sync" {
+		t.Fatalf("reconciliation warning = %+v", warning)
+	}
+	for _, secret := range []string{"SECRET", secretURL, "secret.example", "provider-token", "oldest row"} {
+		if strings.Contains(logOutput.String(), secret) || strings.Contains(err.Error(), secret) {
+			t.Fatalf("reconciliation result leaked %q: log=%s error=%v", secret, logOutput.String(), err)
+		}
+	}
+}
+
+func TestFeishuReconcilerStopsImmediatelyWhenEnqueueCancelsContext(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	documents := []generated.Document{
+		{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base},
+		{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base.Add(time.Second)},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	queue := &recordingRecoveryQueue{
+		syncErrors: map[string]error{documents[0].ID.String(): errors.New("provider failure")},
+		onSync: func(documentID string) {
+			if documentID == documents[0].ID.String() {
+				cancel()
+			}
+		},
+	}
+	worker := NewFeishuReconcileWorker(FeishuReconcileWorkerDeps{
+		Repository: &fakeReconcileRepository{documents: documents}, Queue: queue,
+		SyncLease: time.Hour, BatchSize: 10, MaxBatches: 1,
+	})
+
+	err := worker.Work(ctx, &river.Job[FeishuReconcileJobArgs]{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Work() error = %v, want context cancellation", err)
+	}
+	if len(queue.syncs) != 1 {
+		t.Fatalf("sync calls after cancellation = %+v", queue.syncs)
+	}
+}
+
+func TestFeishuReconcilerStopsImmediatelyOnFatalScanError(t *testing.T) {
+	repo := &fakeReconcileRepository{err: errors.New("database SECRET detail")}
+	queue := &recordingRecoveryQueue{}
+	worker := NewFeishuReconcileWorker(FeishuReconcileWorkerDeps{
+		Repository: repo, Queue: queue, SyncLease: time.Hour, BatchSize: 10, MaxBatches: 1,
+	})
+
+	err := worker.Work(context.Background(), &river.Job[FeishuReconcileJobArgs]{})
+	if !errors.Is(err, errFeishuReconcileScan) || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if len(repo.calls) != 1 || len(queue.syncs)+len(queue.ingestions)+len(queue.metadataOnly) != 0 {
+		t.Fatalf("fatal scan continued: scans=%d queue=%+v/%+v/%+v", len(repo.calls), queue.syncs, queue.ingestions, queue.metadataOnly)
+	}
+}
+
+func TestFeishuReconcilerAggregatesBoundedFailureCategories(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	syncDocument := generated.Document{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base}
+	ingestionDocument := generated.Document{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base.Add(time.Second), Checksum: "old-sum"}
+	setPendingDocument(&ingestionDocument, PendingFeishuSnapshot{
+		ContentRef: "changed.md", Checksum: "new-sum", RemoteRevision: "rev-2", Title: "Changed", Bytes: 7,
+		Metadata: validReconcileMetadata(t),
+	})
+	metadataOnlyDocument := generated.Document{ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: base.Add(2 * time.Second), Checksum: "same-sum"}
+	setPendingDocument(&metadataOnlyDocument, PendingFeishuSnapshot{
+		ContentRef: "same.md", Checksum: "same-sum", RemoteRevision: "rev-3", Title: "Metadata", Bytes: 7,
+		Metadata: validReconcileMetadata(t),
+	})
+	queue := &recordingRecoveryQueue{
+		syncErr: errors.New("sync failure"), ingestionErr: errors.New("ingestion failure"),
+	}
+	worker := NewFeishuReconcileWorker(FeishuReconcileWorkerDeps{
+		Repository: &fakeReconcileRepository{documents: []generated.Document{syncDocument, ingestionDocument, metadataOnlyDocument}},
+		Queue:      queue, SyncLease: time.Hour, BatchSize: 10, MaxBatches: 1,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+
+	err := worker.Work(context.Background(), &river.Job[FeishuReconcileJobArgs]{})
+	var aggregate *FeishuReconcileError
+	if !errors.As(err, &aggregate) || aggregate.Failures != 3 || aggregate.Sync != 1 || aggregate.Ingestion != 1 || aggregate.MetadataOnly != 1 {
+		t.Fatalf("aggregate error = %#v", err)
+	}
+	if len(queue.syncs) != 1 || len(queue.ingestions) != 1 || len(queue.metadataOnly) != 1 {
+		t.Fatalf("recovery calls = sync:%+v ingestion:%+v metadata-only:%+v", queue.syncs, queue.ingestions, queue.metadataOnly)
+	}
+}
+
 func TestFeishuReconcilerBoundsBatchAndKeysetPages(t *testing.T) {
 	documents := make([]generated.Document, 7)
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
@@ -215,10 +349,14 @@ type reconcileScanCall struct {
 type fakeReconcileRepository struct {
 	documents []generated.Document
 	calls     []reconcileScanCall
+	err       error
 }
 
 func (f *fakeReconcileRepository) ListStaleFeishuSyncs(_ context.Context, lease time.Duration, afterUpdatedAt time.Time, afterID uuid.UUID, batchSize int32) ([]generated.Document, error) {
 	f.calls = append(f.calls, reconcileScanCall{lease: lease, afterUpdatedAt: afterUpdatedAt, afterID: afterID, batchSize: batchSize})
+	if f.err != nil {
+		return nil, f.err
+	}
 	start := 0
 	if !afterUpdatedAt.IsZero() || afterID != uuid.Nil {
 		for start < len(f.documents) && (f.documents[start].UpdatedAt.Before(afterUpdatedAt) || f.documents[start].UpdatedAt.Equal(afterUpdatedAt) && f.documents[start].ID.String() <= afterID.String()) {
@@ -242,11 +380,19 @@ type recordingRecoveryQueue struct {
 	ingestions   []PendingFeishuSnapshot
 	metadataOnly []PendingFeishuSnapshot
 	syncErr      error
+	syncErrors   map[string]error
 	ingestionErr error
+	onSync       func(string)
 }
 
 func (q *recordingRecoveryQueue) EnqueueFeishuSync(_ context.Context, documentID, requestedRevision string) error {
 	q.syncs = append(q.syncs, recoverySyncCall{documentID: documentID, revision: requestedRevision})
+	if q.onSync != nil {
+		q.onSync(documentID)
+	}
+	if err := q.syncErrors[documentID]; err != nil {
+		return err
+	}
 	return q.syncErr
 }
 

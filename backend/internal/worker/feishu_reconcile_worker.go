@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -28,6 +30,46 @@ var (
 	errFeishuReconcileScan   = errors.New("Feishu reconciliation scan failed")
 	errFeishuRecoveryEnqueue = errors.New("Feishu recovery enqueue failed")
 )
+
+type feishuRecoveryType string
+
+const (
+	feishuRecoverySync         feishuRecoveryType = "sync"
+	feishuRecoveryIngestion    feishuRecoveryType = "ingestion"
+	feishuRecoveryMetadataOnly feishuRecoveryType = "metadata_only"
+)
+
+type FeishuReconcileError struct {
+	Failures     int
+	Sync         int
+	Ingestion    int
+	MetadataOnly int
+}
+
+func (e *FeishuReconcileError) Error() string {
+	return fmt.Sprintf("Feishu reconciliation recovery failed (%d enqueue failures)", e.Failures)
+}
+
+func (e *FeishuReconcileError) Unwrap() error { return errFeishuRecoveryEnqueue }
+
+func (e *FeishuReconcileError) add(recoveryType feishuRecoveryType) {
+	e.Failures++
+	switch recoveryType {
+	case feishuRecoverySync:
+		e.Sync++
+	case feishuRecoveryIngestion:
+		e.Ingestion++
+	case feishuRecoveryMetadataOnly:
+		e.MetadataOnly++
+	}
+}
+
+func (e *FeishuReconcileError) result() error {
+	if e.Failures == 0 {
+		return nil
+	}
+	return e
+}
 
 type FeishuReconcileJobArgs struct{}
 
@@ -66,6 +108,7 @@ type FeishuReconcileWorkerDeps struct {
 	JobTimeout time.Duration
 	BatchSize  int
 	MaxBatches int
+	Logger     *slog.Logger
 }
 
 type FeishuReconcileWorker struct {
@@ -76,6 +119,7 @@ type FeishuReconcileWorker struct {
 	jobTimeout time.Duration
 	batchSize  int32
 	maxBatches int
+	logger     *slog.Logger
 }
 
 func NewFeishuReconcileWorker(deps FeishuReconcileWorkerDeps) *FeishuReconcileWorker {
@@ -96,9 +140,12 @@ func NewFeishuReconcileWorker(deps FeishuReconcileWorkerDeps) *FeishuReconcileWo
 	if deps.JobTimeout <= 0 {
 		deps.JobTimeout = 2 * time.Minute
 	}
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
 	return &FeishuReconcileWorker{
 		repository: deps.Repository, queue: deps.Queue, syncLease: deps.SyncLease,
-		jobTimeout: deps.JobTimeout, batchSize: int32(batchSize), maxBatches: maxBatches,
+		jobTimeout: deps.JobTimeout, batchSize: int32(batchSize), maxBatches: maxBatches, logger: deps.Logger,
 	}
 }
 
@@ -108,44 +155,69 @@ func (w *FeishuReconcileWorker) Timeout(*river.Job[FeishuReconcileJobArgs]) time
 
 func (w *FeishuReconcileWorker) Work(ctx context.Context, _ *river.Job[FeishuReconcileJobArgs]) error {
 	afterUpdatedAt, afterID := time.Time{}, uuid.Nil
+	failures := &FeishuReconcileError{}
 	for page := 0; page < w.maxBatches; page++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		documents, err := w.repository.ListStaleFeishuSyncs(ctx, w.syncLease, afterUpdatedAt, afterID, w.batchSize)
 		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
 			return errFeishuReconcileScan
 		}
 		for _, document := range documents {
-			if err := w.recover(ctx, document); err != nil {
+			if err := ctx.Err(); err != nil {
 				return err
 			}
+			recoveryType, err := w.recover(ctx, document)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			if err != nil {
+				failures.add(recoveryType)
+				w.logger.WarnContext(ctx, "Feishu reconciliation enqueue failed",
+					"event", "feishu_recovery_enqueue_failed",
+					"error_code", "recovery_enqueue_failed",
+					"document_id", document.ID.String(),
+					"recovery_type", string(recoveryType),
+				)
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		if len(documents) < int(w.batchSize) {
-			return nil
+			return failures.result()
 		}
 		last := documents[len(documents)-1]
 		afterUpdatedAt, afterID = last.UpdatedAt, last.ID
 	}
-	return nil
+	return failures.result()
 }
 
-func (w *FeishuReconcileWorker) recover(ctx context.Context, document generated.Document) error {
+func (w *FeishuReconcileWorker) recover(ctx context.Context, document generated.Document) (feishuRecoveryType, error) {
 	if snapshot, ok := recoverableSnapshotFromDocument(document); ok {
 		enqueue := w.queue.EnqueueStagedIngestion
+		recoveryType := feishuRecoveryIngestion
 		if snapshot.Checksum == document.Checksum {
 			enqueue = w.queue.EnqueueMetadataOnlyIngestion
+			recoveryType = feishuRecoveryMetadataOnly
 		}
 		if err := enqueue(ctx, snapshot); err != nil {
-			return errFeishuRecoveryEnqueue
+			return recoveryType, errFeishuRecoveryEnqueue
 		}
-		return nil
+		return recoveryType, nil
 	}
 	requestedRevision := "initial"
 	if document.RemoteRevision != nil {
 		requestedRevision = *document.RemoteRevision
 	}
 	if err := w.queue.EnqueueFeishuSync(ctx, document.ID.String(), requestedRevision); err != nil {
-		return errFeishuRecoveryEnqueue
+		return feishuRecoverySync, errFeishuRecoveryEnqueue
 	}
-	return nil
+	return feishuRecoverySync, nil
 }
 
 func recoverableSnapshotFromDocument(document generated.Document) (PendingFeishuSnapshot, bool) {

@@ -178,7 +178,7 @@ func run() error {
 		reconcileWorker := worker.NewFeishuReconcileWorker(worker.FeishuReconcileWorkerDeps{
 			Repository: syncRepository, Queue: queueForwarder, SyncLease: cfg.FeishuSyncLease,
 			JobTimeout: cfg.FeishuReconcileJobTimeout, BatchSize: cfg.FeishuReconcileBatchSize,
-			MaxBatches: cfg.FeishuReconcileMaxBatches,
+			MaxBatches: cfg.FeishuReconcileMaxBatches, Logger: slog.Default(),
 		})
 		riverConfig.FeishuSyncWorker = feishuSyncWorker
 		riverConfig.ReconcileWorker = reconcileWorker
