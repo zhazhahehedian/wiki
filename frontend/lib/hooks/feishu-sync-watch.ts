@@ -2,12 +2,14 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import type { Doc } from "@/lib/schemas";
 
-const SYNC_WATCH_WINDOW_MS = 60_000;
+const SYNC_WATCH_FAST_WINDOW_MS = 60_000;
+const SYNC_WATCH_FAST_INTERVAL_MS = 2_000;
+const SYNC_WATCH_SLOW_INTERVAL_MS = 15_000;
 
 type FeishuSyncWatch = {
   baselineUpdatedAt: string;
-  expiresAt: number;
-  observedSyncing: boolean;
+  fastUntil: number;
+  observedSyncingAt?: string;
 };
 
 function watchKey(docId: string) {
@@ -15,16 +17,21 @@ function watchKey(docId: string) {
 }
 
 export function beginFeishuSyncWatch(queryClient: QueryClient, doc: Doc) {
+  // River backlog can exceed QueryClient's default five-minute inactive-query GC.
+  queryClient.setQueryDefaults(["feishu-sync-watch"], { gcTime: Infinity });
   queryClient.setQueryData<FeishuSyncWatch>(watchKey(doc.id), {
     baselineUpdatedAt: doc.updated_at,
-    expiresAt: Date.now() + SYNC_WATCH_WINDOW_MS,
-    observedSyncing: doc.sync_status === "syncing",
+    fastUntil: Date.now() + SYNC_WATCH_FAST_WINDOW_MS,
+    observedSyncingAt: doc.sync_status === "syncing" ? doc.updated_at : undefined,
   });
 }
 
-export function feishuSyncWatchActive(queryClient: QueryClient, docId: string): boolean {
+export function feishuSyncWatchInterval(queryClient: QueryClient, docId: string): number | false {
   const watch = queryClient.getQueryData<FeishuSyncWatch>(watchKey(docId));
-  return Boolean(watch && watch.expiresAt > Date.now());
+  if (!watch) return false;
+  return Date.now() < watch.fastUntil
+    ? SYNC_WATCH_FAST_INTERVAL_MS
+    : SYNC_WATCH_SLOW_INTERVAL_MS;
 }
 
 export function observeFeishuSync(queryClient: QueryClient, doc: Doc) {
@@ -33,15 +40,31 @@ export function observeFeishuSync(queryClient: QueryClient, doc: Doc) {
   if (!watch) return;
 
   if (doc.sync_status === "syncing") {
-    if (!watch.observedSyncing) {
-      queryClient.setQueryData<FeishuSyncWatch>(key, { ...watch, observedSyncing: true });
+    if (!watch.observedSyncingAt || timestampAtOrAfter(doc.updated_at, watch.observedSyncingAt)) {
+      queryClient.setQueryData<FeishuSyncWatch>(key, {
+        ...watch,
+        observedSyncingAt: doc.updated_at,
+      });
     }
     return;
   }
 
-  const completed = watch.observedSyncing || doc.updated_at !== watch.baselineUpdatedAt;
+  const completed = doc.updated_at !== watch.baselineUpdatedAt
+    && (!watch.observedSyncingAt || timestampAtOrAfter(doc.updated_at, watch.observedSyncingAt));
   if (!completed) return;
 
   queryClient.removeQueries({ queryKey: key, exact: true });
+  void queryClient.invalidateQueries({ queryKey: ["docs"], refetchType: "none" });
+  void queryClient.invalidateQueries({
+    queryKey: ["doc", doc.id],
+    exact: true,
+    refetchType: "none",
+  });
   void queryClient.invalidateQueries({ queryKey: ["chunks", doc.id] });
+}
+
+function timestampAtOrAfter(value: string, minimum: string): boolean {
+  const valueTime = Date.parse(value);
+  const minimumTime = Date.parse(minimum);
+  return Number.isFinite(valueTime) && Number.isFinite(minimumTime) && valueTime >= minimumTime;
 }

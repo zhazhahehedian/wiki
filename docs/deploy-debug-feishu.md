@@ -94,7 +94,7 @@ bootstrap 优先复用已有 `(provider=feishu, provider_user_id=open_id)` 用�
 
 失败的 resync 会把 `sync_status` 置为 `failed` 并保留上一次成功的 `content_ref`、checksum、revision 和 chunks，因此检索仍使用旧 snapshot。首次导入失败且没有 active snapshot 时，文档整体 status 才会是 `failed`。飞书权限被撤销、源文档被删除或 OAuth 失效都不会自动删除本地内容；需要管理员按数据保留策略手动删除 KB/文档。
 
-系统没有远端自动轮询，也没有飞书事件订阅。前端在用户触发 import/sync 后每 2s 查询本地文档状态，并为 worker claim race 保留最多 60s 的 UI watch；这个 60s 只是浏览器观察窗口，不是 worker timeout。后台 `reconciler` 按 `FEISHU_RECONCILE_INTERVAL` 扫描超过 `FEISHU_SYNC_LEASE` 的本地 `syncing` 记录，恢复已有 pending snapshot 的 ingestion/metadata promotion，或重新入队 source sync；它不会检查飞书是否出现新版本。
+系统没有远端自动轮询，也没有飞书事件订阅。前端对本地 ingestion 或 `syncing` 状态每 2s 查询一次。用户触发手动同步后，即使 River 尚未 claim、文档仍是 `ready/idle`，相关页面也会在前 60s 每 2s 高频观察，之后每 15s 低频观察，直到看到 `syncing` 后回到终态，或 `updated_at` 相对同步前基线发生变化；用户离开相关页面后 TanStack Query 停止实际请求。这个两阶段节奏只是浏览器观察策略，不是 worker timeout，也不限制后台任务时长。后台 `reconciler` 按 `FEISHU_RECONCILE_INTERVAL` 扫描超过 `FEISHU_SYNC_LEASE` 的本地 `syncing` 记录，恢复已有 pending snapshot 的 ingestion/metadata promotion，或重新入队 source sync；它不会检查飞书是否出现新版本。
 
 状态判断：
 

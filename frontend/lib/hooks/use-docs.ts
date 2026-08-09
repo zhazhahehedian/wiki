@@ -2,14 +2,29 @@
 
 import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { QueryClient } from "@tanstack/react-query";
 import { docApi } from "@/lib/api/docs";
 import type { Doc } from "@/lib/schemas";
-import { feishuSyncWatchActive, observeFeishuSync } from "./feishu-sync-watch";
+import { feishuSyncWatchInterval, observeFeishuSync } from "./feishu-sync-watch";
 
 const TERMINAL_STATUSES: Doc["status"][] = ["ready", "failed"];
+const ACTIVE_DOC_REFETCH_INTERVAL_MS = 2_000;
 
 export function docNeedsRefresh(doc: Doc, manualSyncPending = false): boolean {
   return manualSyncPending || !TERMINAL_STATUSES.includes(doc.status) || doc.sync_status === "syncing";
+}
+
+export function docRefetchInterval(queryClient: QueryClient, doc: Doc): number | false {
+  if (docNeedsRefresh(doc)) return ACTIVE_DOC_REFETCH_INTERVAL_MS;
+  return feishuSyncWatchInterval(queryClient, doc.id);
+}
+
+export function docsRefetchInterval(queryClient: QueryClient, docs: readonly Doc[]): number | false {
+  return docs.reduce<number | false>((shortest, doc) => {
+    const interval = docRefetchInterval(queryClient, doc);
+    if (interval === false) return shortest;
+    return shortest === false ? interval : Math.min(shortest, interval);
+  }, false);
 }
 
 export function useDocsByKB(kbId: string, limit = 20, offset = 0) {
@@ -20,11 +35,7 @@ export function useDocsByKB(kbId: string, limit = 20, offset = 0) {
     enabled: !!kbId,
     refetchInterval: (q) => {
       const items = q.state.data?.items ?? [];
-      const inProgress = items.some((doc) => docNeedsRefresh(
-        doc,
-        feishuSyncWatchActive(queryClient, doc.id),
-      ));
-      return inProgress ? 2_000 : false;
+      return docsRefetchInterval(queryClient, items);
     },
   });
   useEffect(() => {
@@ -41,8 +52,8 @@ export function useDoc(id: string) {
     enabled: !!id,
     refetchInterval: (q) => {
       const d = q.state.data;
-      if (!d) return 2_000;
-      return docNeedsRefresh(d, feishuSyncWatchActive(queryClient, d.id)) ? 2_000 : false;
+      if (!d) return ACTIVE_DOC_REFETCH_INTERVAL_MS;
+      return docRefetchInterval(queryClient, d);
     },
   });
   useEffect(() => {
