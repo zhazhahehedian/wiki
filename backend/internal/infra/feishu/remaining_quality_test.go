@@ -205,6 +205,39 @@ func TestDocxLoaderChargesAllRetainedInlineAndStyleFields(t *testing.T) {
 	}
 }
 
+func TestDocxLoaderChargesEmptyInlineElementStructures(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		element string
+	}{
+		{name: "known text run", element: `{"text_run":{"content":""}}`},
+		{name: "unknown variant", element: `{"reminder":{}}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			elements := strings.TrimSuffix(strings.Repeat(test.element+",", 500), ",")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/documents/docA") {
+					_, _ = w.Write([]byte(`{"code":0,"data":{"document":{"document_id":"docA","revision_id":1,"title":"Doc"}}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"block_id":"root","block_type":1,"page":{"elements":[]}},{"block_id":"orphan","block_type":2,"text":{"elements":[` + elements + `]}}],"has_more":false}}`))
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, ResourceLimits: ResourceLimits{MaxOutputBytes: 100}}, server.Client())
+			_, err := NewDocxLoader(client).Load(context.Background(), mustResourceRef(t, domain.ResourceDocx, "docA", ""), "token")
+			assertLoadCode(t, err, ports.SourceLoadTooLarge)
+		})
+	}
+}
+
+func TestDocxRetainedByteAccumulatorRejectsOverflow(t *testing.T) {
+	total := math.MaxInt
+	assertLoadCode(t, addDocxRetainedBytes(&total, 1), ports.SourceLoadTooLarge)
+	total = 0
+	assertLoadCode(t, addDocxRetainedBytes(&total, -1), ports.SourceLoadTooLarge)
+}
+
 func TestDocxLoaderRejectsContainerCodeLanguage(t *testing.T) {
 	language := `[[` + strings.TrimSuffix(strings.Repeat(`null,`, 2_000), ",") + `]]`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -108,6 +109,11 @@ type docxLanguage struct {
 	value         string
 	retainedBytes int
 }
+
+const (
+	docxInlineElementStructuralBytes = 64
+	docxKnownInlinePayloadBytes      = 16
+)
 
 func (l *docxLanguage) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
@@ -475,9 +481,17 @@ func docxRetainedBytes(block docxBlock) (int, error) {
 	if err := validateDocxBlockPayload(block); err != nil {
 		return 0, err
 	}
-	total := len(block.BlockID) + 8
+	total := 0
+	if err := addDocxRetainedBytes(&total, len(block.BlockID)); err != nil {
+		return 0, err
+	}
+	if err := addDocxRetainedBytes(&total, 8); err != nil {
+		return 0, err
+	}
 	for _, child := range block.Children {
-		total += len(child)
+		if err := addDocxRetainedBytes(&total, len(child)); err != nil {
+			return 0, err
+		}
 	}
 	texts := []*docxText{block.Text, block.Page, block.Heading1, block.Heading2, block.Heading3, block.Heading4, block.Heading5, block.Heading6, block.Heading7, block.Heading8, block.Heading9, block.Bullet, block.Ordered, block.Quote, block.Code, block.Todo}
 	for _, text := range texts {
@@ -485,26 +499,40 @@ func docxRetainedBytes(block docxBlock) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		total += textBytes
+		if err := addDocxRetainedBytes(&total, textBytes); err != nil {
+			return 0, err
+		}
 	}
 	if block.Equation != nil {
-		total += len(block.Equation.Content)
+		if err := addDocxRetainedBytes(&total, len(block.Equation.Content)); err != nil {
+			return 0, err
+		}
 		elementBytes, err := docxTextRetainedBytes(&docxText{Elements: block.Equation.Elements})
 		if err != nil {
 			return 0, err
 		}
-		total += elementBytes
+		if err := addDocxRetainedBytes(&total, elementBytes); err != nil {
+			return 0, err
+		}
 	}
 	if block.File != nil {
-		total += len(block.File.Name)
+		if err := addDocxRetainedBytes(&total, len(block.File.Name)); err != nil {
+			return 0, err
+		}
 	}
 	if block.Image != nil {
-		total += len(block.Image.Token)
+		if err := addDocxRetainedBytes(&total, len(block.Image.Token)); err != nil {
+			return 0, err
+		}
 	}
 	if block.Table != nil {
-		total += 16
+		if err := addDocxRetainedBytes(&total, 16); err != nil {
+			return 0, err
+		}
 		for _, cell := range block.Table.Cells {
-			total += len(cell)
+			if err := addDocxRetainedBytes(&total, len(cell)); err != nil {
+				return 0, err
+			}
 		}
 	}
 	return total, nil
@@ -514,34 +542,76 @@ func docxTextRetainedBytes(text *docxText) (int, error) {
 	if text == nil {
 		return 0, nil
 	}
-	total := text.Style.Language.retainedBytes + 1
+	total := 0
+	if err := addDocxRetainedBytes(&total, text.Style.Language.retainedBytes); err != nil {
+		return 0, err
+	}
+	if err := addDocxRetainedBytes(&total, 1); err != nil {
+		return 0, err
+	}
 	for _, element := range text.Elements {
+		if err := addDocxRetainedBytes(&total, docxInlineElementStructuralBytes); err != nil {
+			return 0, err
+		}
 		members := element.unknownMembers
 		if element.TextRun != nil {
 			members++
-			total += len(element.TextRun.Content)
+			if err := addDocxRetainedBytes(&total, docxKnownInlinePayloadBytes); err != nil {
+				return 0, err
+			}
+			if err := addDocxRetainedBytes(&total, len(element.TextRun.Content)); err != nil {
+				return 0, err
+			}
 		}
 		if element.MentionUser != nil {
 			members++
-			total += len(element.MentionUser.UserID)
+			if err := addDocxRetainedBytes(&total, docxKnownInlinePayloadBytes); err != nil {
+				return 0, err
+			}
+			if err := addDocxRetainedBytes(&total, len(element.MentionUser.UserID)); err != nil {
+				return 0, err
+			}
 		}
 		if element.MentionDoc != nil {
 			members++
-			total += len(element.MentionDoc.Title)
+			if err := addDocxRetainedBytes(&total, docxKnownInlinePayloadBytes); err != nil {
+				return 0, err
+			}
+			if err := addDocxRetainedBytes(&total, len(element.MentionDoc.Title)); err != nil {
+				return 0, err
+			}
 		}
 		if element.Equation != nil {
 			members++
-			total += len(element.Equation.Content)
+			if err := addDocxRetainedBytes(&total, docxKnownInlinePayloadBytes); err != nil {
+				return 0, err
+			}
+			if err := addDocxRetainedBytes(&total, len(element.Equation.Content)); err != nil {
+				return 0, err
+			}
 		}
 		if element.File != nil {
 			members++
-			total += len(element.File.Name)
+			if err := addDocxRetainedBytes(&total, docxKnownInlinePayloadBytes); err != nil {
+				return 0, err
+			}
+			if err := addDocxRetainedBytes(&total, len(element.File.Name)); err != nil {
+				return 0, err
+			}
 		}
 		if members != 1 {
 			return 0, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 		}
 	}
 	return total, nil
+}
+
+func addDocxRetainedBytes(total *int, amount int) error {
+	if amount < 0 || *total > math.MaxInt-amount {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	*total += amount
+	return nil
 }
 
 func validateDocxBlockPayload(block docxBlock) error {
