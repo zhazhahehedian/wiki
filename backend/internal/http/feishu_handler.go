@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -39,16 +41,18 @@ type feishuImportRequest struct {
 	URL string `json:"url"`
 }
 
+type feishuSyncRequest struct{}
+
+var errInvalidFeishuRequest = errors.New("invalid Feishu request")
+
 func (h *FeishuHandler) Import(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
 	var req feishuImportRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil || req.URL == "" {
-		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "invalid Feishu import request"))
+	if err := decodeFeishuImportRequest(r.Body, &req); err != nil {
+		WriteError(w, r, invalidFeishuRequestError())
 		return
 	}
 	account, err := h.accounts.Resolve(r.Context(), userID)
@@ -69,6 +73,10 @@ func (h *FeishuHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := decodeFeishuSyncRequest(r.Body); err != nil {
+		WriteError(w, r, invalidFeishuRequestError())
+		return
+	}
 	account, err := h.accounts.Resolve(r.Context(), userID)
 	if err != nil {
 		WriteError(w, r, mapFeishuHTTPError(err))
@@ -80,6 +88,54 @@ func (h *FeishuHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusAccepted, doc)
+}
+
+func decodeFeishuImportRequest(body io.Reader, req *feishuImportRequest) error {
+	if body == nil {
+		return errInvalidFeishuRequest
+	}
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(req); err != nil || strings.TrimSpace(req.URL) == "" {
+		return errInvalidFeishuRequest
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return errInvalidFeishuRequest
+	}
+	return nil
+}
+
+// Sync accepts either no JSON value or exactly one empty object.
+func decodeFeishuSyncRequest(body io.Reader) error {
+	if body == nil {
+		return nil
+	}
+	decoder := json.NewDecoder(body)
+	decoder.DisallowUnknownFields()
+	var req *feishuSyncRequest
+	err := decoder.Decode(&req)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err != nil || req == nil {
+		return errInvalidFeishuRequest
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return errInvalidFeishuRequest
+	}
+	return nil
+}
+
+func requireJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errInvalidFeishuRequest
+	}
+	return nil
+}
+
+func invalidFeishuRequestError() *APIError {
+	return NewAPIError(http.StatusBadRequest, CodeInvalidRequest, "invalid request")
 }
 
 func mapFeishuHTTPError(err error) error {
@@ -122,5 +178,5 @@ func mapFeishuHTTPError(err error) error {
 	if errors.As(err, &noDoc) || errors.As(err, &ownership) {
 		return NewAPIError(http.StatusNotFound, CodeResourceNotFound, "resource not found")
 	}
-	return err
+	return NewAPIError(http.StatusInternalServerError, CodeInternalError, "internal server error")
 }

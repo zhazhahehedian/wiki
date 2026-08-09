@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,23 +15,38 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
 
-type fakeHTTPFeishuAccounts struct{ account domain.OAuthAccount }
-
-func (f fakeHTTPFeishuAccounts) Resolve(context.Context, string) (domain.OAuthAccount, error) {
-	return f.account, nil
+type fakeHTTPFeishuAccounts struct {
+	account domain.OAuthAccount
+	err     error
 }
 
-type fakeHTTPFeishuImport struct{ input service.FeishuImportInput }
+func (f fakeHTTPFeishuAccounts) Resolve(context.Context, string) (domain.OAuthAccount, error) {
+	return f.account, f.err
+}
+
+type fakeHTTPFeishuImport struct {
+	input service.FeishuImportInput
+	err   error
+}
 
 func (f *fakeHTTPFeishuImport) Import(_ context.Context, input service.FeishuImportInput) (*domain.Document, error) {
 	f.input = input
+	if f.err != nil {
+		return nil, f.err
+	}
 	return &domain.Document{ID: uuid.NewString(), KBID: input.KBID, SourceType: "feishu-docx"}, nil
 }
 
-type fakeHTTPFeishuSync struct{ userID, accountID, documentID string }
+type fakeHTTPFeishuSync struct {
+	userID, accountID, documentID string
+	err                           error
+}
 
 func (f *fakeHTTPFeishuSync) Sync(_ context.Context, userID, accountID, documentID string) (*domain.Document, error) {
 	f.userID, f.accountID, f.documentID = userID, accountID, documentID
+	if f.err != nil {
+		return nil, f.err
+	}
 	return &domain.Document{ID: documentID, SourceType: "feishu-docx"}, nil
 }
 
@@ -61,8 +77,24 @@ func TestFeishuImportHandlerRejectsBrowserSuppliedAccountID(t *testing.T) {
 	req = req.WithContext(WithCurrentUser(req.Context(), domain.User{ID: userID}))
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
-	if rr.Code != http.StatusBadRequest {
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), `"code":"invalid_request"`) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestFeishuImportHandlerRejectsNonStrictJSONBodies(t *testing.T) {
+	for _, body := range []string{
+		`{"url":"https://acme.feishu.cn/docx/token","user_id":"attacker"}`,
+		`{"url":"https://acme.feishu.cn/docx/token"} {}`,
+		`{"url":"https://acme.feishu.cn/docx/token"} trailing`,
+		`{"url":`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			rr := serveFeishuImport(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuImport{}, body)
+			if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), `"code":"invalid_request"`) {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
 	}
 }
 
@@ -79,4 +111,90 @@ func TestFeishuSyncHandlerDerivesOwnerAndAccountServerSide(t *testing.T) {
 	if rr.Code != http.StatusAccepted || syncer.userID != userID || syncer.accountID != accountID || syncer.documentID != docID {
 		t.Fatalf("status=%d sync=%#v body=%s", rr.Code, syncer, rr.Body.String())
 	}
+}
+
+func TestFeishuSyncHandlerAcceptsOnlyEmptyOrEmptyObjectBody(t *testing.T) {
+	valid := []string{"", " \r\n\t", `{}`}
+	for _, body := range valid {
+		t.Run("valid_"+body, func(t *testing.T) {
+			rr := serveFeishuSync(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuSync{}, body)
+			if rr.Code != http.StatusAccepted {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+
+	invalid := []string{
+		`{"user_id":"attacker"}`,
+		`{"oauth_account_id":"attacker"}`,
+		`{"account_id":"attacker"}`,
+		`{} {}`,
+		`{} trailing`,
+		`{`,
+		`null`,
+	}
+	for _, body := range invalid {
+		t.Run("invalid_"+body, func(t *testing.T) {
+			rr := serveFeishuSync(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuSync{}, body)
+			if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), `"code":"invalid_request"`) {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestFeishuHandlersHideUnexpectedErrorDetails(t *testing.T) {
+	secret := "postgres failed token=secret-token url=https://evil.example/private"
+	tests := []struct {
+		name string
+		run  func(*testing.T) *httptest.ResponseRecorder
+	}{
+		{name: "account", run: func(t *testing.T) *httptest.ResponseRecorder {
+			return serveFeishuImport(t, fakeHTTPFeishuAccounts{err: errors.New(secret)}, &fakeHTTPFeishuImport{}, `{"url":"https://acme.feishu.cn/docx/token"}`)
+		}},
+		{name: "import", run: func(t *testing.T) *httptest.ResponseRecorder {
+			return serveFeishuImport(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuImport{err: errors.New(secret)}, `{"url":"https://acme.feishu.cn/docx/token"}`)
+		}},
+		{name: "sync", run: func(t *testing.T) *httptest.ResponseRecorder {
+			return serveFeishuSync(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuSync{err: errors.New(secret)}, `{}`)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := tt.run(t)
+			body := rr.Body.String()
+			if rr.Code != http.StatusInternalServerError || !strings.Contains(body, `"code":"internal_error"`) || !strings.Contains(body, `"request_id":`) {
+				t.Fatalf("status=%d body=%s", rr.Code, body)
+			}
+			if strings.Contains(body, "secret-token") || strings.Contains(body, "evil.example") || strings.Contains(body, "postgres failed") {
+				t.Fatalf("unexpected error leaked: %s", body)
+			}
+		})
+	}
+}
+
+func serveFeishuImport(t *testing.T, accounts fakeHTTPFeishuAccounts, imports *fakeHTTPFeishuImport, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	userID := uuid.NewString()
+	h := NewFeishuHandler(accounts, imports, &fakeHTTPFeishuSync{})
+	router := chi.NewRouter()
+	router.Post("/api/v1/kbs/{kbID}/feishu-imports", h.Import)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/kbs/"+uuid.NewString()+"/feishu-imports", strings.NewReader(body))
+	req = req.WithContext(WithCurrentUser(req.Context(), domain.User{ID: userID}))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	return rr
+}
+
+func serveFeishuSync(t *testing.T, accounts fakeHTTPFeishuAccounts, syncer *fakeHTTPFeishuSync, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	userID := uuid.NewString()
+	h := NewFeishuHandler(accounts, &fakeHTTPFeishuImport{}, syncer)
+	router := chi.NewRouter()
+	router.Post("/api/v1/docs/{docID}/sync", h.Sync)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docs/"+uuid.NewString()+"/sync", strings.NewReader(body))
+	req = req.WithContext(WithCurrentUser(req.Context(), domain.User{ID: userID}))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	return rr
 }

@@ -26,6 +26,7 @@ const (
 	CodeResourceNotFound        = "resource_not_found"
 	CodeResourceForbidden       = "resource_forbidden"
 	CodeReauthRequired          = "reauth_required"
+	CodeInvalidRequest          = "invalid_request"
 )
 
 type APIError struct {
