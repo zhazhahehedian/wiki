@@ -18,6 +18,9 @@ export const docStatusEnum = z.enum([
 ]);
 export type DocStatus = z.infer<typeof docStatusEnum>;
 
+export const docSyncStatusEnum = z.enum(["idle", "syncing", "failed"]);
+export type DocSyncStatus = z.infer<typeof docSyncStatusEnum>;
+
 export const docSchema = z.object({
   id: z.string(),
   kb_id: z.string(),
@@ -29,6 +32,11 @@ export const docSchema = z.object({
   checksum: z.string(),
   status: docStatusEnum,
   error_message: z.string().nullable().optional(),
+  source_url: z.string().nullable().optional(),
+  remote_revision: z.string().nullable().optional(),
+  sync_status: docSyncStatusEnum.optional(),
+  last_sync_error: z.string().nullable().optional(),
+  last_synced_at: z.string().nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string(),
   updated_at: z.string(),

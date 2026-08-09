@@ -225,17 +225,25 @@ func (s *Ingestion) ReingestKB(ctx context.Context, userID, kbID string) (int, e
 
 func rowToDocFull(r generated.Document) *domain.Document {
 	doc := &domain.Document{
-		ID:         r.ID.String(),
-		KBID:       r.KbID.String(),
-		SourceType: r.SourceType,
-		SourceRef:  r.SourceRef,
-		Title:      r.Title,
-		MimeType:   r.MimeType,
-		Bytes:      r.Bytes,
-		Checksum:   r.Checksum,
-		Status:     domain.DocStatus(r.Status),
-		CreatedAt:  r.CreatedAt,
-		UpdatedAt:  r.UpdatedAt,
+		ID:             r.ID.String(),
+		KBID:           r.KbID.String(),
+		SourceType:     r.SourceType,
+		SourceRef:      r.SourceRef,
+		Title:          r.Title,
+		MimeType:       r.MimeType,
+		Bytes:          r.Bytes,
+		Checksum:       r.Checksum,
+		Status:         domain.DocStatus(r.Status),
+		SourceURL:      r.SourceUrl,
+		RemoteRevision: r.RemoteRevision,
+		SyncStatus:     r.SyncStatus,
+		LastSyncError:  r.LastSyncError,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+	}
+	if r.LastSyncedAt.Valid {
+		lastSyncedAt := r.LastSyncedAt.Time
+		doc.LastSyncedAt = &lastSyncedAt
 	}
 	if r.ErrorMessage != nil {
 		doc.ErrorMessage = r.ErrorMessage

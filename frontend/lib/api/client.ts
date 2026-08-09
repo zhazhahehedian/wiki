@@ -2,6 +2,7 @@ const BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
 
 const CSRF_COOKIE = "it_wiki_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
+const unauthorizedListeners = new Set<() => void>();
 
 export class APIError extends Error {
   code: string;
@@ -26,6 +27,11 @@ export interface FetchOptions {
 
 export function apiURL(path: string): string {
   return BASE + path;
+}
+
+export function subscribeToUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
 }
 
 export function apiRequestInit(opts: FetchOptions = {}): RequestInit {
@@ -63,7 +69,7 @@ export async function apiFetch<T>(path: string, opts: FetchOptions = {}): Promis
   }
 
   if (!res.ok) {
-    throw await apiErrorFromResponse(res);
+    throw await apiErrorFromRejectedResponse(res);
   }
 
   return (await res.json()) as T;
@@ -75,11 +81,19 @@ export async function apiFetchList<T>(
 ): Promise<{ items: T[]; total: number }> {
   const res = await fetch(apiURL(path), apiRequestInit(opts));
   if (!res.ok) {
-    throw await apiErrorFromResponse(res);
+    throw await apiErrorFromRejectedResponse(res);
   }
   const total = parseInt(res.headers.get("X-Total-Count") ?? "0", 10);
   const items = (await res.json()) as T[];
   return { items: items ?? [], total };
+}
+
+export async function apiErrorFromRejectedResponse(res: Response): Promise<APIError> {
+  const error = await apiErrorFromResponse(res);
+  if (error.status === 401) {
+    unauthorizedListeners.forEach((listener) => listener());
+  }
+  return error;
 }
 
 function isSafeMethod(method: string): boolean {

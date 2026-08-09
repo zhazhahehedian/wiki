@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronRight, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
+import { Check, CircleAlert, LoaderCircle, Wrench } from "lucide-react";
 
+import { TaskProgressIndicator } from "@/components/liveagent/task-progress-indicator";
 import { cn } from "@/lib/utils";
 import type { LocalToolStep } from "@/lib/hooks/use-chat-stream";
 
@@ -76,15 +77,16 @@ export function AgentTimeline({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        onClick={() => setUserOpen(true)}
-        className="mb-2 inline-flex items-center gap-1 rounded-full border border-primary/25 bg-primary/5 px-2.5 py-1 text-xs text-primary transition-colors hover:bg-primary/10"
-      >
-        <Wrench className="size-3" />
-        调用了 {steps.length} 个工具
-        <ChevronRight className="size-3" />
-      </button>
+      <div className="mb-2">
+        <TaskProgressIndicator
+          expanded={false}
+          items={steps.map((step) => ({
+            id: step.id || String(step.step),
+            status: step.running ? "running" : step.error ? "failed" : "completed",
+          }))}
+          onToggle={() => setUserOpen(true)}
+        />
+      </div>
     );
   }
 

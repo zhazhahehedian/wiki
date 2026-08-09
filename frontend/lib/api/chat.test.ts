@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { streamConversationMessage } from "./chat";
+import { subscribeToUnauthorized } from "./client";
 
 describe("streamConversationMessage", () => {
   beforeEach(() => {
@@ -66,5 +67,23 @@ describe("streamConversationMessage", () => {
       details: { reason: "test" },
       requestId: "request-1",
     });
+  });
+
+  it("notifies the auth guard when the stream request returns 401", async () => {
+    const unauthorized = vi.fn();
+    const unsubscribe = subscribeToUnauthorized(unauthorized);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: "unauthenticated", message: "login required" },
+    }), { status: 401 })));
+
+    try {
+      await expect(
+        streamConversationMessage("conversation-1", "hello", { onEvent: vi.fn() }),
+      ).rejects.toMatchObject({ status: 401 });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(unauthorized).toHaveBeenCalledOnce();
   });
 });
