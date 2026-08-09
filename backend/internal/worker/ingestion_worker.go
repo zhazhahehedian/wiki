@@ -169,6 +169,7 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 		if err != nil {
 			return failRemote("snapshot promotion failed")
 		}
+		w.deleteSupersededActiveSnapshot(ctx, doc, pending.ContentRef)
 		return nil
 	}
 

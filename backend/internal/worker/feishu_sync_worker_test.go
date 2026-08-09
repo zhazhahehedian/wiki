@@ -617,7 +617,7 @@ func TestFeishuSyncReconcilesExpiredPendingSnapshotAndDeletesOnlySupersededObjec
 	}
 }
 
-func TestFeishuSyncSameChecksumPromotionPreservesActiveAndDeletesOnlySupersededPending(t *testing.T) {
+func TestFeishuSyncSameChecksumPromotionDeletesDistinctSupersededSnapshots(t *testing.T) {
 	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	markdown := "same body"
 	checksum := sha256Hex([]byte(markdown))
@@ -637,14 +637,49 @@ func TestFeishuSyncSameChecksumPromotionPreservesActiveAndDeletesOnlySupersededP
 	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err != nil {
 		t.Fatalf("Work() error=%v", err)
 	}
-	if len(storage.deleted) != 1 || storage.deleted[0] != "orphan-pending.md" {
-		t.Fatalf("deleted snapshots=%v, want only superseded pending", storage.deleted)
+	wantDeleted := map[string]bool{"active.md": true, "orphan-pending.md": true}
+	if len(storage.deleted) != len(wantDeleted) {
+		t.Fatalf("deleted snapshots=%v, want active and superseded pending", storage.deleted)
 	}
-	if _, ok := storage.objects["active.md"]; !ok {
-		t.Fatal("same-checksum promotion deleted the prior active object")
+	for _, ref := range storage.deleted {
+		if !wantDeleted[ref] {
+			t.Fatalf("unexpected deleted snapshot %q in %v", ref, storage.deleted)
+		}
 	}
 	if state.doc.ContentRef == nil || *state.doc.ContentRef == "active.md" {
 		t.Fatalf("new snapshot was not promoted: %+v", state.doc)
+	}
+	for _, ref := range storage.deleted {
+		if ref == *state.doc.ContentRef {
+			t.Fatalf("current snapshot %q was deleted: %v", *state.doc.ContentRef, storage.deleted)
+		}
+	}
+}
+
+func TestFeishuSyncSameChecksumPromotionDeletesSharedSupersededSnapshotOnce(t *testing.T) {
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	markdown := "same body"
+	checksum := sha256Hex([]byte(markdown))
+	state := newSyncState("rev-1", checksum, "shared.md")
+	state.doc.SyncStatus = "syncing"
+	state.doc.UpdatedAt = now.Add(-20 * time.Minute)
+	setPendingDocument(&state.doc, PendingFeishuSnapshot{
+		ContentRef: "shared.md", Checksum: "orphan-sum", RemoteRevision: "rev-orphan",
+		Title: "Orphan", Bytes: 6, Metadata: json.RawMessage(`{}`),
+	})
+	state.claimNow = now
+	storage := newMemoryStorage()
+	storage.objects["shared.md"] = []byte(markdown)
+	worker := newTestFeishuWorker(t, state, canonicalDoc(t, "rev-2", markdown), storage, &fakeStagedIngestionQueue{})
+
+	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err != nil {
+		t.Fatalf("Work() error=%v", err)
+	}
+	if len(storage.deleted) != 1 || storage.deleted[0] != "shared.md" {
+		t.Fatalf("deleted snapshots=%v, want shared superseded ref once", storage.deleted)
+	}
+	if state.doc.ContentRef == nil || *state.doc.ContentRef == "shared.md" || storage.deleted[0] == *state.doc.ContentRef {
+		t.Fatalf("current snapshot was not preserved: doc=%+v deleted=%v", state.doc, storage.deleted)
 	}
 }
 

@@ -242,6 +242,7 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 		if err != nil {
 			return fail(&pending, "snapshot promotion failed")
 		}
+		w.deleteSupersededActive(ctx, doc, pending.ContentRef)
 		w.deleteSupersededPending(ctx, doc, pending.ContentRef)
 		return nil
 	}
@@ -303,6 +304,13 @@ func (w *FeishuSyncWorker) deleteSupersededPending(ctx context.Context, doc gene
 		return
 	}
 	w.deleteSnapshot(ctx, doc.ID, doc.UpdatedAt, *doc.PendingContentRef)
+}
+
+func (w *FeishuSyncWorker) deleteSupersededActive(ctx context.Context, doc generated.Document, newRef string) {
+	if doc.ContentRef == nil || *doc.ContentRef == "" || *doc.ContentRef == newRef {
+		return
+	}
+	w.deleteSnapshot(ctx, doc.ID, doc.UpdatedAt, *doc.ContentRef)
 }
 
 func shortStorageKeyHash(key string) string {

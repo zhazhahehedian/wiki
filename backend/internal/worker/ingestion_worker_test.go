@@ -108,15 +108,19 @@ func TestIngestionRemoteMetadataOnlyAtomicallyPatchesAndPromotesWithoutReembeddi
 	if patched["source_type"] != "feishu-docx" || patched["remote_revision"] != pendingRevision || patched["custom"] != "keep" {
 		t.Fatalf("patched citation metadata = %+v", patched)
 	}
+	if len(storage.deleted) != 1 || storage.deleted[0] != activeRef {
+		t.Fatalf("deleted snapshots=%v, want superseded active %q", storage.deleted, activeRef)
+	}
 }
 
 func TestIngestionRemoteMetadataOnlyStalePromotionIsNoOp(t *testing.T) {
 	docID := uuid.New()
 	pendingRef, checksum, pendingRevision := "pending.md", "same-sum", "rev-2"
+	activeRef := "active.md"
 	pendingTitle, pendingBytes := "Updated title", int64(18)
 	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	repo := &fakeIngestionRepository{doc: generated.Document{
-		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", Checksum: checksum, SyncStatus: "syncing", UpdatedAt: claimToken,
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", ContentRef: &activeRef, Checksum: checksum, SyncStatus: "syncing", UpdatedAt: claimToken,
 		PendingContentRef: &pendingRef, PendingChecksum: &checksum, PendingRemoteRevision: &pendingRevision,
 		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
 		PendingMetadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
@@ -134,6 +138,9 @@ func TestIngestionRemoteMetadataOnlyStalePromotionIsNoOp(t *testing.T) {
 	}
 	if staged.patchCalls != 1 || storage.gotKey != "" || repo.failed != nil {
 		t.Fatalf("stale metadata-only result = patches:%d key:%q failure:%+v", staged.patchCalls, storage.gotKey, repo.failed)
+	}
+	if len(storage.deleted) != 0 {
+		t.Fatalf("stale metadata-only promotion deleted active snapshot: %v", storage.deleted)
 	}
 }
 
@@ -167,10 +174,11 @@ func TestIngestionRemoteMetadataOnlyChecksumMismatchIsNoOp(t *testing.T) {
 func TestIngestionRemoteMetadataOnlyPromotionFailureFailsExactPendingWithRedactedError(t *testing.T) {
 	docID := uuid.New()
 	pendingRef, checksum, pendingRevision := "pending.md", "same-sum", "rev-2"
+	activeRef := "active.md"
 	pendingTitle, pendingBytes := "Updated title", int64(18)
 	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	repo := &fakeIngestionRepository{doc: generated.Document{
-		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", Checksum: checksum, SyncStatus: "syncing", UpdatedAt: claimToken,
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", ContentRef: &activeRef, Checksum: checksum, SyncStatus: "syncing", UpdatedAt: claimToken,
 		PendingContentRef: &pendingRef, PendingChecksum: &checksum, PendingRemoteRevision: &pendingRevision,
 		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
 		PendingMetadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
@@ -192,6 +200,9 @@ func TestIngestionRemoteMetadataOnlyPromotionFailureFailsExactPendingWithRedacte
 	}
 	if storage.gotKey != "" {
 		t.Fatalf("metadata-only failure read storage key %q", storage.gotKey)
+	}
+	if len(storage.deleted) != 0 {
+		t.Fatalf("metadata-only promotion failure deleted active snapshot: %v", storage.deleted)
 	}
 }
 
