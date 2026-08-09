@@ -7,11 +7,15 @@ import Home from "./page";
 const replace = vi.fn();
 const useAuth = vi.fn();
 const useKbs = vi.fn();
+const useSessionExpired = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
 }));
 vi.mock("@/lib/hooks/use-auth", () => ({ useAuth: () => useAuth() }));
+vi.mock("@/components/auth/auth-session-boundary", () => ({
+  useSessionExpired: () => useSessionExpired(),
+}));
 vi.mock("@/lib/hooks/use-kbs", () => ({
   useKbs: (limit?: number, offset?: number, enabled?: boolean) => useKbs(limit, offset, enabled),
 }));
@@ -21,6 +25,8 @@ describe("root authentication gate", () => {
     replace.mockReset();
     useAuth.mockReset();
     useKbs.mockReset();
+    useSessionExpired.mockReset();
+    useSessionExpired.mockReturnValue(false);
     useKbs.mockReturnValue({ data: undefined, isError: false });
   });
 
@@ -54,6 +60,21 @@ describe("root authentication gate", () => {
       isError: true,
       error: new APIError(401, "unauthenticated", "login required"),
       data: undefined,
+    });
+
+    render(<Home />);
+
+    expect(useKbs).toHaveBeenCalledWith(20, 0, false);
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?next=%2F"));
+    expect(replace).not.toHaveBeenCalledWith("/kbs");
+  });
+
+  it("stops using stale auth data after the shared session boundary expires", async () => {
+    useSessionExpired.mockReturnValue(true);
+    useAuth.mockReturnValue({
+      isLoading: false,
+      isError: false,
+      data: { id: "stale-user", display_name: "Stale" },
     });
 
     render(<Home />);

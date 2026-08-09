@@ -1,16 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { useSessionExpired } from "@/components/auth/auth-session-boundary";
 import { ChatPanel } from "@/components/layout/chat-panel";
 import { KbPanel } from "@/components/layout/kb-panel";
 import { Rail } from "@/components/layout/rail";
 import { Button } from "@/components/ui/button";
 import { Sidebar, SidebarContent, SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { APIError, subscribeToUnauthorized } from "@/lib/api/client";
+import { APIError } from "@/lib/api/client";
 import { useAuth } from "@/lib/hooks/use-auth";
 import { setLastKbId } from "@/lib/last-kb";
 
@@ -18,19 +18,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const params = useParams<{ kbId?: string }>();
   const router = useRouter();
-  const queryClient = useQueryClient();
+  const sessionExpired = useSessionExpired();
   const auth = useAuth();
-  const [sessionExpired, setSessionExpired] = useState(false);
   const isChats = pathname.includes("/chats");
 
   useEffect(() => {
     if (params.kbId) setLastKbId(params.kbId);
   }, [params.kbId]);
-
-  useEffect(() => subscribeToUnauthorized(() => {
-    queryClient.removeQueries({ queryKey: ["auth"] });
-    setSessionExpired(true);
-  }), [queryClient]);
 
   const unauthenticated = sessionExpired
     || (auth.isError && auth.error instanceof APIError && auth.error.status === 401);

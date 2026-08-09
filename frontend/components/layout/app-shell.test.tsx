@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AuthSessionBoundary } from "@/components/auth/auth-session-boundary";
 import { apiFetch, APIError } from "@/lib/api/client";
 import { AppShell } from "./app-shell";
 
@@ -13,11 +14,15 @@ const useAuth = vi.fn();
 
 function renderShell(children: ReactNode) {
   const queryClient = new QueryClient();
-  return render(
+  const removeQueries = vi.spyOn(queryClient, "removeQueries");
+  const result = render(
     <QueryClientProvider client={queryClient}>
-      <AppShell>{children}</AppShell>
+      <AuthSessionBoundary>
+        <AppShell>{children}</AppShell>
+      </AuthSessionBoundary>
     </QueryClientProvider>,
   );
+  return { ...result, removeQueries };
 }
 
 vi.mock("next/navigation", () => ({
@@ -104,12 +109,13 @@ describe("AppShell auth guard", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       error: { code: "unauthenticated", message: "login required" },
     }), { status: 401 })));
-    renderShell(<p>private docs</p>);
+    const { removeQueries } = renderShell(<p>private docs</p>);
     expect(screen.getByText("private docs")).toBeInTheDocument();
 
     await expect(apiFetch("/api/v1/docs/doc-1")).rejects.toMatchObject({ status: 401 });
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
     expect(screen.queryByText("private docs")).not.toBeInTheDocument();
+    expect(removeQueries).toHaveBeenCalledOnce();
   });
 });
