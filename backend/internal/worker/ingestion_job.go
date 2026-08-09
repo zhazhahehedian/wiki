@@ -2,6 +2,7 @@ package worker
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -15,6 +16,7 @@ type IngestionJobArgs struct {
 	Title                 string          `json:"title,omitempty"`
 	Bytes                 int64           `json:"bytes,omitempty"`
 	Metadata              json.RawMessage `json:"metadata,omitempty"`
+	ClaimToken            time.Time       `json:"claim_token"`
 }
 
 func (IngestionJobArgs) Kind() string { return "ingestion" }

@@ -13,7 +13,7 @@ import (
 )
 
 type Querier interface {
-	ClaimFeishuSync(ctx context.Context, id uuid.UUID) (Document, error)
+	ClaimFeishuSync(ctx context.Context, arg ClaimFeishuSyncParams) (Document, error)
 	CompleteUnchangedFeishuSync(ctx context.Context, arg CompleteUnchangedFeishuSyncParams) (int64, error)
 	CountConversationsByKB(ctx context.Context, arg CountConversationsByKBParams) (int64, error)
 	CountConversationsByKBForOwner(ctx context.Context, arg CountConversationsByKBForOwnerParams) (int64, error)
@@ -38,7 +38,6 @@ type Querier interface {
 	DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error
 	DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKnowledgeBaseForOwnerParams) error
 	DeleteUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
-	FailFeishuImportEnqueue(ctx context.Context, arg FailFeishuImportEnqueueParams) (int64, error)
 	FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) (int64, error)
 	FindDocumentByChecksum(ctx context.Context, arg FindDocumentByChecksumParams) (Document, error)
 	FindDocumentByChecksumForOwner(ctx context.Context, arg FindDocumentByChecksumForOwnerParams) (Document, error)

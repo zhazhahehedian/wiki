@@ -112,10 +112,11 @@ SET sync_status = 'syncing',
     updated_at = now()
 WHERE id = $1
   AND source_type LIKE 'feishu-%'
-  AND sync_status IN ('idle', 'failed')
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL
+  AND remote_revision IS NOT DISTINCT FROM sqlc.narg('expected_remote_revision')::text
+  AND (
+      sync_status IN ('idle', 'failed')
+      OR (sync_status = 'syncing' AND updated_at < sqlc.arg('stale_before'))
+  )
 RETURNING *;
 
 -- name: CompleteUnchangedFeishuSync :execrows
@@ -123,28 +124,32 @@ UPDATE documents
 SET sync_status = 'idle',
     last_sync_error = NULL,
     last_synced_at = now(),
+    pending_content_ref = NULL,
+    pending_checksum = NULL,
+    pending_remote_revision = NULL,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND sync_status = 'syncing'
+  AND updated_at = sqlc.arg('claim_token')
   AND remote_revision IS NOT DISTINCT FROM sqlc.narg('remote_revision')::text
   AND checksum = sqlc.arg('checksum')
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL;
+  AND pending_content_ref IS NOT DISTINCT FROM sqlc.narg('expected_pending_content_ref')::text
+  AND pending_checksum IS NOT DISTINCT FROM sqlc.narg('expected_pending_checksum')::text
+  AND pending_remote_revision IS NOT DISTINCT FROM sqlc.narg('expected_pending_remote_revision')::text;
 
 -- name: StageFeishuSnapshot :execrows
 UPDATE documents
 SET pending_content_ref = sqlc.arg('pending_content_ref'),
     pending_checksum = sqlc.arg('pending_checksum'),
-    pending_remote_revision = sqlc.arg('pending_remote_revision'),
-    updated_at = now()
+    pending_remote_revision = sqlc.arg('pending_remote_revision')
 WHERE id = sqlc.arg('id')
   AND sync_status = 'syncing'
+  AND updated_at = sqlc.arg('claim_token')
   AND remote_revision IS NOT DISTINCT FROM sqlc.narg('expected_remote_revision')::text
   AND checksum = sqlc.arg('expected_checksum')
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL;
+  AND pending_content_ref IS NOT DISTINCT FROM sqlc.narg('expected_pending_content_ref')::text
+  AND pending_checksum IS NOT DISTINCT FROM sqlc.narg('expected_pending_checksum')::text
+  AND pending_remote_revision IS NOT DISTINCT FROM sqlc.narg('expected_pending_remote_revision')::text;
 
 -- name: PromoteFeishuSnapshot :execrows
 UPDATE documents
@@ -166,41 +171,24 @@ SET content_ref = pending_content_ref,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND sync_status = 'syncing'
+  AND updated_at = sqlc.arg('claim_token')
   AND pending_content_ref = sqlc.arg('pending_content_ref')
   AND pending_checksum = sqlc.arg('pending_checksum')
   AND pending_remote_revision = sqlc.arg('pending_remote_revision');
 
 -- name: FailFeishuSync :execrows
 UPDATE documents
-SET pending_content_ref = NULL,
-    pending_checksum = NULL,
-    pending_remote_revision = NULL,
-    sync_status = 'failed',
+SET sync_status = 'failed',
     last_sync_error = sqlc.arg('safe_error'),
     status = CASE WHEN content_ref IS NULL THEN 'failed' ELSE status END,
     error_message = CASE WHEN content_ref IS NULL THEN sqlc.arg('safe_error') ELSE error_message END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND sync_status = 'syncing'
+  AND updated_at = sqlc.arg('claim_token')
   AND pending_content_ref IS NOT DISTINCT FROM sqlc.narg('pending_content_ref')::text
   AND pending_checksum IS NOT DISTINCT FROM sqlc.narg('pending_checksum')::text
   AND pending_remote_revision IS NOT DISTINCT FROM sqlc.narg('pending_remote_revision')::text;
-
--- name: FailFeishuImportEnqueue :execrows
-UPDATE documents
-SET sync_status = 'failed',
-    last_sync_error = sqlc.arg('safe_error'),
-    status = 'failed',
-    error_message = sqlc.arg('safe_error'),
-    updated_at = now()
-WHERE id = sqlc.arg('id')
-  AND source_type LIKE 'feishu-%'
-  AND sync_status = 'idle'
-  AND status = 'pending'
-  AND content_ref IS NULL
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL;
 
 -- name: DeleteDocument :exec
 DELETE FROM documents WHERE id = $1;

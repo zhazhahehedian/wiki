@@ -34,12 +34,15 @@ type CreateFeishuDocumentInput struct {
 }
 
 type FeishuImportRepository interface {
-	CreateFeishuDocument(ctx context.Context, input CreateFeishuDocumentInput) (generated.Document, error)
-	FailFeishuImportEnqueue(ctx context.Context, documentID uuid.UUID, safeError string) (bool, error)
+	CreateFeishuDocumentAndEnqueue(ctx context.Context, input CreateFeishuDocumentInput, enqueuer FeishuSyncEnqueuer) (generated.Document, error)
 }
 
 type FeishuSyncEnqueuer interface {
 	EnqueueFeishuSync(ctx context.Context, documentID, requestedRevision string) error
+}
+
+type FeishuSyncTxEnqueuer interface {
+	EnqueueFeishuSyncTx(ctx context.Context, tx pgx.Tx, documentID, requestedRevision string) error
 }
 
 type FeishuImport struct {
@@ -78,11 +81,11 @@ func (s *FeishuImport) Import(ctx context.Context, input FeishuImportInput) (*do
 		return nil, &ErrFeishuImportOwnership{}
 	}
 
-	row, err := s.repo.CreateFeishuDocument(ctx, CreateFeishuDocumentInput{
+	row, err := s.repo.CreateFeishuDocumentAndEnqueue(ctx, CreateFeishuDocumentInput{
 		OwnerUserID: userID, KBID: kbID, OAuthAccountID: accountID,
 		SourceType: "feishu-" + string(ref.Type), SourceRef: ref.Identity,
 		SourceURL: ref.OriginalURL.String(), Title: "Feishu " + string(ref.Type),
-	})
+	}, s.queue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &ErrFeishuImportOwnership{}
@@ -91,33 +94,52 @@ func (s *FeishuImport) Import(ctx context.Context, input FeishuImportInput) (*do
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "uniq_docs_kb_source" {
 			return nil, &ErrFeishuAlreadyImported{}
 		}
+		if errors.Is(err, errFeishuSyncEnqueue) {
+			return nil, errors.New("sync enqueue failed")
+		}
 		return nil, fmt.Errorf("create Feishu document: %w", err)
-	}
-	if err := s.queue.EnqueueFeishuSync(ctx, row.ID.String(), InitialFeishuRevision); err != nil {
-		_, _ = s.repo.FailFeishuImportEnqueue(ctx, row.ID, "sync enqueue failed")
-		return nil, errors.New("sync enqueue failed")
 	}
 	return rowToDocFull(row), nil
 }
 
+var errFeishuSyncEnqueue = errors.New("sync enqueue failed")
+
 type SQLFeishuImportRepository struct {
-	queries *generated.Queries
+	pool importTxBeginner
 }
 
-func NewSQLFeishuImportRepository(queries *generated.Queries) *SQLFeishuImportRepository {
-	return &SQLFeishuImportRepository{queries: queries}
+type importTxBeginner interface {
+	BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error)
 }
 
-func (r *SQLFeishuImportRepository) CreateFeishuDocument(ctx context.Context, input CreateFeishuDocumentInput) (generated.Document, error) {
+func NewSQLFeishuImportRepository(pool importTxBeginner) *SQLFeishuImportRepository {
+	return &SQLFeishuImportRepository{pool: pool}
+}
+
+func (r *SQLFeishuImportRepository) CreateFeishuDocumentAndEnqueue(ctx context.Context, input CreateFeishuDocumentInput, enqueuer FeishuSyncEnqueuer) (generated.Document, error) {
+	txEnqueuer, ok := enqueuer.(FeishuSyncTxEnqueuer)
+	if !ok {
+		return generated.Document{}, errFeishuSyncEnqueue
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return generated.Document{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
 	sourceURL := input.SourceURL
-	return r.queries.CreateFeishuDocumentForOwner(ctx, generated.CreateFeishuDocumentForOwnerParams{
+	row, err := generated.New(tx).CreateFeishuDocumentForOwner(ctx, generated.CreateFeishuDocumentForOwnerParams{
 		SourceType: input.SourceType, SourceRef: input.SourceRef, SourceUrl: &sourceURL,
 		OauthAccountID: input.OAuthAccountID, OwnerUserID: input.OwnerUserID,
 		KbID: input.KBID, Title: input.Title,
 	})
-}
-
-func (r *SQLFeishuImportRepository) FailFeishuImportEnqueue(ctx context.Context, documentID uuid.UUID, safeError string) (bool, error) {
-	rows, err := r.queries.FailFeishuImportEnqueue(ctx, generated.FailFeishuImportEnqueueParams{SafeError: &safeError, ID: documentID})
-	return rows == 1, err
+	if err != nil {
+		return generated.Document{}, err
+	}
+	if err := txEnqueuer.EnqueueFeishuSyncTx(ctx, tx, row.ID.String(), InitialFeishuRevision); err != nil {
+		return generated.Document{}, errFeishuSyncEnqueue
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return generated.Document{}, err
+	}
+	return row, nil
 }

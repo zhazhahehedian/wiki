@@ -8,6 +8,7 @@ package generated
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,15 +21,22 @@ SET sync_status = 'syncing',
     updated_at = now()
 WHERE id = $1
   AND source_type LIKE 'feishu-%'
-  AND sync_status IN ('idle', 'failed')
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL
+  AND remote_revision IS NOT DISTINCT FROM $2::text
+  AND (
+      sync_status IN ('idle', 'failed')
+      OR (sync_status = 'syncing' AND updated_at < $3)
+  )
 RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at
 `
 
-func (q *Queries) ClaimFeishuSync(ctx context.Context, id uuid.UUID) (Document, error) {
-	row := q.db.QueryRow(ctx, claimFeishuSync, id)
+type ClaimFeishuSyncParams struct {
+	ID                     uuid.UUID `json:"id"`
+	ExpectedRemoteRevision *string   `json:"expected_remote_revision"`
+	StaleBefore            time.Time `json:"stale_before"`
+}
+
+func (q *Queries) ClaimFeishuSync(ctx context.Context, arg ClaimFeishuSyncParams) (Document, error) {
+	row := q.db.QueryRow(ctx, claimFeishuSync, arg.ID, arg.ExpectedRemoteRevision, arg.StaleBefore)
 	var i Document
 	err := row.Scan(
 		&i.ID,
@@ -63,24 +71,40 @@ UPDATE documents
 SET sync_status = 'idle',
     last_sync_error = NULL,
     last_synced_at = now(),
+    pending_content_ref = NULL,
+    pending_checksum = NULL,
+    pending_remote_revision = NULL,
     updated_at = now()
 WHERE id = $1
   AND sync_status = 'syncing'
-  AND remote_revision IS NOT DISTINCT FROM $2::text
-  AND checksum = $3
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL
+  AND updated_at = $2
+  AND remote_revision IS NOT DISTINCT FROM $3::text
+  AND checksum = $4
+  AND pending_content_ref IS NOT DISTINCT FROM $5::text
+  AND pending_checksum IS NOT DISTINCT FROM $6::text
+  AND pending_remote_revision IS NOT DISTINCT FROM $7::text
 `
 
 type CompleteUnchangedFeishuSyncParams struct {
-	ID             uuid.UUID `json:"id"`
-	RemoteRevision *string   `json:"remote_revision"`
-	Checksum       string    `json:"checksum"`
+	ID                            uuid.UUID `json:"id"`
+	ClaimToken                    time.Time `json:"claim_token"`
+	RemoteRevision                *string   `json:"remote_revision"`
+	Checksum                      string    `json:"checksum"`
+	ExpectedPendingContentRef     *string   `json:"expected_pending_content_ref"`
+	ExpectedPendingChecksum       *string   `json:"expected_pending_checksum"`
+	ExpectedPendingRemoteRevision *string   `json:"expected_pending_remote_revision"`
 }
 
 func (q *Queries) CompleteUnchangedFeishuSync(ctx context.Context, arg CompleteUnchangedFeishuSyncParams) (int64, error) {
-	result, err := q.db.Exec(ctx, completeUnchangedFeishuSync, arg.ID, arg.RemoteRevision, arg.Checksum)
+	result, err := q.db.Exec(ctx, completeUnchangedFeishuSync,
+		arg.ID,
+		arg.ClaimToken,
+		arg.RemoteRevision,
+		arg.Checksum,
+		arg.ExpectedPendingContentRef,
+		arg.ExpectedPendingChecksum,
+		arg.ExpectedPendingRemoteRevision,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -357,56 +381,25 @@ func (q *Queries) DeleteDocumentForOwner(ctx context.Context, arg DeleteDocument
 	return err
 }
 
-const failFeishuImportEnqueue = `-- name: FailFeishuImportEnqueue :execrows
-UPDATE documents
-SET sync_status = 'failed',
-    last_sync_error = $1,
-    status = 'failed',
-    error_message = $1,
-    updated_at = now()
-WHERE id = $2
-  AND source_type LIKE 'feishu-%'
-  AND sync_status = 'idle'
-  AND status = 'pending'
-  AND content_ref IS NULL
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL
-`
-
-type FailFeishuImportEnqueueParams struct {
-	SafeError *string   `json:"safe_error"`
-	ID        uuid.UUID `json:"id"`
-}
-
-func (q *Queries) FailFeishuImportEnqueue(ctx context.Context, arg FailFeishuImportEnqueueParams) (int64, error) {
-	result, err := q.db.Exec(ctx, failFeishuImportEnqueue, arg.SafeError, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const failFeishuSync = `-- name: FailFeishuSync :execrows
 UPDATE documents
-SET pending_content_ref = NULL,
-    pending_checksum = NULL,
-    pending_remote_revision = NULL,
-    sync_status = 'failed',
+SET sync_status = 'failed',
     last_sync_error = $1,
     status = CASE WHEN content_ref IS NULL THEN 'failed' ELSE status END,
     error_message = CASE WHEN content_ref IS NULL THEN $1 ELSE error_message END,
     updated_at = now()
 WHERE id = $2
   AND sync_status = 'syncing'
-  AND pending_content_ref IS NOT DISTINCT FROM $3::text
-  AND pending_checksum IS NOT DISTINCT FROM $4::text
-  AND pending_remote_revision IS NOT DISTINCT FROM $5::text
+  AND updated_at = $3
+  AND pending_content_ref IS NOT DISTINCT FROM $4::text
+  AND pending_checksum IS NOT DISTINCT FROM $5::text
+  AND pending_remote_revision IS NOT DISTINCT FROM $6::text
 `
 
 type FailFeishuSyncParams struct {
 	SafeError             *string   `json:"safe_error"`
 	ID                    uuid.UUID `json:"id"`
+	ClaimToken            time.Time `json:"claim_token"`
 	PendingContentRef     *string   `json:"pending_content_ref"`
 	PendingChecksum       *string   `json:"pending_checksum"`
 	PendingRemoteRevision *string   `json:"pending_remote_revision"`
@@ -416,6 +409,7 @@ func (q *Queries) FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) 
 	result, err := q.db.Exec(ctx, failFeishuSync,
 		arg.SafeError,
 		arg.ID,
+		arg.ClaimToken,
 		arg.PendingContentRef,
 		arg.PendingChecksum,
 		arg.PendingRemoteRevision,
@@ -742,9 +736,10 @@ SET content_ref = pending_content_ref,
     updated_at = now()
 WHERE id = $4
   AND sync_status = 'syncing'
-  AND pending_content_ref = $5
-  AND pending_checksum = $6
-  AND pending_remote_revision = $7
+  AND updated_at = $5
+  AND pending_content_ref = $6
+  AND pending_checksum = $7
+  AND pending_remote_revision = $8
 `
 
 type PromoteFeishuSnapshotParams struct {
@@ -752,6 +747,7 @@ type PromoteFeishuSnapshotParams struct {
 	Bytes                 int64           `json:"bytes"`
 	Metadata              json.RawMessage `json:"metadata"`
 	ID                    uuid.UUID       `json:"id"`
+	ClaimToken            time.Time       `json:"claim_token"`
 	PendingContentRef     *string         `json:"pending_content_ref"`
 	PendingChecksum       *string         `json:"pending_checksum"`
 	PendingRemoteRevision *string         `json:"pending_remote_revision"`
@@ -763,6 +759,7 @@ func (q *Queries) PromoteFeishuSnapshot(ctx context.Context, arg PromoteFeishuSn
 		arg.Bytes,
 		arg.Metadata,
 		arg.ID,
+		arg.ClaimToken,
 		arg.PendingContentRef,
 		arg.PendingChecksum,
 		arg.PendingRemoteRevision,
@@ -777,24 +774,28 @@ const stageFeishuSnapshot = `-- name: StageFeishuSnapshot :execrows
 UPDATE documents
 SET pending_content_ref = $1,
     pending_checksum = $2,
-    pending_remote_revision = $3,
-    updated_at = now()
+    pending_remote_revision = $3
 WHERE id = $4
   AND sync_status = 'syncing'
-  AND remote_revision IS NOT DISTINCT FROM $5::text
-  AND checksum = $6
-  AND pending_content_ref IS NULL
-  AND pending_checksum IS NULL
-  AND pending_remote_revision IS NULL
+  AND updated_at = $5
+  AND remote_revision IS NOT DISTINCT FROM $6::text
+  AND checksum = $7
+  AND pending_content_ref IS NOT DISTINCT FROM $8::text
+  AND pending_checksum IS NOT DISTINCT FROM $9::text
+  AND pending_remote_revision IS NOT DISTINCT FROM $10::text
 `
 
 type StageFeishuSnapshotParams struct {
-	PendingContentRef      *string   `json:"pending_content_ref"`
-	PendingChecksum        *string   `json:"pending_checksum"`
-	PendingRemoteRevision  *string   `json:"pending_remote_revision"`
-	ID                     uuid.UUID `json:"id"`
-	ExpectedRemoteRevision *string   `json:"expected_remote_revision"`
-	ExpectedChecksum       string    `json:"expected_checksum"`
+	PendingContentRef             *string   `json:"pending_content_ref"`
+	PendingChecksum               *string   `json:"pending_checksum"`
+	PendingRemoteRevision         *string   `json:"pending_remote_revision"`
+	ID                            uuid.UUID `json:"id"`
+	ClaimToken                    time.Time `json:"claim_token"`
+	ExpectedRemoteRevision        *string   `json:"expected_remote_revision"`
+	ExpectedChecksum              string    `json:"expected_checksum"`
+	ExpectedPendingContentRef     *string   `json:"expected_pending_content_ref"`
+	ExpectedPendingChecksum       *string   `json:"expected_pending_checksum"`
+	ExpectedPendingRemoteRevision *string   `json:"expected_pending_remote_revision"`
 }
 
 func (q *Queries) StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapshotParams) (int64, error) {
@@ -803,8 +804,12 @@ func (q *Queries) StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapsh
 		arg.PendingChecksum,
 		arg.PendingRemoteRevision,
 		arg.ID,
+		arg.ClaimToken,
 		arg.ExpectedRemoteRevision,
 		arg.ExpectedChecksum,
+		arg.ExpectedPendingContentRef,
+		arg.ExpectedPendingChecksum,
+		arg.ExpectedPendingRemoteRevision,
 	)
 	if err != nil {
 		return 0, err

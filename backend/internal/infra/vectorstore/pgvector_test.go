@@ -2,6 +2,7 @@ package vectorstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -244,6 +245,92 @@ func TestReplaceChunksAndPromoteRollsBackWhenSnapshotIsStale(t *testing.T) {
 	}
 }
 
+func TestPatchChunkMetadataAndPromoteUsesOneTransaction(t *testing.T) {
+	chunkID := uuid.New()
+	tx := &fakeTx{
+		rows:     &fakeRows{values: [][]any{{chunkID, []byte(`{"section_path":"Budget","remote_revision":"old"}`)}}},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 1")},
+	}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{DocumentID: uuid.New(), ContentRef: "new.md", Checksum: "sum", RemoteRevision: "rev-2"}
+
+	err := store.PatchChunkMetadataAndPromote(context.Background(), promotion, func(existing map[string]any) map[string]any {
+		existing["remote_revision"] = "rev-2"
+		return existing
+	})
+	if err != nil {
+		t.Fatalf("PatchChunkMetadataAndPromote() error = %v", err)
+	}
+	if len(tx.ops) != 4 || tx.ops[0] != "query" || !strings.Contains(tx.ops[1], "UPDATE chunks SET metadata") || !strings.Contains(tx.ops[2], "UPDATE documents") || tx.ops[3] != "commit" {
+		t.Fatalf("transaction operations = %#v", tx.ops)
+	}
+	if !tx.committed || tx.rolledBack {
+		t.Fatalf("transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestPatchChunkMetadataAndPromotePatchesEachSectionWithoutReplacingChunkPayload(t *testing.T) {
+	firstID, secondID := uuid.New(), uuid.New()
+	tx := &fakeTx{
+		rows: &fakeRows{values: [][]any{
+			{firstID, []byte(`{"section_path":"Budget","custom":"keep-a"}`)},
+			{secondID, []byte(`{"section_path":"Forecast","custom":"keep-b"}`)},
+		}},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 1")},
+	}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+
+	err := store.PatchChunkMetadataAndPromote(context.Background(), ports.PendingDocumentPromotion{
+		DocumentID: uuid.New(), ContentRef: "new.md", Checksum: "sum", RemoteRevision: "rev-2",
+	}, func(existing map[string]any) map[string]any {
+		existing["citation"] = existing["section_path"]
+		return existing
+	})
+	if err != nil {
+		t.Fatalf("PatchChunkMetadataAndPromote() error = %v", err)
+	}
+	if len(tx.execHistory) != 3 {
+		t.Fatalf("exec history length = %d, want two metadata patches and promotion", len(tx.execHistory))
+	}
+	for i, want := range []struct {
+		id      uuid.UUID
+		section string
+		custom  string
+	}{{firstID, "Budget", "keep-a"}, {secondID, "Forecast", "keep-b"}} {
+		call := tx.execHistory[i]
+		if !strings.Contains(call.sql, "UPDATE chunks SET metadata") || strings.Contains(call.sql, "content") || strings.Contains(call.sql, "embedding") {
+			t.Fatalf("chunk patch SQL replaces payload: %s", call.sql)
+		}
+		if call.args[0] != want.id {
+			t.Fatalf("chunk patch id = %v, want %v", call.args[0], want.id)
+		}
+		var metadata map[string]any
+		if err := json.Unmarshal(call.args[1].([]byte), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		if metadata["citation"] != want.section || metadata["custom"] != want.custom {
+			t.Fatalf("patched metadata = %+v, want section %q custom %q", metadata, want.section, want.custom)
+		}
+	}
+}
+
+func TestPatchChunkMetadataAndPromoteRollsBackOnStaleAttempt(t *testing.T) {
+	tx := &fakeTx{
+		rows:     &fakeRows{values: [][]any{{uuid.New(), []byte(`{}`)}}},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 0")},
+	}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{DocumentID: uuid.New(), ContentRef: "new.md", Checksum: "sum", RemoteRevision: "rev-2"}
+
+	err := store.PatchChunkMetadataAndPromote(context.Background(), promotion, func(existing map[string]any) map[string]any { return existing })
+	if !errors.Is(err, ports.ErrStaleDocumentPromotion) {
+		t.Fatalf("PatchChunkMetadataAndPromote() error = %v, want stale", err)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Fatalf("stale transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+}
+
 func TestDeleteByDocumentIssuesDelete(t *testing.T) {
 	db := &fakeDB{}
 	store := &Pgvector{pool: db}
@@ -314,19 +401,25 @@ func (f *fakeDB) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 // fakeTx records the order of operations issued inside a transaction so tests
 // can assert delete-then-insert atomicity.
 type fakeTx struct {
-	ops        []string
-	execSQL    string
-	execArgs   []any
-	execErr    error
-	execTags   []pgconn.CommandTag
-	batch      *pgx.Batch
-	committed  bool
-	rolledBack bool
+	ops         []string
+	execSQL     string
+	execArgs    []any
+	execErr     error
+	execTags    []pgconn.CommandTag
+	batch       *pgx.Batch
+	committed   bool
+	rolledBack  bool
+	execHistory []fakeExecCall
 
 	querySQL  string
 	queryArgs []any
 	rows      pgx.Rows
 	queryErr  error
+}
+
+type fakeExecCall struct {
+	sql  string
+	args []any
 }
 
 func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
@@ -366,6 +459,7 @@ func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	t.ops = append(t.ops, "exec:"+sql)
 	t.execSQL = sql
 	t.execArgs = args
+	t.execHistory = append(t.execHistory, fakeExecCall{sql: sql, args: append([]any(nil), args...)})
 	if len(t.execTags) > 0 {
 		tag := t.execTags[0]
 		t.execTags = t.execTags[1:]

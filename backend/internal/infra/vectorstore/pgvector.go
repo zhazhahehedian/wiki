@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,19 +60,76 @@ func (v *Pgvector) ReplaceChunksAndPromote(ctx context.Context, promotion ports.
 	if err := replaceChunksInTx(ctx, tx, promotion.DocumentID.String(), items); err != nil {
 		return err
 	}
+	if err := promoteDocumentInTx(ctx, tx, promotion); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func (v *Pgvector) PatchChunkMetadataAndPromote(ctx context.Context, promotion ports.PendingDocumentPromotion, patch ports.ChunkMetadataPatcher) error {
+	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	rows, err := tx.Query(ctx, `SELECT id, metadata FROM chunks WHERE document_id = $1 FOR UPDATE`, promotion.DocumentID)
+	if err != nil {
+		return fmt.Errorf("lock chunk metadata: %w", err)
+	}
+	type metadataUpdate struct {
+		id       uuid.UUID
+		metadata []byte
+	}
+	updates := make([]metadataUpdate, 0)
+	for rows.Next() {
+		var id uuid.UUID
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan chunk metadata: %w", err)
+		}
+		existing := decodeMetadata(raw)
+		patched, err := json.Marshal(patch(existing))
+		if err != nil {
+			rows.Close()
+			return fmt.Errorf("marshal patched chunk metadata: %w", err)
+		}
+		updates = append(updates, metadataUpdate{id: id, metadata: patched})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("iterate chunk metadata: %w", err)
+	}
+	rows.Close()
+	for _, update := range updates {
+		if _, err := tx.Exec(ctx, `UPDATE chunks SET metadata = $2 WHERE id = $1`, update.id, update.metadata); err != nil {
+			return fmt.Errorf("patch chunk metadata: %w", err)
+		}
+	}
+	if err := promoteDocumentInTx(ctx, tx, promotion); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+func promoteDocumentInTx(ctx context.Context, tx pgx.Tx, promotion ports.PendingDocumentPromotion) error {
 	contentRef, checksum, revision := promotion.ContentRef, promotion.Checksum, promotion.RemoteRevision
 	rows, err := generated.New(tx).PromoteFeishuSnapshot(ctx, generated.PromoteFeishuSnapshotParams{
 		ID: promotion.DocumentID, PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
-		Title: promotion.Title, Bytes: promotion.Bytes, Metadata: promotion.Metadata,
+		Title: promotion.Title, Bytes: promotion.Bytes, Metadata: promotion.Metadata, ClaimToken: promotion.ClaimToken,
 	})
 	if err != nil {
 		return fmt.Errorf("promote staged document: %w", err)
 	}
 	if rows != 1 {
 		return ports.ErrStaleDocumentPromotion
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }

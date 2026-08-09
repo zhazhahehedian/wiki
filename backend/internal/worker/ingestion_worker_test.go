@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
@@ -90,9 +91,12 @@ func TestIngestionRemoteEmbeddingFailurePreservesActiveAndFailsOnlyExpectedPendi
 	}}
 	worker := newIngestionWorkerForTest(repo, &recordingIngestionStorage{objects: map[string]string{pendingRef: "remote body"}}, &recordingParser{}, &fakeIngestionVectorStore{}, &fakeStagedVectorStore{}, fakeIngestionEmbedder{err: errors.New("provider SECRET body")})
 
-	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := worker.Work(ctx, &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
 		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: pendingSum, PendingRemoteRevision: pendingRevision,
-		Title: "New title", Bytes: 11, Metadata: json.RawMessage(`{}`),
+		Title: "New title", Bytes: 11, Metadata: json.RawMessage(`{}`), ClaimToken: claimToken,
 	}})
 	if err == nil || strings.Contains(err.Error(), "SECRET") {
 		t.Fatalf("Work() error = %v", err)
@@ -100,8 +104,59 @@ func TestIngestionRemoteEmbeddingFailurePreservesActiveAndFailsOnlyExpectedPendi
 	if repo.failed == nil || repo.failed.PendingContentRef == nil || *repo.failed.PendingContentRef != pendingRef || repo.failed.SafeError == nil || *repo.failed.SafeError != "embedding failed" {
 		t.Fatalf("conditional remote failure = %+v", repo.failed)
 	}
+	if repo.failed.ClaimToken != claimToken {
+		t.Fatalf("failure claim token = %v, want %v", repo.failed.ClaimToken, claimToken)
+	}
+	if repo.failContextErr != nil {
+		t.Fatalf("failure cleanup context = %v, want detached context", repo.failContextErr)
+	}
 	if repo.doc.ContentRef == nil || *repo.doc.ContentRef != activeRef || repo.doc.Checksum != "old-sum" || repo.doc.RemoteRevision == nil || *repo.doc.RemoteRevision != activeRevision {
 		t.Fatalf("active document changed on failure: %+v", repo.doc)
+	}
+}
+
+func TestRemoteCitationMetadataFlattensTypedSectionLocations(t *testing.T) {
+	tests := []struct {
+		name        string
+		metadata    string
+		sectionPath string
+		want        map[string]any
+	}{
+		{
+			name:        "sheet",
+			metadata:    `{"source_type":"feishu-sheet","source_url":"https://acme.feishu.cn/sheets/token","remote_revision":"r2","locations":[{"section_path":"Budget","sheet_name":"Budget","sheet_id":"sh_1","row_start":2,"row_end":8}]}`,
+			sectionPath: "Budget",
+			want:        map[string]any{"sheet_name": "Budget", "sheet_id": "sh_1", "row_start": 2, "row_end": 8},
+		},
+		{
+			name:        "bitable",
+			metadata:    `{"source_type":"feishu-bitable","source_url":"https://acme.feishu.cn/base/token","remote_revision":"r3","locations":[{"section_path":"Incidents / Open","table_id":"tbl_1","view_id":"vew_1","row_start":1,"row_end":4}]}`,
+			sectionPath: "Incidents / Open",
+			want:        map[string]any{"table_id": "tbl_1", "view_id": "vew_1", "row_start": 1, "row_end": 4},
+		},
+		{
+			name:        "wiki delegated sheet",
+			metadata:    `{"source_type":"feishu-wiki","source_url":"https://acme.feishu.cn/wiki/token","remote_revision":"r4","locations":[{"section_path":"Handbook / Oncall","sheet_name":"Oncall","sheet_id":"sh_2","row_start":3,"row_end":9}]}`,
+			sectionPath: "Handbook / Oncall",
+			want:        map[string]any{"sheet_name": "Oncall", "sheet_id": "sh_2", "row_start": 3, "row_end": 9},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := remoteCitationMetadata(json.RawMessage(tt.metadata), tt.sectionPath)
+			if got["source_type"] == nil || got["source_url"] == nil || got["remote_revision"] == nil || got["section_path"] != tt.sectionPath {
+				t.Fatalf("base citation metadata = %+v", got)
+			}
+			for key, want := range tt.want {
+				if got[key] != want {
+					t.Fatalf("metadata[%s] = %#v, want %#v; all=%+v", key, got[key], want, got)
+				}
+			}
+			if _, exists := got["locations"]; exists {
+				t.Fatalf("locations were not flattened: %+v", got)
+			}
+		})
 	}
 }
 
@@ -113,10 +168,11 @@ func newIngestionWorkerForTest(repo IngestionRepository, storage ports.ObjectSto
 }
 
 type fakeIngestionRepository struct {
-	doc         generated.Document
-	statusCalls int
-	lastStatus  string
-	failed      *generated.FailFeishuSyncParams
+	doc            generated.Document
+	statusCalls    int
+	lastStatus     string
+	failed         *generated.FailFeishuSyncParams
+	failContextErr error
 }
 
 func (f *fakeIngestionRepository) GetDocument(context.Context, uuid.UUID) (generated.Document, error) {
@@ -127,8 +183,10 @@ func (f *fakeIngestionRepository) UpdateDocumentStatus(_ context.Context, in gen
 	f.lastStatus = in.Status
 	return nil
 }
-func (f *fakeIngestionRepository) FailFeishuSync(_ context.Context, in generated.FailFeishuSyncParams) (int64, error) {
+
+func (f *fakeIngestionRepository) FailFeishuSync(ctx context.Context, in generated.FailFeishuSyncParams) (int64, error) {
 	f.failed = &in
+	f.failContextErr = ctx.Err()
 	return 1, nil
 }
 
@@ -192,14 +250,31 @@ func (*fakeIngestionVectorStore) Search(context.Context, string, []float32, port
 }
 
 type fakeStagedVectorStore struct {
-	calls     int
-	promotion ports.PendingDocumentPromotion
-	items     []domain.ChunkWithEmbedding
+	calls      int
+	promotion  ports.PendingDocumentPromotion
+	items      []domain.ChunkWithEmbedding
+	patchCalls int
+	state      *memorySyncRepository
 }
 
 func (f *fakeStagedVectorStore) ReplaceChunksAndPromote(_ context.Context, promotion ports.PendingDocumentPromotion, items []domain.ChunkWithEmbedding) error {
 	f.calls++
 	f.promotion = promotion
 	f.items = items
+	return nil
+}
+
+func (f *fakeStagedVectorStore) PatchChunkMetadataAndPromote(_ context.Context, promotion ports.PendingDocumentPromotion, _ ports.ChunkMetadataPatcher) error {
+	f.patchCalls++
+	if f.state != nil {
+		if f.state.promoteErr != nil {
+			return f.state.promoteErr
+		}
+		contentRef, revision := promotion.ContentRef, promotion.RemoteRevision
+		f.state.doc.ContentRef, f.state.doc.Checksum, f.state.doc.RemoteRevision = &contentRef, promotion.Checksum, &revision
+		f.state.doc.Title, f.state.doc.Bytes, f.state.doc.Metadata = promotion.Title, promotion.Bytes, append([]byte(nil), promotion.Metadata...)
+		f.state.doc.PendingContentRef, f.state.doc.PendingChecksum, f.state.doc.PendingRemoteRevision = nil, nil, nil
+		f.state.doc.SyncStatus, f.state.doc.Status = "idle", "ready"
+	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
@@ -19,10 +20,17 @@ type PendingDocumentPromotion struct {
 	Title          string
 	Bytes          int64
 	Metadata       json.RawMessage
+	ClaimToken     time.Time
 }
 
 type StagedVectorStore interface {
 	ReplaceChunksAndPromote(ctx context.Context, promotion PendingDocumentPromotion, items []domain.ChunkWithEmbedding) error
+}
+
+type ChunkMetadataPatcher func(existing map[string]any) map[string]any
+
+type CitationPromotionStore interface {
+	PatchChunkMetadataAndPromote(ctx context.Context, promotion PendingDocumentPromotion, patch ChunkMetadataPatcher) error
 }
 
 type VectorSearchOptions struct {

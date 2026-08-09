@@ -62,6 +62,7 @@ func (c *Client) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFei
 		DocumentID: snapshot.DocumentID.String(), PendingContentRef: snapshot.ContentRef,
 		PendingChecksum: snapshot.Checksum, PendingRemoteRevision: snapshot.RemoteRevision,
 		Title: snapshot.Title, Bytes: snapshot.Bytes, Metadata: snapshot.Metadata,
+		ClaimToken: snapshot.ClaimToken,
 	}, nil)
 	if err != nil {
 		return fmt.Errorf("insert staged ingestion job: %w", err)
@@ -69,10 +70,34 @@ func (c *Client) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFei
 	return nil
 }
 
+func (c *Client) EnqueueStagedIngestionTx(ctx context.Context, tx pgx.Tx, snapshot PendingFeishuSnapshot) error {
+	_, err := c.rc.InsertTx(ctx, tx, ingestionJobArgs(snapshot), nil)
+	if err != nil {
+		return fmt.Errorf("insert staged ingestion job in transaction: %w", err)
+	}
+	return nil
+}
+
+func ingestionJobArgs(snapshot PendingFeishuSnapshot) IngestionJobArgs {
+	return IngestionJobArgs{
+		DocumentID: snapshot.DocumentID.String(), PendingContentRef: snapshot.ContentRef,
+		PendingChecksum: snapshot.Checksum, PendingRemoteRevision: snapshot.RemoteRevision,
+		Title: snapshot.Title, Bytes: snapshot.Bytes, Metadata: snapshot.Metadata, ClaimToken: snapshot.ClaimToken,
+	}
+}
+
 func (c *Client) EnqueueFeishuSync(ctx context.Context, documentID, requestedRevision string) error {
 	_, err := c.rc.Insert(ctx, FeishuSyncJobArgs{DocumentID: documentID, RequestedRevision: requestedRevision}, nil)
 	if err != nil {
 		return fmt.Errorf("insert Feishu sync job: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) EnqueueFeishuSyncTx(ctx context.Context, tx pgx.Tx, documentID, requestedRevision string) error {
+	_, err := c.rc.InsertTx(ctx, tx, FeishuSyncJobArgs{DocumentID: documentID, RequestedRevision: requestedRevision}, nil)
+	if err != nil {
+		return fmt.Errorf("insert Feishu sync job in transaction: %w", err)
 	}
 	return nil
 }

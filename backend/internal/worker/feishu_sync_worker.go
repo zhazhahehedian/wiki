@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -26,10 +27,27 @@ type StagedIngestionEnqueuer interface {
 	EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error
 }
 
+type StagedIngestionTxEnqueuer interface {
+	EnqueueStagedIngestionTx(ctx context.Context, tx pgx.Tx, snapshot PendingFeishuSnapshot) error
+}
+
 type StagedIngestionEnqueuerFunc func(context.Context, PendingFeishuSnapshot) error
 
 func (f StagedIngestionEnqueuerFunc) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
 	return f(ctx, snapshot)
+}
+
+type StagedIngestionEnqueuerFuncs struct {
+	EnqueueFunc   func(context.Context, PendingFeishuSnapshot) error
+	EnqueueTxFunc func(context.Context, pgx.Tx, PendingFeishuSnapshot) error
+}
+
+func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
+	return f.EnqueueFunc(ctx, snapshot)
+}
+
+func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestionTx(ctx context.Context, tx pgx.Tx, snapshot PendingFeishuSnapshot) error {
+	return f.EnqueueTxFunc(ctx, tx, snapshot)
 }
 
 type PendingFeishuSnapshot struct {
@@ -40,12 +58,15 @@ type PendingFeishuSnapshot struct {
 	Title          string
 	Bytes          int64
 	Metadata       json.RawMessage
+	ClaimToken     time.Time
 }
 
 type FeishuSyncExpectation struct {
 	DocumentID     uuid.UUID
 	RemoteRevision *string
 	Checksum       string
+	ClaimToken     time.Time
+	Pending        *PendingFeishuSnapshot
 }
 
 type StageFeishuSnapshotInput struct {
@@ -53,41 +74,62 @@ type StageFeishuSnapshotInput struct {
 	Snapshot PendingFeishuSnapshot
 }
 
+var errSnapshotStageRolledBack = errors.New("snapshot stage transaction rolled back")
+
 type FailFeishuSyncInput struct {
 	DocumentID uuid.UUID
 	Pending    *PendingFeishuSnapshot
 	SafeError  string
+	ClaimToken time.Time
 }
 
 type FeishuSyncRepository interface {
-	ClaimFeishuSync(ctx context.Context, documentID uuid.UUID) (generated.Document, error)
+	ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, staleBefore time.Time) (generated.Document, error)
 	CompleteUnchangedFeishuSync(ctx context.Context, input FeishuSyncExpectation) (bool, error)
 	StageFeishuSnapshot(ctx context.Context, input StageFeishuSnapshotInput) (bool, error)
+	StageFeishuSnapshotAndEnqueue(ctx context.Context, input StageFeishuSnapshotInput, enqueuer StagedIngestionEnqueuer) (bool, error)
 	PromoteFeishuSnapshot(ctx context.Context, snapshot PendingFeishuSnapshot) (bool, error)
 	FailFeishuSync(ctx context.Context, input FailFeishuSyncInput) (bool, error)
 }
 
 type FeishuSyncWorkerDeps struct {
-	Repository FeishuSyncRepository
-	Resolver   ports.SourceResolver
-	Loaders    map[domain.ResourceType]ports.SourceLoader
-	Tokens     FeishuTokenProvider
-	Storage    ports.ObjectStorage
-	Ingestion  StagedIngestionEnqueuer
+	Repository     FeishuSyncRepository
+	Resolver       ports.SourceResolver
+	Loaders        map[domain.ResourceType]ports.SourceLoader
+	Tokens         FeishuTokenProvider
+	Storage        ports.ObjectStorage
+	Ingestion      StagedIngestionEnqueuer
+	CleanupTimeout time.Duration
+	SyncLease      time.Duration
+	Now            func() time.Time
+	CitationStore  ports.CitationPromotionStore
 }
 
 type FeishuSyncWorker struct {
 	river.WorkerDefaults[FeishuSyncJobArgs]
-	repo      FeishuSyncRepository
-	resolver  ports.SourceResolver
-	loaders   map[domain.ResourceType]ports.SourceLoader
-	tokens    FeishuTokenProvider
-	storage   ports.ObjectStorage
-	ingestion StagedIngestionEnqueuer
+	repo           FeishuSyncRepository
+	resolver       ports.SourceResolver
+	loaders        map[domain.ResourceType]ports.SourceLoader
+	tokens         FeishuTokenProvider
+	storage        ports.ObjectStorage
+	ingestion      StagedIngestionEnqueuer
+	cleanupTimeout time.Duration
+	syncLease      time.Duration
+	now            func() time.Time
+	citationStore  ports.CitationPromotionStore
 }
 
 func NewFeishuSyncWorker(deps FeishuSyncWorkerDeps) *FeishuSyncWorker {
-	return &FeishuSyncWorker{repo: deps.Repository, resolver: deps.Resolver, loaders: deps.Loaders, tokens: deps.Tokens, storage: deps.Storage, ingestion: deps.Ingestion}
+	if deps.CleanupTimeout <= 0 {
+		deps.CleanupTimeout = 5 * time.Second
+	}
+	if deps.SyncLease <= 0 {
+		deps.SyncLease = 15 * time.Minute
+	}
+	if deps.Now == nil {
+		deps.Now = time.Now
+	}
+	return &FeishuSyncWorker{repo: deps.Repository, resolver: deps.Resolver, loaders: deps.Loaders, tokens: deps.Tokens, storage: deps.Storage, ingestion: deps.Ingestion, cleanupTimeout: deps.CleanupTimeout, syncLease: deps.SyncLease, now: deps.Now, citationStore: deps.CitationStore}
 }
 
 func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJobArgs]) error {
@@ -95,16 +137,19 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 	if err != nil {
 		return errors.New("invalid document ID")
 	}
-	doc, err := w.repo.ClaimFeishuSync(ctx, documentID)
+	expectedRevision := requestedActiveRevision(job.Args.RequestedRevision)
+	doc, err := w.repo.ClaimFeishuSync(ctx, documentID, expectedRevision, w.now().Add(-w.syncLease))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return errors.New("claim sync failed")
 	}
-	expected := FeishuSyncExpectation{DocumentID: documentID, RemoteRevision: cloneString(doc.RemoteRevision), Checksum: doc.Checksum}
+	expected := FeishuSyncExpectation{DocumentID: documentID, RemoteRevision: cloneString(doc.RemoteRevision), Checksum: doc.Checksum, ClaimToken: doc.UpdatedAt, Pending: snapshotFromDocument(doc)}
 	fail := func(pending *PendingFeishuSnapshot, safe string) error {
-		_, _ = w.repo.FailFeishuSync(ctx, FailFeishuSyncInput{DocumentID: documentID, Pending: pending, SafeError: safe})
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cleanupTimeout)
+		defer cancel()
+		_, _ = w.repo.FailFeishuSync(cleanupCtx, FailFeishuSyncInput{DocumentID: documentID, Pending: pending, SafeError: safe, ClaimToken: doc.UpdatedAt})
 		return errors.New(safe)
 	}
 	if !doc.OauthAccountID.Valid {
@@ -137,44 +182,108 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 		if !ok {
 			return nil
 		}
+		w.deleteSupersededPending(ctx, doc, "")
 		return nil
 	}
 
 	body := []byte(canonical.Markdown)
 	checksum := sha256Hex(body)
-	key := snapshotKey(documentID, canonical.RemoteRevision, checksum)
-	if err := w.storage.Put(ctx, key, bytes.NewReader(body), int64(len(body)), "text/markdown"); err != nil {
-		return fail(nil, "snapshot write failed")
-	}
 	metadata, err := canonicalMetadata(canonical)
 	if err != nil {
 		return fail(nil, "source metadata invalid")
 	}
+	key := snapshotKey(documentID, canonical.RemoteRevision, checksum, doc.UpdatedAt)
+	if err := w.storage.Put(ctx, key, bytes.NewReader(body), int64(len(body)), "text/markdown"); err != nil {
+		w.deleteSnapshot(ctx, key)
+		return fail(nil, "snapshot write failed")
+	}
 	pending := PendingFeishuSnapshot{
 		DocumentID: documentID, ContentRef: key, Checksum: checksum, RemoteRevision: canonical.RemoteRevision,
 		Title: canonical.Title, Bytes: int64(len(body)), Metadata: metadata,
-	}
-	staged, err := w.repo.StageFeishuSnapshot(ctx, StageFeishuSnapshotInput{Expected: expected, Snapshot: pending})
-	if err != nil {
-		return fail(nil, "snapshot stage failed")
-	}
-	if !staged {
-		return nil
+		ClaimToken: doc.UpdatedAt,
 	}
 	if checksum == doc.Checksum {
-		promoted, err := w.repo.PromoteFeishuSnapshot(ctx, pending)
+		staged, err := w.repo.StageFeishuSnapshot(ctx, StageFeishuSnapshotInput{Expected: expected, Snapshot: pending})
+		if err != nil {
+			return fail(snapshotFromDocument(doc), "snapshot stage failed")
+		}
+		if !staged {
+			w.deleteSnapshot(ctx, key)
+			return nil
+		}
+		if w.citationStore == nil {
+			return fail(&pending, "snapshot promotion failed")
+		}
+		err = w.citationStore.PatchChunkMetadataAndPromote(ctx, pendingPromotion(pending), citationMetadataPatcher(pending.Metadata))
+		if errors.Is(err, ports.ErrStaleDocumentPromotion) {
+			return nil
+		}
 		if err != nil {
 			return fail(&pending, "snapshot promotion failed")
 		}
-		if !promoted {
-			return nil
-		}
+		w.deleteSupersededPending(ctx, doc, pending.ContentRef)
 		return nil
 	}
-	if err := w.ingestion.EnqueueStagedIngestion(ctx, pending); err != nil {
-		return fail(&pending, "ingestion enqueue failed")
+	staged, err := w.repo.StageFeishuSnapshotAndEnqueue(ctx, StageFeishuSnapshotInput{Expected: expected, Snapshot: pending}, w.ingestion)
+	if err != nil {
+		if errors.Is(err, errSnapshotStageRolledBack) {
+			w.deleteSnapshot(ctx, key)
+		}
+		return fail(snapshotFromDocument(doc), "ingestion enqueue failed")
 	}
+	if !staged {
+		w.deleteSnapshot(ctx, key)
+		return nil
+	}
+	w.deleteSupersededPending(ctx, doc, key)
 	return nil
+}
+
+func pendingPromotion(snapshot PendingFeishuSnapshot) ports.PendingDocumentPromotion {
+	return ports.PendingDocumentPromotion{
+		DocumentID: snapshot.DocumentID, ContentRef: snapshot.ContentRef, Checksum: snapshot.Checksum,
+		RemoteRevision: snapshot.RemoteRevision, Title: snapshot.Title, Bytes: snapshot.Bytes,
+		Metadata: snapshot.Metadata, ClaimToken: snapshot.ClaimToken,
+	}
+}
+
+func citationMetadataPatcher(raw json.RawMessage) ports.ChunkMetadataPatcher {
+	return func(existing map[string]any) map[string]any {
+		sectionPath, _ := existing["section_path"].(string)
+		patched := remoteCitationMetadata(raw, sectionPath)
+		for key, value := range existing {
+			switch key {
+			case "source_type", "source_url", "section_path", "sheet_name", "sheet_id", "table_id", "view_id", "row_start", "row_end", "remote_revision", "locations":
+				continue
+			default:
+				patched[key] = value
+			}
+		}
+		return patched
+	}
+}
+
+func (w *FeishuSyncWorker) deleteSnapshot(ctx context.Context, key string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cleanupTimeout)
+	defer cancel()
+	_ = w.storage.Delete(cleanupCtx, key)
+}
+
+func (w *FeishuSyncWorker) deleteSupersededPending(ctx context.Context, doc generated.Document, newRef string) {
+	if doc.PendingContentRef == nil || *doc.PendingContentRef == newRef || (doc.ContentRef != nil && *doc.ContentRef == *doc.PendingContentRef) {
+		return
+	}
+	w.deleteSnapshot(ctx, *doc.PendingContentRef)
+}
+
+func snapshotFromDocument(doc generated.Document) *PendingFeishuSnapshot {
+	if doc.PendingContentRef == nil || doc.PendingChecksum == nil || doc.PendingRemoteRevision == nil {
+		return nil
+	}
+	return &PendingFeishuSnapshot{
+		DocumentID: doc.ID, ContentRef: *doc.PendingContentRef, Checksum: *doc.PendingChecksum,
+		RemoteRevision: *doc.PendingRemoteRevision, ClaimToken: doc.UpdatedAt,
+	}
 }
 
 func sha256Hex(body []byte) string {
@@ -182,9 +291,10 @@ func sha256Hex(body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func snapshotKey(documentID uuid.UUID, revision, checksum string) string {
+func snapshotKey(documentID uuid.UUID, revision, checksum string, claimToken time.Time) string {
 	revisionHash := sha256.Sum256([]byte(revision))
-	return fmt.Sprintf("feishu/%s/%s-%s.md", documentID.String(), hex.EncodeToString(revisionHash[:8]), checksum)
+	attemptHash := sha256.Sum256([]byte(claimToken.UTC().Format(time.RFC3339Nano)))
+	return fmt.Sprintf("feishu/%s/%s-%s-%s.md", documentID.String(), hex.EncodeToString(revisionHash[:8]), hex.EncodeToString(attemptHash[:8]), checksum)
 }
 
 func canonicalMetadata(document domain.CanonicalDocument) (json.RawMessage, error) {
@@ -209,30 +319,89 @@ func cloneString(value *string) *string {
 	return &copy
 }
 
-type SQLFeishuSyncRepository struct{ queries *generated.Queries }
-
-func NewSQLFeishuSyncRepository(queries *generated.Queries) *SQLFeishuSyncRepository {
-	return &SQLFeishuSyncRepository{queries: queries}
+func requestedActiveRevision(requested string) *string {
+	if requested == "" || requested == "initial" {
+		return nil
+	}
+	return &requested
 }
 
-func (r *SQLFeishuSyncRepository) ClaimFeishuSync(ctx context.Context, documentID uuid.UUID) (generated.Document, error) {
-	return r.queries.ClaimFeishuSync(ctx, documentID)
+type SQLFeishuSyncRepository struct {
+	pool    syncTxBeginner
+	queries *generated.Queries
+}
+
+type syncTxBeginner interface {
+	BeginTx(ctx context.Context, opts pgx.TxOptions) (pgx.Tx, error)
+}
+
+func NewSQLFeishuSyncRepository(pool syncTxBeginner) *SQLFeishuSyncRepository {
+	repository := &SQLFeishuSyncRepository{pool: pool}
+	if db, ok := pool.(generated.DBTX); ok {
+		repository.queries = generated.New(db)
+	}
+	return repository
+}
+
+func (r *SQLFeishuSyncRepository) ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, staleBefore time.Time) (generated.Document, error) {
+	return r.queries.ClaimFeishuSync(ctx, generated.ClaimFeishuSyncParams{ID: documentID, ExpectedRemoteRevision: expectedRemoteRevision, StaleBefore: staleBefore})
 }
 
 func (r *SQLFeishuSyncRepository) CompleteUnchangedFeishuSync(ctx context.Context, input FeishuSyncExpectation) (bool, error) {
+	var oldContentRef, oldChecksum, oldRevision *string
+	if input.Pending != nil {
+		oldContentRef, oldChecksum, oldRevision = &input.Pending.ContentRef, &input.Pending.Checksum, &input.Pending.RemoteRevision
+	}
 	rows, err := r.queries.CompleteUnchangedFeishuSync(ctx, generated.CompleteUnchangedFeishuSyncParams{
-		ID: input.DocumentID, RemoteRevision: input.RemoteRevision, Checksum: input.Checksum,
+		ID: input.DocumentID, RemoteRevision: input.RemoteRevision, Checksum: input.Checksum, ClaimToken: input.ClaimToken,
+		ExpectedPendingContentRef: oldContentRef, ExpectedPendingChecksum: oldChecksum, ExpectedPendingRemoteRevision: oldRevision,
 	})
 	return rows == 1, err
 }
 
 func (r *SQLFeishuSyncRepository) StageFeishuSnapshot(ctx context.Context, input StageFeishuSnapshotInput) (bool, error) {
 	contentRef, checksum, revision := input.Snapshot.ContentRef, input.Snapshot.Checksum, input.Snapshot.RemoteRevision
+	var oldContentRef, oldChecksum, oldRevision *string
+	if input.Expected.Pending != nil {
+		oldContentRef, oldChecksum, oldRevision = &input.Expected.Pending.ContentRef, &input.Expected.Pending.Checksum, &input.Expected.Pending.RemoteRevision
+	}
 	rows, err := r.queries.StageFeishuSnapshot(ctx, generated.StageFeishuSnapshotParams{
 		PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
 		ID: input.Expected.DocumentID, ExpectedRemoteRevision: input.Expected.RemoteRevision, ExpectedChecksum: input.Expected.Checksum,
+		ClaimToken:                input.Expected.ClaimToken,
+		ExpectedPendingContentRef: oldContentRef, ExpectedPendingChecksum: oldChecksum, ExpectedPendingRemoteRevision: oldRevision,
 	})
 	return rows == 1, err
+}
+
+func (r *SQLFeishuSyncRepository) StageFeishuSnapshotAndEnqueue(ctx context.Context, input StageFeishuSnapshotInput, enqueuer StagedIngestionEnqueuer) (bool, error) {
+	txEnqueuer, ok := enqueuer.(StagedIngestionTxEnqueuer)
+	if !ok {
+		return false, errors.Join(errSnapshotStageRolledBack, errors.New("transactional ingestion enqueuer required"))
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return false, errors.Join(errSnapshotStageRolledBack, err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	txRepo := &SQLFeishuSyncRepository{queries: generated.New(tx)}
+	staged, err := txRepo.StageFeishuSnapshot(ctx, input)
+	if err != nil {
+		return false, errors.Join(errSnapshotStageRolledBack, err)
+	}
+	if !staged {
+		return false, nil
+	}
+	if err := txEnqueuer.EnqueueStagedIngestionTx(ctx, tx, input.Snapshot); err != nil {
+		return false, errors.Join(errSnapshotStageRolledBack, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if errors.Is(err, pgx.ErrTxCommitRollback) {
+			return false, errors.Join(errSnapshotStageRolledBack, err)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *SQLFeishuSyncRepository) PromoteFeishuSnapshot(ctx context.Context, snapshot PendingFeishuSnapshot) (bool, error) {
@@ -240,6 +409,7 @@ func (r *SQLFeishuSyncRepository) PromoteFeishuSnapshot(ctx context.Context, sna
 	rows, err := r.queries.PromoteFeishuSnapshot(ctx, generated.PromoteFeishuSnapshotParams{
 		ID: snapshot.DocumentID, PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
 		Title: snapshot.Title, Bytes: snapshot.Bytes, Metadata: snapshot.Metadata,
+		ClaimToken: snapshot.ClaimToken,
 	})
 	return rows == 1, err
 }
@@ -252,6 +422,7 @@ func (r *SQLFeishuSyncRepository) FailFeishuSync(ctx context.Context, input Fail
 	rows, err := r.queries.FailFeishuSync(ctx, generated.FailFeishuSyncParams{
 		SafeError: &input.SafeError, ID: input.DocumentID,
 		PendingContentRef: contentRef, PendingChecksum: checksum, PendingRemoteRevision: revision,
+		ClaimToken: input.ClaimToken,
 	})
 	return rows == 1, err
 }

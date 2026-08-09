@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -131,19 +132,28 @@ func run() error {
 		bitableLoader := feishu.NewBitableLoader(apiClient, feishu.BitableConfig{})
 		wikiLoader := feishu.NewWikiLoader(apiClient, docxLoader, sheetLoader, bitableLoader)
 		feishuSyncWorker = worker.NewFeishuSyncWorker(worker.FeishuSyncWorkerDeps{
-			Repository: worker.NewSQLFeishuSyncRepository(queries),
+			Repository: worker.NewSQLFeishuSyncRepository(pool),
 			Resolver:   feishu.NewURLResolver(),
 			Loaders: map[domain.ResourceType]ports.SourceLoader{
 				domain.ResourceDocx: docxLoader, domain.ResourceSheet: sheetLoader,
 				domain.ResourceBitable: bitableLoader, domain.ResourceWiki: wikiLoader,
 			},
 			Tokens: authService, Storage: mc,
-			Ingestion: worker.StagedIngestionEnqueuerFunc(func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
-				if rclient == nil {
-					return errors.New("River client unavailable")
-				}
-				return rclient.EnqueueStagedIngestion(ctx, snapshot)
-			}),
+			CitationStore: vstore,
+			Ingestion: worker.StagedIngestionEnqueuerFuncs{
+				EnqueueFunc: func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
+					if rclient == nil {
+						return errors.New("River client unavailable")
+					}
+					return rclient.EnqueueStagedIngestion(ctx, snapshot)
+				},
+				EnqueueTxFunc: func(ctx context.Context, tx pgx.Tx, snapshot worker.PendingFeishuSnapshot) error {
+					if rclient == nil {
+						return errors.New("River client unavailable")
+					}
+					return rclient.EnqueueStagedIngestionTx(ctx, tx, snapshot)
+				},
+			},
 		})
 	}
 	rclient, err = worker.NewClient(bootCtx, pool, ingestionWorker, cfg.RiverMaxWorkers, feishuSyncWorker)

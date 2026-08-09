@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,30 +27,32 @@ type IngestionRepository interface {
 type IngestionWorker struct {
 	river.WorkerDefaults[IngestionJobArgs]
 
-	queries      IngestionRepository
-	storage      ports.ObjectStorage
-	parser       ports.Parser
-	splitter     ports.Splitter
-	embedder     ports.Embedder
-	vstore       ports.VectorStore
-	stagedVStore ports.StagedVectorStore
-	chunkSize    int
-	overlap      int
-	batchSize    int
+	queries        IngestionRepository
+	storage        ports.ObjectStorage
+	parser         ports.Parser
+	splitter       ports.Splitter
+	embedder       ports.Embedder
+	vstore         ports.VectorStore
+	stagedVStore   ports.StagedVectorStore
+	chunkSize      int
+	overlap        int
+	batchSize      int
+	cleanupTimeout time.Duration
 }
 
 type WorkerDeps struct {
-	Pool         *pgxpool.Pool
-	Queries      IngestionRepository
-	Storage      ports.ObjectStorage
-	Parser       ports.Parser
-	Splitter     ports.Splitter
-	Embedder     ports.Embedder
-	VStore       ports.VectorStore
-	StagedVStore ports.StagedVectorStore
-	ChunkSize    int
-	Overlap      int
-	BatchSize    int
+	Pool           *pgxpool.Pool
+	Queries        IngestionRepository
+	Storage        ports.ObjectStorage
+	Parser         ports.Parser
+	Splitter       ports.Splitter
+	Embedder       ports.Embedder
+	VStore         ports.VectorStore
+	StagedVStore   ports.StagedVectorStore
+	ChunkSize      int
+	Overlap        int
+	BatchSize      int
+	CleanupTimeout time.Duration
 }
 
 func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
@@ -60,10 +63,13 @@ func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
 	if d.BatchSize < 1 {
 		d.BatchSize = 1
 	}
+	if d.CleanupTimeout <= 0 {
+		d.CleanupTimeout = 5 * time.Second
+	}
 	return &IngestionWorker{
 		queries: d.Queries, storage: d.Storage, parser: d.Parser, splitter: d.Splitter,
 		embedder: d.Embedder, vstore: d.VStore, stagedVStore: staged,
-		chunkSize: d.ChunkSize, overlap: d.Overlap, batchSize: d.BatchSize,
+		chunkSize: d.ChunkSize, overlap: d.Overlap, batchSize: d.BatchSize, cleanupTimeout: d.CleanupTimeout,
 	}
 }
 
@@ -90,6 +96,7 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 			DocumentID: docID, ContentRef: job.Args.PendingContentRef,
 			Checksum: job.Args.PendingChecksum, RemoteRevision: job.Args.PendingRemoteRevision,
 			Title: job.Args.Title, Bytes: job.Args.Bytes, Metadata: append(json.RawMessage(nil), job.Args.Metadata...),
+			ClaimToken: job.Args.ClaimToken,
 		}
 	}
 
@@ -102,10 +109,13 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 		return stepErr
 	}
 	failRemote := func(safe string) error {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cleanupTimeout)
+		defer cancel()
 		contentRef, checksum, revision := pending.ContentRef, pending.Checksum, pending.RemoteRevision
-		_, _ = w.queries.FailFeishuSync(ctx, generated.FailFeishuSyncParams{
+		_, _ = w.queries.FailFeishuSync(cleanupCtx, generated.FailFeishuSyncParams{
 			SafeError: &safe, ID: docID,
 			PendingContentRef: &contentRef, PendingChecksum: &checksum, PendingRemoteRevision: &revision,
+			ClaimToken: pending.ClaimToken,
 		})
 		return errors.New(safe)
 	}
@@ -190,19 +200,14 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 		return failLocal(fmt.Errorf("embedding count mismatch: %d vs %d", len(allEmbeddings), len(pieces)))
 	}
 
-	baseMetadata := map[string]any{}
-	if remote && len(pending.Metadata) > 0 {
-		_ = json.Unmarshal(pending.Metadata, &baseMetadata)
-	}
-	if remote {
-		baseMetadata["source_type"] = doc.SourceType
-		baseMetadata["remote_revision"] = pending.RemoteRevision
-	}
 	items := make([]domain.ChunkWithEmbedding, 0, len(pieces))
 	for i, piece := range pieces {
-		metadata := make(map[string]any, len(baseMetadata)+len(piece.Metadata))
-		for key, value := range baseMetadata {
-			metadata[key] = value
+		metadata := map[string]any{}
+		if remote {
+			sectionPath, _ := piece.Metadata["section_path"].(string)
+			metadata = remoteCitationMetadata(pending.Metadata, sectionPath)
+			metadata["source_type"] = doc.SourceType
+			metadata["remote_revision"] = pending.RemoteRevision
 		}
 		for key, value := range piece.Metadata {
 			metadata[key] = value
