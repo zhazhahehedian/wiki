@@ -6,10 +6,11 @@ import type { Doc } from "@/lib/schemas";
 import { DocTable } from "./doc-table";
 
 const syncMutate = vi.fn();
+const reingestMutate = vi.fn();
 
 vi.mock("@/lib/hooks/use-docs", () => ({
   useDeleteDoc: () => ({ mutate: vi.fn(), isPending: false }),
-  useReingestDoc: () => ({ mutate: vi.fn(), isPending: false }),
+  useReingestDoc: () => ({ mutate: reingestMutate, isPending: false }),
 }));
 vi.mock("@/lib/hooks/use-feishu-import", () => ({
   useFeishuSync: () => ({ mutate: syncMutate, isPending: false }),
@@ -39,7 +40,11 @@ function doc(fields: Partial<Doc> = {}): Doc {
 }
 
 describe("DocTable source and sync status", () => {
-  beforeEach(() => syncMutate.mockReset());
+  beforeEach(() => {
+    syncMutate.mockReset();
+    reingestMutate.mockReset();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+  });
 
   it("keeps ready ingestion separate from a failed remote sync", async () => {
     const user = userEvent.setup();
@@ -73,11 +78,18 @@ describe("DocTable source and sync status", () => {
     expect(screen.queryByRole("button", { name: "重新处理" })).not.toBeInTheDocument();
   });
 
-  it("labels local uploads and remains horizontally scrollable on narrow screens", () => {
-    const { container } = render(<DocTable kbId="kb-1" docs={[doc()]} />);
+  it("keeps row operations keyboard-accessible in a narrow table viewport", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    const user = userEvent.setup();
+    render(<div style={{ width: 320 }}><DocTable kbId="kb-1" docs={[doc()]} /></div>);
 
     expect(screen.getByText("本地上传")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新处理" })).toBeInTheDocument();
-    expect(container.querySelector("[data-slot=table-container]")?.className).toContain("overflow-x-auto");
+    await user.tab();
+    expect(screen.getByRole("link", { name: "Runbook" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getAllByRole("button")[0]).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(reingestMutate).toHaveBeenCalledWith("doc-1", expect.any(Object));
   });
 });

@@ -14,6 +14,7 @@ vi.mock("@/lib/hooks/use-feishu-import", () => ({
 
 describe("FeishuImportDialog", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
     mutate.mockReset();
     reset.mockReset();
     useFeishuImport.mockReset();
@@ -81,12 +82,26 @@ describe("FeishuImportDialog", () => {
     expect(screen.getByRole("textbox")).toBeDisabled();
   });
 
-  it("supports Escape and constrains the dialog on mobile", async () => {
-    const user = await openDialog();
-    const dialog = screen.getByRole("dialog");
-    expect(dialog.className).toContain("max-w-[calc(100%-2rem)]");
+  it("supports a narrow-screen import workflow entirely by keyboard", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 375 });
+    mutate.mockImplementation((_url: string, options: { onSuccess: () => void }) => options.onSuccess());
+    const user = userEvent.setup();
+    render(<FeishuImportDialog kbId="kb-1" />);
+    const trigger = screen.getByRole("button", { name: "从飞书导入" });
 
-    await user.keyboard("{Escape}");
+    trigger.focus();
+    await user.keyboard("{Enter}");
+    const input = await screen.findByRole("textbox");
+    await user.type(input, "https://acme.feishu.cn/docx/mobile-token");
+    await user.tab();
+    const submit = screen.getByRole("button", { name: "开始导入" });
+    expect(submit).toHaveFocus();
+    await user.keyboard("{Enter}");
+
+    expect(mutate).toHaveBeenCalledWith(
+      "https://acme.feishu.cn/docx/mobile-token",
+      expect.objectContaining({ onSuccess: expect.any(Function) }),
+    );
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
