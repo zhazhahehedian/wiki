@@ -8,17 +8,24 @@ import (
 )
 
 const (
-	CodeValidationFailed     = "validation_failed"
-	CodeKBNotFound           = "kb_not_found"
-	CodeDocNotFound          = "doc_not_found"
-	CodeConversationNotFound = "conversation_not_found"
-	CodeUnknownAgent         = "unknown_agent"
-	CodeChunkNotFound        = "chunk_not_found"
-	CodeDuplicateChecksum    = "duplicate_checksum"
-	CodeLLMStreamFailed      = "llm_stream_failed"
-	CodePayloadTooLarge      = "payload_too_large"
-	CodeUnsupportedMediaType = "unsupported_media_type"
-	CodeInternalError        = "internal_error"
+	CodeValidationFailed        = "validation_failed"
+	CodeKBNotFound              = "kb_not_found"
+	CodeDocNotFound             = "doc_not_found"
+	CodeConversationNotFound    = "conversation_not_found"
+	CodeUnknownAgent            = "unknown_agent"
+	CodeChunkNotFound           = "chunk_not_found"
+	CodeDuplicateChecksum       = "duplicate_checksum"
+	CodeLLMStreamFailed         = "llm_stream_failed"
+	CodePayloadTooLarge         = "payload_too_large"
+	CodeUnsupportedMediaType    = "unsupported_media_type"
+	CodeInternalError           = "internal_error"
+	CodeResourceAlreadyImported = "resource_already_imported"
+	CodeSyncInProgress          = "sync_in_progress"
+	CodeUnsupportedFeishuURL    = "unsupported_feishu_url"
+	CodeUnsupportedResource     = "unsupported_resource"
+	CodeResourceNotFound        = "resource_not_found"
+	CodeResourceForbidden       = "resource_forbidden"
+	CodeReauthRequired          = "reauth_required"
 )
 
 type APIError struct {

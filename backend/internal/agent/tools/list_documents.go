@@ -13,18 +13,19 @@ const listDocumentsLimit = 50
 
 // DocumentLister 是 service.Document 的窄接口（*service.Document 自动满足）。
 type DocumentLister interface {
-	ListByKB(ctx context.Context, kbID string, statusFilter *string, limit, offset int) ([]*domain.Document, int, error)
+	ListByKB(ctx context.Context, userID, kbID string, statusFilter *string, limit, offset int) ([]*domain.Document, int, error)
 }
 
 // ListDocuments 让 Agent 列出当前 KB 内的文档清单——回答
 // “知识库里有哪些文档”这类向量检索无法回答的元问题。
 type ListDocuments struct {
-	docs DocumentLister
-	kbID string
+	docs   DocumentLister
+	userID string
+	kbID   string
 }
 
-func NewListDocuments(docs DocumentLister, kbID string) *ListDocuments {
-	return &ListDocuments{docs: docs, kbID: kbID}
+func NewListDocuments(docs DocumentLister, userID, kbID string) *ListDocuments {
+	return &ListDocuments{docs: docs, userID: userID, kbID: kbID}
 }
 
 func (t *ListDocuments) Name() string { return "list_documents" }
@@ -70,7 +71,7 @@ func (t *ListDocuments) Invoke(ctx context.Context, argsJSON string) (string, er
 		statusFilter = &s
 	}
 
-	docs, total, err := t.docs.ListByKB(ctx, t.kbID, statusFilter, listDocumentsLimit, 0)
+	docs, total, err := t.docs.ListByKB(ctx, t.userID, t.kbID, statusFilter, listDocumentsLimit, 0)
 	if err != nil {
 		return "", err
 	}

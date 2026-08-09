@@ -72,6 +72,10 @@ JOIN upsert_account a ON a.user_id = u.id;
 -- name: GetOAuthAccount :one
 SELECT * FROM oauth_accounts AS oa WHERE id = $1;
 
+-- name: GetOAuthAccountForUser :one
+SELECT * FROM oauth_accounts AS oa
+WHERE oa.user_id = $1 AND oa.provider = 'feishu';
+
 -- name: UpdateOAuthAccountTokens :exec
 UPDATE oauth_accounts
 SET access_token_encrypted = sqlc.arg(p_access_token_encrypted),

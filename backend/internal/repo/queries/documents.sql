@@ -47,6 +47,16 @@ SELECT d.* FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.id = $1 AND kb.owner_user_id = $2;
 
+-- name: GetFeishuDocumentForOwnerAndAccount :one
+SELECT d.* FROM documents AS d
+JOIN knowledge_bases AS kb ON kb.id = d.kb_id
+JOIN oauth_accounts AS oa ON oa.id = d.oauth_account_id
+WHERE d.id = sqlc.arg('id')
+  AND d.source_type LIKE 'feishu-%'
+  AND kb.owner_user_id = sqlc.arg('owner_user_id')
+  AND oa.id = sqlc.arg('oauth_account_id')
+  AND oa.user_id = sqlc.arg('owner_user_id');
+
 -- name: FindDocumentByChecksum :one
 SELECT * FROM documents
 WHERE kb_id = $1 AND checksum = $2 AND source_type = 'local-upload';

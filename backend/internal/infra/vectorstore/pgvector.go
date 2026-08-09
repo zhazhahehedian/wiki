@@ -175,19 +175,25 @@ func (v *Pgvector) DeleteByDocument(ctx context.Context, documentID string) erro
 	return nil
 }
 
-func (v *Pgvector) ListByDocument(ctx context.Context, docID string, limit, offset int) ([]domain.Chunk, int, error) {
+func (v *Pgvector) ListByDocument(ctx context.Context, userID, docID string, limit, offset int) ([]domain.Chunk, int, error) {
 	var total int
 	if err := v.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM chunks WHERE document_id = $1`, docID,
+		`SELECT COUNT(*) FROM chunks c
+		 JOIN documents d ON d.id = c.document_id
+		 JOIN knowledge_bases kb ON kb.id = d.kb_id
+		 WHERE c.document_id = $1 AND kb.owner_user_id = $2`, docID, userID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count chunks: %w", err)
 	}
 
 	rows, err := v.pool.Query(ctx,
-		`SELECT id, kb_id, document_id, seq, content, token_count, metadata, created_at
-		 FROM chunks WHERE document_id = $1
-		 ORDER BY seq ASC LIMIT $2 OFFSET $3`,
-		docID, limit, offset,
+		`SELECT c.id, c.kb_id, c.document_id, c.seq, c.content, c.token_count, c.metadata, c.created_at
+		 FROM chunks c
+		 JOIN documents d ON d.id = c.document_id
+		 JOIN knowledge_bases kb ON kb.id = d.kb_id
+		 WHERE c.document_id = $1 AND kb.owner_user_id = $2
+		 ORDER BY c.seq ASC LIMIT $3 OFFSET $4`,
+		docID, userID, limit, offset,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query chunks: %w", err)
@@ -212,7 +218,52 @@ func (v *Pgvector) ListByDocument(ctx context.Context, docID string, limit, offs
 	return out, total, nil
 }
 
+// Search is retained for trusted internal callers. User-facing retrieval must use SearchForOwner.
 func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opts ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
+	topK := opts.TopK
+	if topK < 1 {
+		topK = 8
+	}
+	tx, err := v.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("begin search tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	if _, err := tx.Exec(ctx, `SET LOCAL ivfflat.probes = 10`); err != nil {
+		return nil, fmt.Errorf("set ivfflat probes: %w", err)
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
+		        1 - (c.embedding <=> $2) AS score, c.metadata
+		   FROM chunks c
+		   JOIN documents d ON d.id = c.document_id
+		  WHERE c.kb_id = $1
+		    AND d.status = 'ready'
+		  ORDER BY c.embedding <=> $2
+		  LIMIT $3`,
+		kbID, pgvector.NewVector(query), topK,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("vector search: %w", err)
+	}
+	defer rows.Close()
+	var hits []ports.VectorSearchHit
+	for rows.Next() {
+		var hit ports.VectorSearchHit
+		var metaJSON []byte
+		if err := rows.Scan(&hit.ChunkID, &hit.KBID, &hit.DocumentID, &hit.DocumentTitle, &hit.Seq, &hit.Content, &hit.Score, &metaJSON); err != nil {
+			return nil, fmt.Errorf("scan vector hit: %w", err)
+		}
+		hit.Metadata = decodeMetadata(metaJSON)
+		hits = append(hits, hit)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate vector hits: %w", err)
+	}
+	return hits, nil
+}
+
+func (v *Pgvector) SearchForOwner(ctx context.Context, userID, kbID string, query []float32, opts ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
 	topK := opts.TopK
 	if topK < 1 {
 		topK = 8
@@ -233,14 +284,16 @@ func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opt
 
 	rows, err := tx.Query(ctx,
 		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
-		        1 - (c.embedding <=> $2) AS score, c.metadata
+		        1 - (c.embedding <=> $3) AS score, c.metadata
 		   FROM chunks c
 		   JOIN documents d ON d.id = c.document_id
+		   JOIN knowledge_bases kb ON kb.id = d.kb_id
 		  WHERE c.kb_id = $1
+		    AND kb.owner_user_id = $2
 		    AND d.status = 'ready'
-		  ORDER BY c.embedding <=> $2
-		  LIMIT $3`,
-		kbID, pgvector.NewVector(query), topK,
+		  ORDER BY c.embedding <=> $3
+		  LIMIT $4`,
+		kbID, userID, pgvector.NewVector(query), topK,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("vector search: %w", err)
@@ -263,14 +316,15 @@ func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opt
 	return hits, nil
 }
 
-func (v *Pgvector) GetChunk(ctx context.Context, kbID, chunkID string) (*domain.Chunk, error) {
+func (v *Pgvector) GetChunk(ctx context.Context, userID, kbID, chunkID string) (*domain.Chunk, error) {
 	var c domain.Chunk
 	var metaJSON []byte
 	err := v.pool.QueryRow(ctx,
-		`SELECT id, kb_id, document_id, seq, content, token_count, metadata, created_at
-		   FROM chunks
-		  WHERE kb_id = $1 AND id = $2`,
-		kbID, chunkID,
+		`SELECT c.id, c.kb_id, c.document_id, c.seq, c.content, c.token_count, c.metadata, c.created_at
+		   FROM chunks c
+		   JOIN knowledge_bases kb ON kb.id = c.kb_id
+		  WHERE c.kb_id = $1 AND c.id = $2 AND kb.owner_user_id = $3`,
+		kbID, chunkID, userID,
 	).Scan(&c.ID, &c.KBID, &c.DocumentID, &c.Seq, &c.Content, &c.TokenCount, &metaJSON, &c.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("get chunk: %w", err)
@@ -279,19 +333,21 @@ func (v *Pgvector) GetChunk(ctx context.Context, kbID, chunkID string) (*domain.
 	return &c, nil
 }
 
-func (v *Pgvector) ListNeighbors(ctx context.Context, kbID, documentID string, seq, window int) ([]domain.Chunk, error) {
+func (v *Pgvector) ListNeighbors(ctx context.Context, userID, kbID, documentID string, seq, window int) ([]domain.Chunk, error) {
 	if window < 0 {
 		window = 0
 	}
 
 	rows, err := v.pool.Query(ctx,
-		`SELECT id, kb_id, document_id, seq, content, token_count, metadata, created_at
-		   FROM chunks
-		  WHERE kb_id = $1
-		    AND document_id = $2
-		    AND seq BETWEEN $3 AND $4
-		  ORDER BY seq ASC`,
-		kbID, documentID, seq-window, seq+window,
+		`SELECT c.id, c.kb_id, c.document_id, c.seq, c.content, c.token_count, c.metadata, c.created_at
+		   FROM chunks c
+		   JOIN knowledge_bases kb ON kb.id = c.kb_id
+		  WHERE c.kb_id = $1
+		    AND c.document_id = $2
+		    AND kb.owner_user_id = $3
+		    AND c.seq BETWEEN $4 AND $5
+		  ORDER BY c.seq ASC`,
+		kbID, documentID, userID, seq-window, seq+window,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list chunk neighbors: %w", err)

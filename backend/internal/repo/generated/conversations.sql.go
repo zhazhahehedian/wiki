@@ -82,9 +82,9 @@ func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversation
 }
 
 const createConversationForOwner = `-- name: CreateConversationForOwner :one
-INSERT INTO conversations (kb_id, title, mode, owner_user_id, agent_id)
+INSERT INTO conversations (kb_id, title, mode, user_id, owner_user_id, agent_id)
 SELECT kb.id, $1, $2,
-       $3, $4
+       $3::text, $3, $4
 FROM knowledge_bases AS kb
 WHERE kb.id = $5
   AND kb.owner_user_id = $3

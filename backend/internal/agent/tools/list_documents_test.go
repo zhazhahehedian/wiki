@@ -16,7 +16,7 @@ type fakeDocLister struct {
 	gotStatus *string
 }
 
-func (f *fakeDocLister) ListByKB(_ context.Context, kbID string, statusFilter *string, _, _ int) ([]*domain.Document, int, error) {
+func (f *fakeDocLister) ListByKB(_ context.Context, _, kbID string, statusFilter *string, _, _ int) ([]*domain.Document, int, error) {
 	f.gotKBID = kbID
 	f.gotStatus = statusFilter
 	return f.docs, f.total, nil
@@ -30,7 +30,7 @@ func TestListDocumentsFormatsDocs(t *testing.T) {
 		}},
 		total: 1,
 	}
-	tool := NewListDocuments(lister, "kb-1")
+	tool := NewListDocuments(lister, "00000000-0000-0000-0000-000000000001", "kb-1")
 
 	if tool.Name() != "list_documents" {
 		t.Errorf("Name() = %q", tool.Name())
@@ -51,7 +51,7 @@ func TestListDocumentsFormatsDocs(t *testing.T) {
 
 func TestListDocumentsPassesStatusFilter(t *testing.T) {
 	lister := &fakeDocLister{}
-	tool := NewListDocuments(lister, "kb-1")
+	tool := NewListDocuments(lister, "00000000-0000-0000-0000-000000000001", "kb-1")
 	if _, err := tool.Invoke(context.Background(), `{"status":"failed"}`); err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}
@@ -61,7 +61,7 @@ func TestListDocumentsPassesStatusFilter(t *testing.T) {
 }
 
 func TestListDocumentsRejectsInvalidStatus(t *testing.T) {
-	tool := NewListDocuments(&fakeDocLister{}, "kb-1")
+	tool := NewListDocuments(&fakeDocLister{}, "00000000-0000-0000-0000-000000000001", "kb-1")
 	if _, err := tool.Invoke(context.Background(), `{"status":"bogus"}`); err == nil {
 		t.Error("expected error for invalid status")
 	}
@@ -73,7 +73,7 @@ func TestListDocumentsNotesTruncationWhenTotalExceedsLimit(t *testing.T) {
 		docs[i] = &domain.Document{Title: "d", Status: domain.StatusReady, UpdatedAt: time.Now()}
 	}
 	lister := &fakeDocLister{docs: docs, total: 120}
-	result, err := NewListDocuments(lister, "kb-1").Invoke(context.Background(), `{}`)
+	result, err := NewListDocuments(lister, "00000000-0000-0000-0000-000000000001", "kb-1").Invoke(context.Background(), `{}`)
 	if err != nil {
 		t.Fatalf("Invoke() error = %v", err)
 	}

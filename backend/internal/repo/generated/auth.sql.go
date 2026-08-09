@@ -120,6 +120,32 @@ func (q *Queries) GetOAuthAccount(ctx context.Context, id uuid.UUID) (OauthAccou
 	return i, err
 }
 
+const getOAuthAccountForUser = `-- name: GetOAuthAccountForUser :one
+SELECT id, user_id, provider, provider_user_id, tenant_key, access_token_encrypted, refresh_token_encrypted, access_token_expires_at, refresh_token_expires_at, scopes, reauth_required, created_at, updated_at FROM oauth_accounts AS oa
+WHERE oa.user_id = $1 AND oa.provider = 'feishu'
+`
+
+func (q *Queries) GetOAuthAccountForUser(ctx context.Context, userID uuid.UUID) (OauthAccount, error) {
+	row := q.db.QueryRow(ctx, getOAuthAccountForUser, userID)
+	var i OauthAccount
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Provider,
+		&i.ProviderUserID,
+		&i.TenantKey,
+		&i.AccessTokenEncrypted,
+		&i.RefreshTokenEncrypted,
+		&i.AccessTokenExpiresAt,
+		&i.RefreshTokenExpiresAt,
+		&i.Scopes,
+		&i.ReauthRequired,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getUserSessionByTokenHash = `-- name: GetUserSessionByTokenHash :one
 SELECT id, user_id, token_hash, csrf_token_hash, expires_at, created_at, updated_at FROM user_sessions WHERE token_hash = $1
 `

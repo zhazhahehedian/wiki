@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countMessagesByConversation = `-- name: CountMessagesByConversation :one
@@ -19,6 +20,24 @@ WHERE conversation_id = $1
 
 func (q *Queries) CountMessagesByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error) {
 	row := q.db.QueryRow(ctx, countMessagesByConversation, conversationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countMessagesByConversationForOwner = `-- name: CountMessagesByConversationForOwner :one
+SELECT COUNT(*) FROM messages m
+JOIN conversations c ON c.id = m.conversation_id
+WHERE m.conversation_id = $1 AND c.owner_user_id = $2
+`
+
+type CountMessagesByConversationForOwnerParams struct {
+	ConversationID uuid.UUID   `json:"conversation_id"`
+	OwnerUserID    pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) CountMessagesByConversationForOwner(ctx context.Context, arg CountMessagesByConversationForOwnerParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessagesByConversationForOwner, arg.ConversationID, arg.OwnerUserID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -80,6 +99,50 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 	return i, err
 }
 
+const createMessageForOwner = `-- name: CreateMessageForOwner :one
+INSERT INTO messages (conversation_id, role, content, citations, tool_calls, token_usage)
+SELECT c.id, $1, $2, $3,
+       $4, $5
+FROM conversations AS c
+WHERE c.id = $6
+  AND c.owner_user_id = $7
+RETURNING messages.id, messages.conversation_id, messages.role, messages.content, messages.citations, messages.tool_calls, messages.token_usage, messages.created_at
+`
+
+type CreateMessageForOwnerParams struct {
+	Role           string          `json:"role"`
+	Content        string          `json:"content"`
+	Citations      json.RawMessage `json:"citations"`
+	ToolCalls      json.RawMessage `json:"tool_calls"`
+	TokenUsage     json.RawMessage `json:"token_usage"`
+	ConversationID uuid.UUID       `json:"conversation_id"`
+	OwnerUserID    pgtype.UUID     `json:"owner_user_id"`
+}
+
+func (q *Queries) CreateMessageForOwner(ctx context.Context, arg CreateMessageForOwnerParams) (Message, error) {
+	row := q.db.QueryRow(ctx, createMessageForOwner,
+		arg.Role,
+		arg.Content,
+		arg.Citations,
+		arg.ToolCalls,
+		arg.TokenUsage,
+		arg.ConversationID,
+		arg.OwnerUserID,
+	)
+	var i Message
+	err := row.Scan(
+		&i.ID,
+		&i.ConversationID,
+		&i.Role,
+		&i.Content,
+		&i.Citations,
+		&i.ToolCalls,
+		&i.TokenUsage,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listMessagesByConversation = `-- name: ListMessagesByConversation :many
 SELECT id, conversation_id, role, content, citations, tool_calls, token_usage, created_at FROM messages
 WHERE conversation_id = $1
@@ -95,6 +158,55 @@ type ListMessagesByConversationParams struct {
 
 func (q *Queries) ListMessagesByConversation(ctx context.Context, arg ListMessagesByConversationParams) ([]Message, error) {
 	rows, err := q.db.Query(ctx, listMessagesByConversation, arg.ConversationID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.Role,
+			&i.Content,
+			&i.Citations,
+			&i.ToolCalls,
+			&i.TokenUsage,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMessagesByConversationForOwner = `-- name: ListMessagesByConversationForOwner :many
+SELECT m.id, m.conversation_id, m.role, m.content, m.citations, m.tool_calls, m.token_usage, m.created_at FROM messages m
+JOIN conversations c ON c.id = m.conversation_id
+WHERE m.conversation_id = $1 AND c.owner_user_id = $2
+ORDER BY m.created_at ASC, m.id ASC
+LIMIT $3 OFFSET $4
+`
+
+type ListMessagesByConversationForOwnerParams struct {
+	ConversationID uuid.UUID   `json:"conversation_id"`
+	OwnerUserID    pgtype.UUID `json:"owner_user_id"`
+	Limit          int32       `json:"limit"`
+	Offset         int32       `json:"offset"`
+}
+
+func (q *Queries) ListMessagesByConversationForOwner(ctx context.Context, arg ListMessagesByConversationForOwnerParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, listMessagesByConversationForOwner,
+		arg.ConversationID,
+		arg.OwnerUserID,
+		arg.Limit,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -188,6 +300,52 @@ type ListRecentMessagesByConversationParams struct {
 
 func (q *Queries) ListRecentMessagesByConversation(ctx context.Context, arg ListRecentMessagesByConversationParams) ([]Message, error) {
 	rows, err := q.db.Query(ctx, listRecentMessagesByConversation, arg.ConversationID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.Role,
+			&i.Content,
+			&i.Citations,
+			&i.ToolCalls,
+			&i.TokenUsage,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentMessagesByConversationForOwner = `-- name: ListRecentMessagesByConversationForOwner :many
+SELECT id, conversation_id, role, content, citations, tool_calls, token_usage, created_at FROM (
+  SELECT m.id, m.conversation_id, m.role, m.content, m.citations, m.tool_calls, m.token_usage, m.created_at FROM messages m
+  JOIN conversations c ON c.id = m.conversation_id
+  WHERE m.conversation_id = $1 AND c.owner_user_id = $2
+  ORDER BY m.created_at DESC, m.id DESC
+  LIMIT $3
+) recent_messages
+ORDER BY created_at ASC, id ASC
+`
+
+type ListRecentMessagesByConversationForOwnerParams struct {
+	ConversationID uuid.UUID   `json:"conversation_id"`
+	OwnerUserID    pgtype.UUID `json:"owner_user_id"`
+	Limit          int32       `json:"limit"`
+}
+
+func (q *Queries) ListRecentMessagesByConversationForOwner(ctx context.Context, arg ListRecentMessagesByConversationForOwnerParams) ([]Message, error) {
+	rows, err := q.db.Query(ctx, listRecentMessagesByConversationForOwner, arg.ConversationID, arg.OwnerUserID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}

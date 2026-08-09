@@ -55,3 +55,7 @@ type VectorStore interface {
 	DeleteByDocument(ctx context.Context, documentID string) error
 	Search(ctx context.Context, kbID string, query []float32, opts VectorSearchOptions) ([]VectorSearchHit, error)
 }
+
+type OwnedVectorSearch interface {
+	SearchForOwner(ctx context.Context, userID, kbID string, query []float32, opts VectorSearchOptions) ([]VectorSearchHit, error)
+}

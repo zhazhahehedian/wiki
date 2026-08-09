@@ -77,6 +77,9 @@ func run() error {
 	if err := checkEmbeddingDim(bootCtx, pool, cfg.EmbeddingDim); err != nil {
 		return fmt.Errorf("embedding dim check: %w", err)
 	}
+	if err := service.NewOwnershipBootstrap(repo.NewOwnershipBootstrapRepository(pool)).Run(bootCtx, cfg.BootstrapOwnerFeishuOpenID); err != nil {
+		return fmt.Errorf("ownership bootstrap: %w", err)
+	}
 
 	mc, err := storage.NewMinioClient(bootCtx, storage.MinioConfig{
 		Endpoint:     cfg.S3Endpoint,
@@ -204,13 +207,13 @@ func run() error {
 		return fmt.Errorf("build agent registry: %w", err)
 	}
 	toolRegistry := agent.NewToolRegistry()
-	if err := toolRegistry.Register("kb_retrieval", func(_ context.Context, kbID string, callback ports.RetrievalCallback) (ports.Tool, error) {
-		return agenttools.NewKBRetrieval(retrievalSvc, kbID, callback), nil
+	if err := toolRegistry.Register("kb_retrieval", func(ctx context.Context, kbID string, callback ports.RetrievalCallback) (ports.Tool, error) {
+		return agenttools.NewKBRetrieval(retrievalSvc, service.OwnerIDFromContext(ctx), kbID, callback), nil
 	}); err != nil {
 		return fmt.Errorf("register kb_retrieval tool: %w", err)
 	}
-	if err := toolRegistry.Register("list_documents", func(_ context.Context, kbID string, _ ports.RetrievalCallback) (ports.Tool, error) {
-		return agenttools.NewListDocuments(docSvc, kbID), nil
+	if err := toolRegistry.Register("list_documents", func(ctx context.Context, kbID string, _ ports.RetrievalCallback) (ports.Tool, error) {
+		return agenttools.NewListDocuments(docSvc, service.OwnerIDFromContext(ctx), kbID), nil
 	}); err != nil {
 		return fmt.Errorf("register list_documents tool: %w", err)
 	}
@@ -218,12 +221,18 @@ func run() error {
 		return fmt.Errorf("register knowledge-rag tools: %w", err)
 	}
 	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, agentRegistry, toolRegistry)
+	feishuHandler := httpx.NewFeishuHandler(
+		service.NewFeishuAccounts(queries),
+		service.NewFeishuImport(feishu.NewURLResolver(), service.NewSQLFeishuImportRepository(pool), rclient),
+		service.NewFeishuSync(queries, rclient),
+	)
 	router := httpx.NewRouter(httpx.Handlers{
-		KB:    httpx.NewKBHandler(kbSvc),
-		Doc:   httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),
-		Chunk: httpx.NewChunkHandler(vstore, docSvc),
-		Chat:  httpx.NewChatHandler(chatSvc),
-		Auth:  authHandler,
+		KB:     httpx.NewKBHandler(kbSvc),
+		Doc:    httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),
+		Chunk:  httpx.NewChunkHandler(vstore, docSvc),
+		Chat:   httpx.NewChatHandler(chatSvc),
+		Auth:   authHandler,
+		Feishu: feishuHandler,
 	})
 
 	runCtx, runCancel := context.WithCancel(context.Background())

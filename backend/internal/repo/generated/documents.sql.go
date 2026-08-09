@@ -659,6 +659,57 @@ func (q *Queries) GetDocumentForOwner(ctx context.Context, arg GetDocumentForOwn
 	return i, err
 }
 
+const getFeishuDocumentForOwnerAndAccount = `-- name: GetFeishuDocumentForOwnerAndAccount :one
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
+JOIN knowledge_bases AS kb ON kb.id = d.kb_id
+JOIN oauth_accounts AS oa ON oa.id = d.oauth_account_id
+WHERE d.id = $1
+  AND d.source_type LIKE 'feishu-%'
+  AND kb.owner_user_id = $2
+  AND oa.id = $3
+  AND oa.user_id = $2
+`
+
+type GetFeishuDocumentForOwnerAndAccountParams struct {
+	ID             uuid.UUID   `json:"id"`
+	OwnerUserID    pgtype.UUID `json:"owner_user_id"`
+	OauthAccountID uuid.UUID   `json:"oauth_account_id"`
+}
+
+func (q *Queries) GetFeishuDocumentForOwnerAndAccount(ctx context.Context, arg GetFeishuDocumentForOwnerAndAccountParams) (Document, error) {
+	row := q.db.QueryRow(ctx, getFeishuDocumentForOwnerAndAccount, arg.ID, arg.OwnerUserID, arg.OauthAccountID)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.SourceType,
+		&i.SourceRef,
+		&i.Title,
+		&i.MimeType,
+		&i.Bytes,
+		&i.Checksum,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ContentRef,
+		&i.SourceUrl,
+		&i.RemoteRevision,
+		&i.OauthAccountID,
+		&i.PendingContentRef,
+		&i.PendingChecksum,
+		&i.PendingRemoteRevision,
+		&i.SyncStatus,
+		&i.LastSyncError,
+		&i.LastSyncedAt,
+		&i.PendingTitle,
+		&i.PendingBytes,
+		&i.PendingMetadata,
+	)
+	return i, err
+}
+
 const listDocumentsByKB = `-- name: ListDocumentsByKB :many
 SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents
 WHERE kb_id = $1

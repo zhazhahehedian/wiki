@@ -11,21 +11,25 @@ import (
 
 type Retrieval struct {
 	embedder ports.Embedder
-	vstore   ports.VectorStore
+	vstore   ports.OwnedVectorSearch
 	topK     int
 	minScore float32
 }
 
 type RetrievalResult = ports.RetrievalResult
 
-func NewRetrieval(embedder ports.Embedder, vstore ports.VectorStore, topK int, minScore float32) *Retrieval {
+func NewRetrieval(embedder ports.Embedder, vstore ports.OwnedVectorSearch, topK int, minScore float32) *Retrieval {
 	if topK < 1 {
 		topK = 8
 	}
 	return &Retrieval{embedder: embedder, vstore: vstore, topK: topK, minScore: minScore}
 }
 
-func (s *Retrieval) Retrieve(ctx context.Context, kbID, question string) (*RetrievalResult, error) {
+func (s *Retrieval) Retrieve(ctx context.Context, userID, kbID, question string) (*RetrievalResult, error) {
+	ownerID, err := requiredOwnerUUID(userID)
+	if err != nil {
+		return nil, err
+	}
 	kbID = strings.TrimSpace(kbID)
 	question = strings.TrimSpace(question)
 	if kbID == "" {
@@ -46,7 +50,7 @@ func (s *Retrieval) Retrieve(ctx context.Context, kbID, question string) (*Retri
 		return nil, fmt.Errorf("query embedding dim mismatch: got %d, want %d", len(embeddings[0]), s.embedder.Dim())
 	}
 
-	rawHits, err := s.vstore.Search(ctx, kbID, embeddings[0], ports.VectorSearchOptions{
+	rawHits, err := s.vstore.SearchForOwner(ctx, ownerID.String(), kbID, embeddings[0], ports.VectorSearchOptions{
 		TopK:     s.topK,
 		MinScore: s.minScore,
 	})

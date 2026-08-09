@@ -26,31 +26,35 @@ import (
 type fakeE2EQueries struct {
 	mu              sync.Mutex
 	conversation    generated.Conversation
-	createdMessages []generated.CreateMessageParams
+	createdMessages []generated.CreateMessageForOwnerParams
 }
 
-func (f *fakeE2EQueries) CreateConversation(_ context.Context, arg generated.CreateConversationParams) (generated.Conversation, error) {
+func (f *fakeE2EQueries) GetKnowledgeBaseForOwner(context.Context, generated.GetKnowledgeBaseForOwnerParams) (generated.KnowledgeBase, error) {
+	return generated.KnowledgeBase{ID: f.conversation.KbID}, nil
+}
+
+func (f *fakeE2EQueries) CreateConversationForOwner(_ context.Context, arg generated.CreateConversationForOwnerParams) (generated.Conversation, error) {
 	return generated.Conversation{
 		ID: uuid.New(), KbID: arg.KbID, Title: arg.Title, Mode: arg.Mode,
-		UserID: arg.UserID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
+		OwnerUserID: arg.OwnerUserID, AgentID: arg.AgentID, CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}, nil
 }
 
-func (f *fakeE2EQueries) GetConversation(context.Context, uuid.UUID) (generated.Conversation, error) {
+func (f *fakeE2EQueries) GetConversationForOwner(context.Context, generated.GetConversationForOwnerParams) (generated.Conversation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.conversation, nil
 }
 
-func (f *fakeE2EQueries) ListConversationsByKB(context.Context, generated.ListConversationsByKBParams) ([]generated.Conversation, error) {
+func (f *fakeE2EQueries) ListConversationsByKBForOwner(context.Context, generated.ListConversationsByKBForOwnerParams) ([]generated.Conversation, error) {
 	return nil, nil
 }
 
-func (f *fakeE2EQueries) CountConversationsByKB(context.Context, generated.CountConversationsByKBParams) (int64, error) {
+func (f *fakeE2EQueries) CountConversationsByKBForOwner(context.Context, generated.CountConversationsByKBForOwnerParams) (int64, error) {
 	return 0, nil
 }
 
-func (f *fakeE2EQueries) CreateMessage(_ context.Context, arg generated.CreateMessageParams) (generated.Message, error) {
+func (f *fakeE2EQueries) CreateMessageForOwner(_ context.Context, arg generated.CreateMessageForOwnerParams) (generated.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createdMessages = append(f.createdMessages, arg)
@@ -61,31 +65,33 @@ func (f *fakeE2EQueries) CreateMessage(_ context.Context, arg generated.CreateMe
 	}, nil
 }
 
-func (f *fakeE2EQueries) ListMessagesByConversation(context.Context, generated.ListMessagesByConversationParams) ([]generated.Message, error) {
+func (f *fakeE2EQueries) ListMessagesByConversationForOwner(context.Context, generated.ListMessagesByConversationForOwnerParams) ([]generated.Message, error) {
 	return nil, nil
 }
 
-func (f *fakeE2EQueries) CountMessagesByConversation(context.Context, uuid.UUID) (int64, error) {
+func (f *fakeE2EQueries) CountMessagesByConversationForOwner(context.Context, generated.CountMessagesByConversationForOwnerParams) (int64, error) {
 	return 0, nil
 }
 
-func (f *fakeE2EQueries) ListRecentMessagesByConversation(context.Context, generated.ListRecentMessagesByConversationParams) ([]generated.Message, error) {
+func (f *fakeE2EQueries) ListRecentMessagesByConversationForOwner(context.Context, generated.ListRecentMessagesByConversationForOwnerParams) ([]generated.Message, error) {
 	return nil, nil
 }
 
-func (f *fakeE2EQueries) TouchConversation(context.Context, uuid.UUID) error { return nil }
+func (f *fakeE2EQueries) TouchConversationForOwner(context.Context, generated.TouchConversationForOwnerParams) error {
+	return nil
+}
 
-func (f *fakeE2EQueries) UpdateConversationMode(_ context.Context, arg generated.UpdateConversationModeParams) (generated.Conversation, error) {
+func (f *fakeE2EQueries) UpdateConversationModeForOwner(_ context.Context, arg generated.UpdateConversationModeForOwnerParams) (generated.Conversation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.conversation.Mode = arg.Mode
 	return f.conversation, nil
 }
 
-func (f *fakeE2EQueries) assistantMessages() []generated.CreateMessageParams {
+func (f *fakeE2EQueries) assistantMessages() []generated.CreateMessageForOwnerParams {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	var out []generated.CreateMessageParams
+	var out []generated.CreateMessageForOwnerParams
 	for _, m := range f.createdMessages {
 		if m.Role == domain.RoleAssistant {
 			out = append(out, m)
@@ -164,8 +170,8 @@ func newReActTestServer(t *testing.T, queries service.ChatQueries, llm ports.LLM
 	csrf := "test-csrf"
 	csrfHash := sha256.Sum256([]byte(csrf))
 	authHandler := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{
-		session: domain.Session{UserID: "test-user", CSRFTokenHash: csrfHash[:]},
-	}, fakeUserResolver{user: domain.User{ID: "test-user"}})
+		session: domain.Session{UserID: "00000000-0000-0000-0000-000000000001", CSRFTokenHash: csrfHash[:]},
+	}, fakeUserResolver{user: domain.User{ID: "00000000-0000-0000-0000-000000000001"}})
 	router := NewRouter(Handlers{Auth: authHandler, Chat: NewChatHandler(chatSvc)})
 	srv := httptest.NewServer(router)
 	baseTransport := srv.Client().Transport

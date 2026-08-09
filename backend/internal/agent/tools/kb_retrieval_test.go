@@ -17,7 +17,7 @@ func newTestKBRetrieval(t *testing.T, hits []ports.VectorSearchHit, onRetrieval 
 		fakeVectorStore{hits: hits},
 		8, 0,
 	)
-	return NewKBRetrieval(retrieval, "kb-1", onRetrieval)
+	return NewKBRetrieval(retrieval, "00000000-0000-0000-0000-000000000001", "kb-1", onRetrieval)
 }
 
 type fakeEmbedder struct{ dim int }
@@ -38,7 +38,7 @@ func (f fakeVectorStore) ReplaceChunks(context.Context, string, []domain.ChunkWi
 	return nil
 }
 func (f fakeVectorStore) DeleteByDocument(context.Context, string) error { return nil }
-func (f fakeVectorStore) Search(context.Context, string, []float32, ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
+func (f fakeVectorStore) SearchForOwner(context.Context, string, string, []float32, ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
 	return f.hits, nil
 }
 

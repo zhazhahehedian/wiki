@@ -15,6 +15,7 @@ type Handlers struct {
 	Chunk *ChunkHandler
 	Chat  *ChatHandler
 	Auth  *AuthHandler
+	Feishu *FeishuHandler
 }
 
 func NewRouter(h Handlers) http.Handler {
@@ -52,6 +53,7 @@ func NewRouter(h Handlers) http.Handler {
 			r.Delete("/kbs/{id}", h.KB.Delete)
 
 			r.Post("/kbs/{id}/docs", h.Doc.Upload)
+			r.Post("/kbs/{kbID}/feishu-imports", h.Feishu.Import)
 			r.Get("/kbs/{id}/docs", h.Doc.ListByKB)
 			r.Get("/docs/{id}", h.Doc.Get)
 			r.Delete("/docs/{id}", h.Doc.Delete)
@@ -59,6 +61,7 @@ func NewRouter(h Handlers) http.Handler {
 			r.Get("/docs/{id}/chunks", h.Chunk.ListByDoc)
 
 			r.Post("/docs/{id}/reingest", h.Doc.Reingest)
+			r.Post("/docs/{docID}/sync", h.Feishu.Sync)
 			r.Post("/kbs/{id}/reingest", h.Doc.ReingestKB)
 
 			r.Get("/kbs/{kbID}/conversations", h.Chat.ListConversations)

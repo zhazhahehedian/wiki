@@ -18,6 +18,8 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
+const testOwnerID = "00000000-0000-0000-0000-000000000001"
+
 func TestChatAskStreamPersistsUserThenRetrievalThenAssistant(t *testing.T) {
 	convID := uuid.New()
 	kbID := uuid.New()
@@ -29,7 +31,7 @@ func TestChatAskStreamPersistsUserThenRetrievalThenAssistant(t *testing.T) {
 			KbID:      kbID,
 			Title:     "New chat",
 			Mode:      domain.ConversationModeRAG,
-			UserID:    localUserID,
+			UserID:    testOwnerID,
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		},
@@ -55,7 +57,7 @@ func TestChatAskStreamPersistsUserThenRetrievalThenAssistant(t *testing.T) {
 	sink := &recordingSink{events: events}
 	svc := NewChat(queries, retrieval, llm, "phase-model", 10, testAgentResolver(nil), nil)
 
-	err := svc.AskStream(context.Background(), convID.String(), " how rotate? ", sink)
+	err := svc.AskStream(context.Background(), testOwnerID, convID.String(), " how rotate? ", sink)
 	if err != nil {
 		t.Fatalf("AskStream() error = %v", err)
 	}
@@ -112,7 +114,7 @@ func TestChatAskStreamDoesNotPersistAssistantOnLLMFailure(t *testing.T) {
 			ID:     convID,
 			KbID:   kbID,
 			Mode:   domain.ConversationModeRAG,
-			UserID: localUserID,
+			UserID: testOwnerID,
 		},
 	}
 	retrieval := NewRetrieval(
@@ -125,7 +127,7 @@ func TestChatAskStreamDoesNotPersistAssistantOnLLMFailure(t *testing.T) {
 	svc := NewChat(queries, retrieval, &fakeLLM{chunks: []ports.StreamChunk{{Err: llmErr}}}, "phase-model", 10, testAgentResolver(nil), nil)
 	sink := &recordingSink{events: events}
 
-	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
+	err := svc.AskStream(context.Background(), testOwnerID, convID.String(), "question", sink)
 	if !errors.Is(err, llmErr) {
 		t.Fatalf("AskStream() error = %v, want %v", err, llmErr)
 	}
@@ -146,7 +148,7 @@ func TestChatAskStreamReturnsNotFoundBeforeSSEStarts(t *testing.T) {
 	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, nil, nil)
 	sink := &recordingSink{events: events}
 
-	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
+	err := svc.AskStream(context.Background(), testOwnerID, convID.String(), "question", sink)
 	var notFound *ErrConversationNotFound
 	if !errors.As(err, &notFound) {
 		t.Fatalf("AskStream() error = %v, want ErrConversationNotFound", err)
@@ -172,7 +174,7 @@ func TestChatAskStreamRejectsUnknownAgentBeforePersistingOrStreaming(t *testing.
 	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, resolver, nil)
 	sink := &recordingSink{events: events}
 
-	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
+	err := svc.AskStream(context.Background(), testOwnerID, convID.String(), "question", sink)
 	var unknown *agent.ErrUnknownAgent
 	if !errors.As(err, &unknown) || unknown.AgentID != "missing-agent" {
 		t.Fatalf("AskStream() error = %#v, want ErrUnknownAgent", err)
@@ -202,7 +204,7 @@ func TestChatAskStreamRejectsMissingToolProfileBeforePersistingOrStreaming(t *te
 	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, resolver, agent.NewToolRegistry())
 	sink := &recordingSink{events: events}
 
-	err := svc.AskStream(context.Background(), convID.String(), "question", sink)
+	err := svc.AskStream(context.Background(), testOwnerID, convID.String(), "question", sink)
 	var unknown *agent.ErrUnknownAgent
 	if !errors.As(err, &unknown) || unknown.AgentID != "known-agent" {
 		t.Fatalf("AskStream() error = %#v, want ErrUnknownAgent", err)
@@ -256,7 +258,7 @@ func TestChatAskStreamUsesConversationAgentID(t *testing.T) {
 	}
 	svc := NewChat(queries, nil, &fakeLLM{}, "phase-model", 10, resolver, toolRegistry)
 
-	if err := svc.AskStream(context.Background(), convID.String(), "question", &recordingSink{events: events}); err != nil {
+	if err := svc.AskStream(context.Background(), testOwnerID, convID.String(), "question", &recordingSink{events: events}); err != nil {
 		t.Fatalf("AskStream() error = %v", err)
 	}
 	if !runner.called {
@@ -335,7 +337,7 @@ func TestAskStreamClientCancelDoesNotPersistAssistant(t *testing.T) {
 		cancel:        cancel,
 	}
 
-	err := svc.AskStream(ctx, convID.String(), "问题", sink)
+	err := svc.AskStream(ctx, testOwnerID, convID.String(), "问题", sink)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("AskStream() error = %v, want context.Canceled", err)
 	}
@@ -363,39 +365,45 @@ type fakeChatQueries struct {
 	events             *eventLog
 	conversation       generated.Conversation
 	getConversationErr error
-	createdMessages    []generated.CreateMessageParams
+	createdMessages    []generated.CreateMessageForOwnerParams
 	recentMessages     []generated.Message
 	touched            []uuid.UUID
 }
 
-func (f *fakeChatQueries) CreateConversation(_ context.Context, arg generated.CreateConversationParams) (generated.Conversation, error) {
+func (f *fakeChatQueries) GetKnowledgeBaseForOwner(context.Context, generated.GetKnowledgeBaseForOwnerParams) (generated.KnowledgeBase, error) {
+	return generated.KnowledgeBase{ID: f.conversation.KbID}, nil
+}
+
+func (f *fakeChatQueries) CreateConversationForOwner(_ context.Context, arg generated.CreateConversationForOwnerParams) (generated.Conversation, error) {
 	return generated.Conversation{
-		ID:        uuid.New(),
-		KbID:      arg.KbID,
-		Title:     arg.Title,
-		Mode:      arg.Mode,
-		UserID:    arg.UserID,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:          uuid.New(),
+		KbID:        arg.KbID,
+		Title:       arg.Title,
+		Mode:        arg.Mode,
+		UserID:      arg.OwnerUserID.String(),
+		OwnerUserID: arg.OwnerUserID,
+		AgentID:     arg.AgentID,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}, nil
 }
 
-func (f *fakeChatQueries) GetConversation(context.Context, uuid.UUID) (generated.Conversation, error) {
+func (f *fakeChatQueries) GetConversationForOwner(context.Context, generated.GetConversationForOwnerParams) (generated.Conversation, error) {
 	if f.getConversationErr != nil {
 		return generated.Conversation{}, f.getConversationErr
 	}
 	return f.conversation, nil
 }
 
-func (f *fakeChatQueries) ListConversationsByKB(context.Context, generated.ListConversationsByKBParams) ([]generated.Conversation, error) {
+func (f *fakeChatQueries) ListConversationsByKBForOwner(context.Context, generated.ListConversationsByKBForOwnerParams) ([]generated.Conversation, error) {
 	return []generated.Conversation{f.conversation}, nil
 }
 
-func (f *fakeChatQueries) CountConversationsByKB(context.Context, generated.CountConversationsByKBParams) (int64, error) {
+func (f *fakeChatQueries) CountConversationsByKBForOwner(context.Context, generated.CountConversationsByKBForOwnerParams) (int64, error) {
 	return 1, nil
 }
 
-func (f *fakeChatQueries) CreateMessage(_ context.Context, arg generated.CreateMessageParams) (generated.Message, error) {
+func (f *fakeChatQueries) CreateMessageForOwner(_ context.Context, arg generated.CreateMessageForOwnerParams) (generated.Message, error) {
 	f.createdMessages = append(f.createdMessages, arg)
 	if f.events != nil {
 		f.events.add("message:" + arg.Role)
@@ -412,27 +420,27 @@ func (f *fakeChatQueries) CreateMessage(_ context.Context, arg generated.CreateM
 	}, nil
 }
 
-func (f *fakeChatQueries) ListMessagesByConversation(context.Context, generated.ListMessagesByConversationParams) ([]generated.Message, error) {
+func (f *fakeChatQueries) ListMessagesByConversationForOwner(context.Context, generated.ListMessagesByConversationForOwnerParams) ([]generated.Message, error) {
 	return f.recentMessages, nil
 }
 
-func (f *fakeChatQueries) CountMessagesByConversation(context.Context, uuid.UUID) (int64, error) {
+func (f *fakeChatQueries) CountMessagesByConversationForOwner(context.Context, generated.CountMessagesByConversationForOwnerParams) (int64, error) {
 	return int64(len(f.recentMessages)), nil
 }
 
-func (f *fakeChatQueries) ListRecentMessagesByConversation(context.Context, generated.ListRecentMessagesByConversationParams) ([]generated.Message, error) {
+func (f *fakeChatQueries) ListRecentMessagesByConversationForOwner(context.Context, generated.ListRecentMessagesByConversationForOwnerParams) ([]generated.Message, error) {
 	return f.recentMessages, nil
 }
 
-func (f *fakeChatQueries) TouchConversation(_ context.Context, id uuid.UUID) error {
-	f.touched = append(f.touched, id)
+func (f *fakeChatQueries) TouchConversationForOwner(_ context.Context, arg generated.TouchConversationForOwnerParams) error {
+	f.touched = append(f.touched, arg.ID)
 	if f.events != nil {
 		f.events.add("touch")
 	}
 	return nil
 }
 
-func (f *fakeChatQueries) UpdateConversationMode(_ context.Context, arg generated.UpdateConversationModeParams) (generated.Conversation, error) {
+func (f *fakeChatQueries) UpdateConversationModeForOwner(_ context.Context, arg generated.UpdateConversationModeForOwnerParams) (generated.Conversation, error) {
 	f.conversation.Mode = arg.Mode
 	return f.conversation, nil
 }
@@ -582,7 +590,7 @@ func TestChatAskStreamReActPersistsStepsAndCitations(t *testing.T) {
 	svc := newReActChat(queries, llm)
 	sink := &recordingSink{events: queries.events}
 
-	if err := svc.AskStream(context.Background(), convID.String(), "怎么部署", sink); err != nil {
+	if err := svc.AskStream(context.Background(), testOwnerID, convID.String(), "怎么部署", sink); err != nil {
 		t.Fatalf("AskStream() error = %v", err)
 	}
 
@@ -624,7 +632,7 @@ func TestChatAskStreamReActCancelDoesNotPersistAssistant(t *testing.T) {
 	svc := newReActChat(queries, blockingLLM{})
 	sink := &cancelOnTokenSink{recordingSink: recordingSink{events: queries.events}, cancel: cancel}
 
-	err := svc.AskStream(ctx, convID.String(), "q", sink)
+	err := svc.AskStream(ctx, testOwnerID, convID.String(), "q", sink)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("AskStream() error = %v, want context.Canceled", err)
 	}
@@ -639,7 +647,7 @@ func TestCreateConversationWithMode(t *testing.T) {
 	queries := &fakeChatQueries{}
 	svc := NewChat(queries, nil, &fakeLLM{}, "m", 0, nil, nil)
 
-	conv, err := svc.CreateConversation(context.Background(), uuid.NewString(), domain.ConversationModeReAct)
+	conv, err := svc.CreateConversation(context.Background(), testOwnerID, uuid.NewString(), domain.ConversationModeReAct)
 	if err != nil {
 		t.Fatalf("CreateConversation() error = %v", err)
 	}
@@ -647,11 +655,11 @@ func TestCreateConversationWithMode(t *testing.T) {
 		t.Errorf("mode = %q", conv.Mode)
 	}
 
-	if _, err := svc.CreateConversation(context.Background(), uuid.NewString(), "bogus"); !errors.Is(err, ErrInvalidMode) {
+	if _, err := svc.CreateConversation(context.Background(), testOwnerID, uuid.NewString(), "bogus"); !errors.Is(err, ErrInvalidMode) {
 		t.Errorf("expected ErrInvalidMode, got %v", err)
 	}
 	// 空 mode 默认 rag
-	conv, err = svc.CreateConversation(context.Background(), uuid.NewString(), "")
+	conv, err = svc.CreateConversation(context.Background(), testOwnerID, uuid.NewString(), "")
 	if err != nil || conv.Mode != domain.ConversationModeRAG {
 		t.Errorf("default mode = %q, err = %v", conv.Mode, err)
 	}
@@ -661,10 +669,10 @@ func TestUpdateModeValidatesEnum(t *testing.T) {
 	queries := &fakeChatQueries{conversation: generated.Conversation{ID: uuid.New()}}
 	svc := NewChat(queries, nil, &fakeLLM{}, "m", 0, nil, nil)
 
-	if _, err := svc.UpdateMode(context.Background(), queries.conversation.ID.String(), "bogus"); !errors.Is(err, ErrInvalidMode) {
+	if _, err := svc.UpdateMode(context.Background(), testOwnerID, queries.conversation.ID.String(), "bogus"); !errors.Is(err, ErrInvalidMode) {
 		t.Errorf("expected ErrInvalidMode, got %v", err)
 	}
-	conv, err := svc.UpdateMode(context.Background(), queries.conversation.ID.String(), domain.ConversationModeReAct)
+	conv, err := svc.UpdateMode(context.Background(), testOwnerID, queries.conversation.ID.String(), domain.ConversationModeReAct)
 	if err != nil {
 		t.Fatalf("UpdateMode() error = %v", err)
 	}

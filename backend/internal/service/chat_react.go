@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/zenith-wang/it-wiki/backend/internal/agent"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
@@ -21,7 +22,11 @@ func (s *Chat) prepareReAct(ctx context.Context, runner ports.AgentRunner, conv 
 	if runner == nil || s.toolRegistry == nil {
 		return nil, fmt.Errorf("react mode is not configured")
 	}
-	history, err := s.recentHistory(ctx, conv.ID)
+	ownerID, err := ownerUUID(OwnerIDFromContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	history, err := s.recentHistory(ctx, ownerID, conv.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +59,7 @@ func (s *Chat) prepareReAct(ctx context.Context, runner ports.AgentRunner, conv 
 	return prepared, nil
 }
 
-func (s *Chat) askReAct(ctx context.Context, prepared *preparedReAct, conv generated.Conversation, sink ChatStreamSink) error {
+func (s *Chat) askReAct(ctx context.Context, ownerID pgtype.UUID, prepared *preparedReAct, conv generated.Conversation, sink ChatStreamSink) error {
 	result, err := prepared.runner.Run(ctx, prepared.messages, prepared.tools, sink)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -68,12 +73,12 @@ func (s *Chat) askReAct(ctx context.Context, prepared *preparedReAct, conv gener
 		return err
 	}
 
-	assistant, err := s.createMessage(ctx, conv.ID, domain.RoleAssistant, result.Content, prepared.citations, result.Steps, result.Usage)
+	assistant, err := s.createMessage(ctx, ownerID, conv.ID, domain.RoleAssistant, result.Content, prepared.citations, result.Steps, result.Usage)
 	if err != nil {
 		_ = sink.SendError(ctx, ChatStreamError{Code: "assistant_persist_failed", Message: err.Error()})
 		return err
 	}
-	if err := s.queries.TouchConversation(ctx, conv.ID); err != nil {
+	if err := s.queries.TouchConversationForOwner(ctx, generated.TouchConversationForOwnerParams{ID: conv.ID, OwnerUserID: ownerID}); err != nil {
 		return fmt.Errorf("touch conversation after assistant message: %w", err)
 	}
 	return sink.SendDone(ctx, ChatDone{MessageID: assistant.ID, ConversationID: conv.ID.String(), Usage: result.Usage})

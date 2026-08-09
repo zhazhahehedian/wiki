@@ -89,6 +89,21 @@ func TestSearchReturnsIterationErrors(t *testing.T) {
 	}
 }
 
+func TestSearchForOwnerJoinsKnowledgeBaseOwnership(t *testing.T) {
+	tx := &fakeTx{rows: &fakeRows{}}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	ownerID := uuid.NewString()
+	if _, err := store.SearchForOwner(context.Background(), ownerID, "kb-1", []float32{0.1}, ports.VectorSearchOptions{TopK: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tx.querySQL, "JOIN knowledge_bases kb") || !strings.Contains(tx.querySQL, "kb.owner_user_id = $2") {
+		t.Fatalf("owner-filtered search SQL missing join: %s", tx.querySQL)
+	}
+	if tx.queryArgs[1] != ownerID {
+		t.Fatalf("owner arg=%v want=%s", tx.queryArgs[1], ownerID)
+	}
+}
+
 func TestGetChunkMapsMetadata(t *testing.T) {
 	createdAt := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	db := &fakeDB{
@@ -105,7 +120,8 @@ func TestGetChunkMapsMetadata(t *testing.T) {
 	}
 	store := &Pgvector{pool: db}
 
-	chunk, err := store.GetChunk(context.Background(), "kb-1", "chunk-1")
+	ownerID := uuid.NewString()
+	chunk, err := store.GetChunk(context.Background(), ownerID, "kb-1", "chunk-1")
 	if err != nil {
 		t.Fatalf("GetChunk() error = %v", err)
 	}
@@ -119,7 +135,7 @@ func TestGetChunkMapsMetadata(t *testing.T) {
 	if chunk.Metadata["heading"] != "Rotation" {
 		t.Fatalf("Metadata[heading] = %v, want Rotation", chunk.Metadata["heading"])
 	}
-	if db.rowArgs[0] != "kb-1" || db.rowArgs[1] != "chunk-1" {
+	if db.rowArgs[0] != "kb-1" || db.rowArgs[1] != "chunk-1" || db.rowArgs[2] != ownerID || !strings.Contains(db.rowSQL, "kb.owner_user_id = $3") {
 		t.Fatalf("GetChunk args = %v, want kb/chunk", db.rowArgs)
 	}
 }
@@ -140,7 +156,8 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	}
 	store := &Pgvector{pool: db}
 
-	chunks, err := store.ListNeighbors(context.Background(), "kb-1", "doc-1", 5, -3)
+	ownerID := uuid.NewString()
+	chunks, err := store.ListNeighbors(context.Background(), ownerID, "kb-1", "doc-1", 5, -3)
 	if err != nil {
 		t.Fatalf("ListNeighbors() error = %v", err)
 	}
@@ -151,8 +168,8 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	if chunks[0].ID != "chunk-5" || chunks[0].Seq != 5 {
 		t.Fatalf("ListNeighbors() chunk = %+v", chunks[0])
 	}
-	if db.queryArgs[2] != 5 || db.queryArgs[3] != 5 {
-		t.Fatalf("neighbor bounds = %v, want seq to seq for negative window", db.queryArgs[2:4])
+	if db.queryArgs[2] != ownerID || db.queryArgs[3] != 5 || db.queryArgs[4] != 5 {
+		t.Fatalf("neighbor args = %v, want owner and seq bounds", db.queryArgs)
 	}
 }
 

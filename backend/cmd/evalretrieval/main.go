@@ -26,12 +26,13 @@ func main() {
 
 func run() error {
 	kbID := flag.String("kb", "", "knowledge base id (required)")
+	userID := flag.String("user", "", "knowledge base owner user id (required)")
 	file := flag.String("file", "../docs/eval/retrieval-eval.yaml", "eval set yaml path")
 	outDir := flag.String("out", "../docs/eval/results", "directory for result JSON")
 	label := flag.String("label", "run", "label recorded in result filename/JSON, e.g. baseline")
 	flag.Parse()
-	if *kbID == "" {
-		return fmt.Errorf("-kb is required")
+	if *kbID == "" || *userID == "" {
+		return fmt.Errorf("-kb and -user are required")
 	}
 
 	dbURL := os.Getenv("DATABASE_URL")
@@ -71,7 +72,7 @@ func run() error {
 	results := make([]eval.CaseResult, 0, len(cases))
 	for _, c := range cases {
 		started := time.Now()
-		res, err := retrieval.Retrieve(ctx, *kbID, c.Question)
+		res, err := retrieval.Retrieve(ctx, *userID, *kbID, c.Question)
 		if err != nil {
 			return fmt.Errorf("case %s: %w", c.ID, err)
 		}

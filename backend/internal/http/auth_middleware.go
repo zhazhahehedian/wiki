@@ -6,6 +6,8 @@ import (
 	"crypto/subtle"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 )
 
@@ -38,6 +40,19 @@ func CurrentUserFromContext(ctx context.Context) (domain.User, bool) {
 func UserIDFromContext(ctx context.Context) string {
 	userID, _ := ctx.Value(userIDContextKey).(string)
 	return userID
+}
+
+func requireUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	user, ok := CurrentUserFromContext(r.Context())
+	if !ok || user.ID == "" || UserIDFromContext(r.Context()) != user.ID {
+		writeUnauthenticated(w, r)
+		return "", false
+	}
+	if _, err := uuid.Parse(user.ID); err != nil {
+		writeUnauthenticated(w, r)
+		return "", false
+	}
+	return user.ID, true
 }
 
 func (h *AuthHandler) Middleware(next http.Handler) http.Handler {

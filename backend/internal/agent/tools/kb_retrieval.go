@@ -14,12 +14,13 @@ import (
 // onRetrieval 在每次成功检索后触发（citation 收集 + retrieval SSE 推送由调用方实现）。
 type KBRetrieval struct {
 	retrieval   *service.Retrieval
+	userID      string
 	kbID        string
 	onRetrieval ports.RetrievalCallback
 }
 
-func NewKBRetrieval(retrieval *service.Retrieval, kbID string, onRetrieval ports.RetrievalCallback) *KBRetrieval {
-	return &KBRetrieval{retrieval: retrieval, kbID: kbID, onRetrieval: onRetrieval}
+func NewKBRetrieval(retrieval *service.Retrieval, userID, kbID string, onRetrieval ports.RetrievalCallback) *KBRetrieval {
+	return &KBRetrieval{retrieval: retrieval, userID: userID, kbID: kbID, onRetrieval: onRetrieval}
 }
 
 func (t *KBRetrieval) Name() string { return "kb_retrieval" }
@@ -52,7 +53,7 @@ func (t *KBRetrieval) Invoke(ctx context.Context, argsJSON string) (string, erro
 		return "", fmt.Errorf("query is required")
 	}
 
-	r, err := t.retrieval.Retrieve(ctx, t.kbID, args.Query)
+	r, err := t.retrieval.Retrieve(ctx, t.userID, t.kbID, args.Query)
 	if err != nil {
 		return "", err
 	}

@@ -23,6 +23,10 @@ func NewDocumentHandler(docSvc *service.Document, ingestionSvc *service.Ingestio
 }
 
 func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	kbID := chi.URLParam(r, "id")
 
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxUpload)
@@ -48,7 +52,7 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		mime = "application/octet-stream"
 	}
 
-	doc, err := h.ingestionSvc.Upload(r.Context(), service.UploadInput{
+	doc, err := h.ingestionSvc.Upload(r.Context(), userID, service.UploadInput{
 		KBID:     kbID,
 		Title:    header.Filename,
 		MimeType: mime,
@@ -78,6 +82,10 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DocumentHandler) ListByKB(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	kbID := chi.URLParam(r, "id")
 	p, err := ParsePagination(r)
 	if err != nil {
@@ -88,7 +96,7 @@ func (h *DocumentHandler) ListByKB(w http.ResponseWriter, r *http.Request) {
 	if s := r.URL.Query().Get("status"); s != "" {
 		statusFilter = &s
 	}
-	docs, total, err := h.docSvc.ListByKB(r.Context(), kbID, statusFilter, p.Limit, p.Offset)
+	docs, total, err := h.docSvc.ListByKB(r.Context(), userID, kbID, statusFilter, p.Limit, p.Offset)
 	if err != nil {
 		var kbNF *service.ErrKBNotFound
 		if errors.As(err, &kbNF) {
@@ -102,8 +110,12 @@ func (h *DocumentHandler) ListByKB(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DocumentHandler) Get(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	id := chi.URLParam(r, "id")
-	doc, err := h.docSvc.Get(r.Context(), id)
+	doc, err := h.docSvc.Get(r.Context(), userID, id)
 	if err != nil {
 		var notFound *service.ErrDocNotFound
 		if errors.As(err, &notFound) {
@@ -117,8 +129,12 @@ func (h *DocumentHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DocumentHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	id := chi.URLParam(r, "id")
-	if err := h.docSvc.Delete(r.Context(), id); err != nil {
+	if err := h.docSvc.Delete(r.Context(), userID, id); err != nil {
 		var notFound *service.ErrDocNotFound
 		if errors.As(err, &notFound) {
 			WriteError(w, r, NewAPIError(http.StatusNotFound, CodeDocNotFound, err.Error()))
@@ -131,8 +147,12 @@ func (h *DocumentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DocumentHandler) Reingest(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	id := chi.URLParam(r, "id")
-	doc, err := h.ingestionSvc.Reingest(r.Context(), id)
+	doc, err := h.ingestionSvc.Reingest(r.Context(), userID, id)
 	if err != nil {
 		var notFound *service.ErrDocNotFound
 		if errors.As(err, &notFound) {
@@ -151,8 +171,12 @@ func (h *DocumentHandler) Reingest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *DocumentHandler) ReingestKB(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	kbID := chi.URLParam(r, "id")
-	n, err := h.ingestionSvc.ReingestKB(r.Context(), kbID)
+	n, err := h.ingestionSvc.ReingestKB(r.Context(), userID, kbID)
 	if err != nil {
 		var kbNF *service.ErrKBNotFound
 		if errors.As(err, &kbNF) {
