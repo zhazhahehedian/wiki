@@ -1,7 +1,9 @@
 package feishu
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/url"
 	"strconv"
 	"strings"
@@ -116,6 +118,32 @@ type docxTextElement struct {
 	File *struct {
 		Name string `json:"name"`
 	} `json:"file"`
+	unknownMembers int
+}
+
+func (e *docxTextElement) UnmarshalJSON(data []byte) error {
+	type knownElement docxTextElement
+	var known knownElement
+	if err := json.Unmarshal(data, &known); err != nil {
+		return err
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	unknownMembers := 0
+	for key, payload := range members {
+		switch key {
+		case "text_run", "mention_user", "mention_doc", "equation", "file":
+			continue
+		}
+		if !bytes.Equal(bytes.TrimSpace(payload), []byte("null")) {
+			unknownMembers++
+		}
+	}
+	*e = docxTextElement(known)
+	e.unknownMembers = unknownMembers
+	return nil
 }
 
 func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessToken string) (domain.CanonicalDocument, error) {
@@ -454,7 +482,7 @@ func docxTextRetainedBytes(text *docxText) (int, error) {
 	}
 	total := retainedAnyBytes(text.Style.Language) + 1
 	for _, element := range text.Elements {
-		members := 0
+		members := element.unknownMembers
 		if element.TextRun != nil {
 			members++
 			total += len(element.TextRun.Content)
@@ -510,6 +538,9 @@ func retainedAnyBytes(value any) int {
 }
 
 func validateDocxBlockPayload(block docxBlock) error {
+	if err := validateDocxInlineElements(block); err != nil {
+		return err
+	}
 	payloads := 0
 	for _, present := range []bool{
 		block.Page != nil, block.Text != nil, block.Heading1 != nil, block.Heading2 != nil, block.Heading3 != nil,
@@ -620,6 +651,21 @@ func validateDocxBlockPayload(block docxBlock) error {
 	}
 	if !expected || payloads != 1 {
 		return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+	}
+	return nil
+}
+
+func validateDocxInlineElements(block docxBlock) error {
+	texts := []*docxText{block.Text, block.Page, block.Heading1, block.Heading2, block.Heading3, block.Heading4, block.Heading5, block.Heading6, block.Heading7, block.Heading8, block.Heading9, block.Bullet, block.Ordered, block.Quote, block.Code, block.Todo}
+	for _, text := range texts {
+		if _, err := docxTextRetainedBytes(text); err != nil {
+			return err
+		}
+	}
+	if block.Equation != nil {
+		if _, err := docxTextRetainedBytes(&docxText{Elements: block.Equation.Elements}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

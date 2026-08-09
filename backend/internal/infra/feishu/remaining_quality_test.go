@@ -258,3 +258,49 @@ func TestDocxTableCellsRenderValidKnownAndFutureVariants(t *testing.T) {
 		}
 	}
 }
+
+func TestDocxUnknownInlineVariantsRenderSafePlaceholders(t *testing.T) {
+	var page docxBlocksData
+	payload := `{"items":[{"block_id":"paragraph","block_type":2,"text":{"elements":[{"reminder":{"access_token":"paragraph-secret"}}]}},{"block_id":"table","block_type":31,"table":{"property":{"row_size":1,"column_size":1},"cells":["cell"]}},{"block_id":"cell","block_type":32,"children":["inline"]},{"block_id":"inline","block_type":2,"text":{"elements":[{"inline_component":{"download_url":"https://secret.invalid/file"}}]}}]}`
+	if err := decodeExactJSON([]byte(payload), &page); err != nil {
+		t.Fatal(err)
+	}
+	blocks := make(map[string]docxBlock)
+	for _, block := range page.Items {
+		blocks[block.BlockID] = block
+	}
+	renderer := docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{}), blocks: blocks, normalizer: NewMarkdownNormalizer()}
+	paragraph, err := renderer.renderBlock("paragraph", 0, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	table, err := renderer.renderBlock("table", 0, map[string]bool{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, got := range []string{paragraph, table} {
+		if !strings.Contains(got, "Unsupported inline element") {
+			t.Fatalf("rendered = %q", got)
+		}
+		if strings.Contains(got, "secret") || strings.Contains(got, "download") {
+			t.Fatalf("unknown payload leaked: %q", got)
+		}
+	}
+}
+
+func TestDocxUnknownInlineUnionRejectsEmptyNullAndMultipleMembers(t *testing.T) {
+	for _, element := range []string{
+		`{}`,
+		`{"reminder":null}`,
+		`{"text_run":{"content":"known"},"reminder":{"value":"unknown"}}`,
+		`{"reminder":{"value":"one"},"inline_component":{"value":"two"}}`,
+	} {
+		var page docxBlocksData
+		payload := `{"items":[{"block_id":"bad","block_type":2,"text":{"elements":[` + element + `]}}]}`
+		if err := decodeExactJSON([]byte(payload), &page); err != nil {
+			t.Fatal(err)
+		}
+		_, err := (docxRenderer{ctx: context.Background(), budget: newResourceBudget(ResourceLimits{}), blocks: map[string]docxBlock{"bad": page.Items[0]}, normalizer: NewMarkdownNormalizer()}).renderBlock("bad", 0, map[string]bool{})
+		assertLoadCode(t, err, ports.SourceLoadMalformed)
+	}
+}
