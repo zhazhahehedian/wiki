@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
@@ -194,7 +196,8 @@ func (s *httpChatSink) SendDone(_ context.Context, done service.ChatDone) error 
 	return WriteSSEEvent(s.w, "done", done)
 }
 
-func (s *httpChatSink) SendError(_ context.Context, err service.ChatStreamError) error {
+func (s *httpChatSink) SendError(ctx context.Context, _ service.ChatStreamError) error {
 	s.ensureStarted()
-	return WriteSSEEvent(s.w, "error", err)
+	log.Printf("request failed request_id=%s error_category=chat_stream_error", middleware.GetReqID(ctx))
+	return WriteSSEEvent(s.w, "error", service.InternalChatStreamError())
 }

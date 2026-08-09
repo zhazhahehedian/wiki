@@ -2,6 +2,8 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -59,11 +61,14 @@ type envelopeBody struct {
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
-	apiErr, ok := err.(*APIError)
-	if !ok {
-		apiErr = NewAPIError(http.StatusInternalServerError, CodeInternalError, err.Error())
-	}
 	reqID := middleware.GetReqID(r.Context())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		log.Printf("request failed request_id=%s error_type=%T", reqID, err)
+		apiErr = internalServerAPIError()
+	} else if apiErr.HTTPStatus >= http.StatusInternalServerError {
+		log.Printf("request failed request_id=%s error_category=%s", reqID, apiErr.Code)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Request-Id", reqID)
@@ -76,6 +81,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			Details:   apiErr.Details,
 		},
 	})
+}
+
+func internalServerAPIError() *APIError {
+	return NewAPIError(http.StatusInternalServerError, CodeInternalError, "internal server error")
 }
 
 func WriteJSON(w http.ResponseWriter, status int, v any) {

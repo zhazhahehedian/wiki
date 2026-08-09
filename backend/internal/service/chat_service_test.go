@@ -132,12 +132,66 @@ func TestChatAskStreamDoesNotPersistAssistantOnLLMFailure(t *testing.T) {
 		t.Fatalf("AskStream() error = %v, want %v", err, llmErr)
 	}
 
-	wantEvents := []string{"message:user", "touch", "retrieval", "error:llm_stream_failed"}
+	wantEvents := []string{"message:user", "touch", "retrieval", "error:internal_error"}
 	if !reflect.DeepEqual(events.items, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", events.items, wantEvents)
 	}
 	if len(queries.createdMessages) != 1 || queries.createdMessages[0].Role != domain.RoleUser {
 		t.Fatalf("created messages = %#v, want only user", queries.createdMessages)
+	}
+}
+
+func TestChatStreamErrorsDoNotExposeClassicOrReActCauses(t *testing.T) {
+	secret := "oauth_token=secret provider_body=private-content"
+	tests := []struct {
+		name string
+		run  func(*testing.T, error) *recordingSink
+	}{
+		{
+			name: "classic",
+			run: func(t *testing.T, secretErr error) *recordingSink {
+				convID, kbID := uuid.New(), uuid.New()
+				queries := &fakeChatQueries{events: &eventLog{}, conversation: generated.Conversation{ID: convID, KbID: kbID, Mode: domain.ConversationModeRAG}}
+				retrieval := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
+				sink := &recordingSink{events: queries.events}
+				err := NewChat(queries, retrieval, &fakeLLM{err: secretErr}, "model", 0, testAgentResolver(nil), nil).AskStream(context.Background(), testOwnerID, convID.String(), "question", sink)
+				if !errors.Is(err, secretErr) {
+					t.Fatalf("AskStream() error = %v, want cause", err)
+				}
+				return sink
+			},
+		},
+		{
+			name: "react",
+			run: func(t *testing.T, secretErr error) *recordingSink {
+				convID := uuid.New()
+				queries := &fakeChatQueries{events: &eventLog{}, conversation: generated.Conversation{ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeReAct}}
+				runner := &recordingAgentRunner{err: secretErr}
+				resolver := testAgentResolver(runner)
+				tools := agent.NewToolRegistry()
+				if err := tools.RegisterAgent(ports.DefaultAgentID); err != nil {
+					t.Fatal(err)
+				}
+				sink := &recordingSink{events: queries.events}
+				err := NewChat(queries, nil, &fakeLLM{}, "model", 0, resolver, tools).AskStream(context.Background(), testOwnerID, convID.String(), "question", sink)
+				if !errors.Is(err, secretErr) {
+					t.Fatalf("AskStream() error = %v, want cause", err)
+				}
+				return sink
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink := tt.run(t, errors.New(secret))
+			if sink.err.Code != "internal_error" || sink.err.Message != "internal server error" {
+				t.Fatalf("stream error = %#v", sink.err)
+			}
+			if strings.Contains(sink.err.Message, secret) {
+				t.Fatalf("secret leaked: %#v", sink.err)
+			}
+		})
 	}
 }
 
@@ -220,10 +274,14 @@ func TestChatAskStreamRejectsMissingToolProfileBeforePersistingOrStreaming(t *te
 
 type recordingAgentRunner struct {
 	called bool
+	err    error
 }
 
 func (r *recordingAgentRunner) Run(context.Context, []ports.Message, []ports.Tool, ports.AgentEventSink) (*ports.AgentResult, error) {
 	r.called = true
+	if r.err != nil {
+		return nil, r.err
+	}
 	return &ports.AgentResult{Content: "selected agent response"}, nil
 }
 

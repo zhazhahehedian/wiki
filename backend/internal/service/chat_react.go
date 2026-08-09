@@ -65,7 +65,7 @@ func (s *Chat) askReAct(ctx context.Context, ownerID pgtype.UUID, prepared *prep
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		_ = sink.SendError(ctx, ChatStreamError{Code: "llm_stream_failed", Message: err.Error()})
+		_ = sink.SendError(ctx, InternalChatStreamError())
 		return err
 	}
 	// 持久化前必须再查取消状态，避免落半截消息（spec §4.1，沿用 2.5 保障）
@@ -75,7 +75,7 @@ func (s *Chat) askReAct(ctx context.Context, ownerID pgtype.UUID, prepared *prep
 
 	assistant, err := s.createMessage(ctx, ownerID, conv.ID, domain.RoleAssistant, result.Content, prepared.citations, result.Steps, result.Usage)
 	if err != nil {
-		_ = sink.SendError(ctx, ChatStreamError{Code: "assistant_persist_failed", Message: err.Error()})
+		_ = sink.SendError(ctx, InternalChatStreamError())
 		return err
 	}
 	if err := s.queries.TouchConversationForOwner(ctx, generated.TouchConversationForOwnerParams{ID: conv.ID, OwnerUserID: ownerID}); err != nil {

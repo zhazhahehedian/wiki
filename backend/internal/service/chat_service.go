@@ -59,6 +59,10 @@ type ChatStreamError struct {
 	Message string `json:"message"`
 }
 
+func InternalChatStreamError() ChatStreamError {
+	return ChatStreamError{Code: "internal_error", Message: "internal server error"}
+}
+
 type Chat struct {
 	queries         ChatQueries
 	retrieval       *Retrieval
@@ -264,7 +268,7 @@ func (s *Chat) askRAG(ctx context.Context, userID string, ownerID pgtype.UUID, c
 	msgs := BuildRAGMessages(retrieval, history, content)
 	stream, err := s.llm.ChatStream(ctx, msgs, ports.ChatOptions{Model: s.llmModel, Temperature: 0.2})
 	if err != nil {
-		_ = sink.SendError(ctx, ChatStreamError{Code: "llm_stream_failed", Message: err.Error()})
+		_ = sink.SendError(ctx, InternalChatStreamError())
 		return err
 	}
 
@@ -275,7 +279,7 @@ func (s *Chat) askRAG(ctx context.Context, userID string, ownerID pgtype.UUID, c
 			return ctx.Err()
 		}
 		if chunk.Err != nil {
-			_ = sink.SendError(ctx, ChatStreamError{Code: "llm_stream_failed", Message: chunk.Err.Error()})
+			_ = sink.SendError(ctx, InternalChatStreamError())
 			return chunk.Err
 		}
 		if chunk.Usage != nil {
@@ -298,12 +302,12 @@ func (s *Chat) askRAG(ctx context.Context, userID string, ownerID pgtype.UUID, c
 	assistantContent := strings.TrimSpace(answer.String())
 	if assistantContent == "" {
 		err := fmt.Errorf("llm stream completed without content")
-		_ = sink.SendError(ctx, ChatStreamError{Code: "llm_stream_failed", Message: err.Error()})
+		_ = sink.SendError(ctx, InternalChatStreamError())
 		return err
 	}
 	assistant, err := s.createMessage(ctx, ownerID, conv.ID, domain.RoleAssistant, assistantContent, retrieval.Citations, nil, usage)
 	if err != nil {
-		_ = sink.SendError(ctx, ChatStreamError{Code: "assistant_persist_failed", Message: err.Error()})
+		_ = sink.SendError(ctx, InternalChatStreamError())
 		return err
 	}
 	if err := s.queries.TouchConversationForOwner(ctx, generated.TouchConversationForOwnerParams{ID: conv.ID, OwnerUserID: ownerID}); err != nil {
