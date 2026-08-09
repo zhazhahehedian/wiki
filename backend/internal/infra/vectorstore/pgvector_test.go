@@ -57,7 +57,7 @@ func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
 	if !strings.Contains(tx.execSQL, "SET LOCAL ivfflat.probes") {
 		t.Fatalf("Search must raise ivfflat.probes in the same tx, got exec: %q", tx.execSQL)
 	}
-	if !strings.Contains(tx.querySQL, "JOIN documents d ON d.id = c.document_id") {
+	if !strings.Contains(compactSQL(tx.querySQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") {
 		t.Fatalf("Search SQL missing documents join: %s", tx.querySQL)
 	}
 	if !strings.Contains(tx.querySQL, "d.status = 'ready'") {
@@ -99,6 +99,9 @@ func TestSearchForOwnerJoinsKnowledgeBaseOwnership(t *testing.T) {
 	if !strings.Contains(tx.querySQL, "JOIN knowledge_bases kb") || !strings.Contains(tx.querySQL, "kb.owner_user_id = $2") {
 		t.Fatalf("owner-filtered search SQL missing join: %s", tx.querySQL)
 	}
+	if !strings.Contains(compactSQL(tx.querySQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(compactSQL(tx.querySQL), "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+		t.Fatalf("owner-filtered search accepts mismatched document KB: %s", tx.querySQL)
+	}
 	if tx.queryArgs[1] != ownerID {
 		t.Fatalf("owner arg=%v want=%s", tx.queryArgs[1], ownerID)
 	}
@@ -138,6 +141,9 @@ func TestGetChunkMapsMetadata(t *testing.T) {
 	if db.rowArgs[0] != "kb-1" || db.rowArgs[1] != "chunk-1" || db.rowArgs[2] != ownerID || !strings.Contains(db.rowSQL, "kb.owner_user_id = $3") {
 		t.Fatalf("GetChunk args = %v, want kb/chunk", db.rowArgs)
 	}
+	if !strings.Contains(compactSQL(db.rowSQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(compactSQL(db.rowSQL), "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+		t.Fatalf("GetChunk SQL accepts mismatched document KB: %s", db.rowSQL)
+	}
 }
 
 func TestListNeighborsClampsNegativeWindow(t *testing.T) {
@@ -171,6 +177,67 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	if db.queryArgs[2] != ownerID || db.queryArgs[3] != 5 || db.queryArgs[4] != 5 {
 		t.Fatalf("neighbor args = %v, want owner and seq bounds", db.queryArgs)
 	}
+	if !strings.Contains(compactSQL(db.querySQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(compactSQL(db.querySQL), "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+		t.Fatalf("ListNeighbors SQL accepts mismatched document KB: %s", db.querySQL)
+	}
+}
+
+func TestListByDocumentRequiresMatchingDocumentKB(t *testing.T) {
+	db := &fakeDB{
+		row:  &fakeRow{values: []any{0}},
+		rows: &fakeRows{},
+	}
+	store := &Pgvector{pool: db}
+	ownerID := uuid.NewString()
+	chunks, total, err := store.ListByDocument(context.Background(), ownerID, uuid.NewString(), 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 0 || total != 0 {
+		t.Fatalf("chunks=%#v total=%d, want mismatched row rejected", chunks, total)
+	}
+	for name, query := range map[string]string{"count": db.rowSQL, "list": db.querySQL} {
+		query = compactSQL(query)
+		if !strings.Contains(query, "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(query, "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+			t.Fatalf("%s SQL accepts mismatched document KB: %s", name, query)
+		}
+	}
+}
+
+func TestOwnerChunkReadsRejectMismatchedDocumentKB(t *testing.T) {
+	createdAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	chunkRow := []any{"chunk-foreign", "kb-owner", "doc-foreign", 2, "must not leak", 3, []byte(`{}`), createdAt}
+	db := &fakeDB{
+		rejectMismatchedChunk: true,
+		row:                   &fakeRow{values: chunkRow},
+		rows:                  &fakeRows{values: [][]any{chunkRow}},
+		tx: &fakeTx{
+			rejectMismatchedChunk: true,
+			rows: &fakeRows{values: [][]any{{
+				"chunk-foreign", "kb-owner", "doc-foreign", "Foreign", 2,
+				"must not leak", float32(0.99), []byte(`{}`),
+			}}},
+		},
+	}
+	store := &Pgvector{pool: db}
+	ownerID := uuid.NewString()
+
+	if chunk, err := store.GetChunk(context.Background(), ownerID, "kb-owner", "chunk-foreign"); err == nil || chunk != nil {
+		t.Fatalf("GetChunk() chunk=%#v err=%v, want mismatched row rejected", chunk, err)
+	}
+	if chunks, total, err := store.ListByDocument(context.Background(), ownerID, "doc-foreign", 20, 0); err != nil || len(chunks) != 0 || total != 0 {
+		t.Fatalf("ListByDocument() chunks=%#v total=%d err=%v", chunks, total, err)
+	}
+	if chunks, err := store.ListNeighbors(context.Background(), ownerID, "kb-owner", "doc-foreign", 2, 1); err != nil || len(chunks) != 0 {
+		t.Fatalf("ListNeighbors() chunks=%#v err=%v", chunks, err)
+	}
+	if hits, err := store.SearchForOwner(context.Background(), ownerID, "kb-owner", []float32{0.1}, ports.VectorSearchOptions{TopK: 5}); err != nil || len(hits) != 0 {
+		t.Fatalf("SearchForOwner() hits=%#v err=%v", hits, err)
+	}
+}
+
+func compactSQL(sql string) string {
+	return strings.Join(strings.Fields(sql), " ")
 }
 
 func TestReplaceChunksDeletesThenInsertsInOneTx(t *testing.T) {
@@ -388,6 +455,8 @@ type fakeDB struct {
 	execErr  error
 
 	tx pgx.Tx
+
+	rejectMismatchedChunk bool
 }
 
 func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
@@ -400,12 +469,21 @@ func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
 func (f *fakeDB) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
 	f.querySQL = sql
 	f.queryArgs = args
+	if f.rejectMismatchedChunk && hasCompositeDocumentKBJoin(sql) {
+		return &fakeRows{}, f.queryErr
+	}
 	return f.rows, f.queryErr
 }
 
 func (f *fakeDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.rowSQL = sql
 	f.rowArgs = args
+	if f.rejectMismatchedChunk && hasCompositeDocumentKBJoin(sql) {
+		if strings.Contains(sql, "COUNT(*)") {
+			return &fakeRow{values: []any{0}}
+		}
+		return &fakeRow{err: pgx.ErrNoRows}
+	}
 	return f.row
 }
 
@@ -432,6 +510,8 @@ type fakeTx struct {
 	queryArgs []any
 	rows      pgx.Rows
 	queryErr  error
+
+	rejectMismatchedChunk bool
 }
 
 type fakeExecCall struct {
@@ -489,7 +569,14 @@ func (t *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, er
 	t.ops = append(t.ops, "query")
 	t.querySQL = sql
 	t.queryArgs = args
+	if t.rejectMismatchedChunk && hasCompositeDocumentKBJoin(sql) {
+		return &fakeRows{}, t.queryErr
+	}
 	return t.rows, t.queryErr
+}
+
+func hasCompositeDocumentKBJoin(sql string) bool {
+	return strings.Contains(compactSQL(sql), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id")
 }
 
 func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { return nil }

@@ -107,3 +107,41 @@ func TestPendingSnapshotPayloadMigrationIsAtomicAndReversible(t *testing.T) {
 		}
 	}
 }
+
+func TestChunkDocumentKBConsistencyMigrationValidatesExistingRowsAndReverses(t *testing.T) {
+	raw, err := EmbedMigrations.ReadFile("0011_chunk_document_kb_consistency.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	sql := strings.Join(strings.Fields(string(raw)), " ")
+	parts := strings.SplitN(sql, "-- +goose Down", 2)
+	if len(parts) != 2 {
+		t.Fatal("migration is missing a goose Down section")
+	}
+	up, down := parts[0], parts[1]
+
+	upStatements := []string{
+		"ADD CONSTRAINT uq_documents_id_kb_id UNIQUE (id, kb_id)",
+		"DROP CONSTRAINT IF EXISTS chunks_document_id_fkey",
+		"ADD CONSTRAINT fk_chunks_document_kb FOREIGN KEY (document_id, kb_id) REFERENCES documents (id, kb_id) ON DELETE CASCADE NOT VALID",
+		"VALIDATE CONSTRAINT fk_chunks_document_kb",
+	}
+	for _, statement := range upStatements {
+		if !strings.Contains(up, statement) {
+			t.Errorf("Up migration missing %q", statement)
+		}
+	}
+	if addAt, validateAt := strings.Index(up, "NOT VALID"), strings.Index(up, "VALIDATE CONSTRAINT fk_chunks_document_kb"); addAt < 0 || validateAt <= addAt {
+		t.Fatalf("existing rows are not explicitly validated after constraint creation: %s", up)
+	}
+
+	for _, statement := range []string{
+		"DROP CONSTRAINT IF EXISTS fk_chunks_document_kb",
+		"ADD CONSTRAINT chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES documents (id) ON DELETE CASCADE",
+		"DROP CONSTRAINT IF EXISTS uq_documents_id_kb_id",
+	} {
+		if !strings.Contains(down, statement) {
+			t.Errorf("Down migration missing %q", statement)
+		}
+	}
+}

@@ -179,7 +179,7 @@ func (v *Pgvector) ListByDocument(ctx context.Context, userID, docID string, lim
 	var total int
 	if err := v.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM chunks c
-		 JOIN documents d ON d.id = c.document_id
+		 JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id
 		 JOIN knowledge_bases kb ON kb.id = d.kb_id
 		 WHERE c.document_id = $1 AND kb.owner_user_id = $2`, docID, userID,
 	).Scan(&total); err != nil {
@@ -189,7 +189,7 @@ func (v *Pgvector) ListByDocument(ctx context.Context, userID, docID string, lim
 	rows, err := v.pool.Query(ctx,
 		`SELECT c.id, c.kb_id, c.document_id, c.seq, c.content, c.token_count, c.metadata, c.created_at
 		 FROM chunks c
-		 JOIN documents d ON d.id = c.document_id
+		 JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id
 		 JOIN knowledge_bases kb ON kb.id = d.kb_id
 		 WHERE c.document_id = $1 AND kb.owner_user_id = $2
 		 ORDER BY c.seq ASC LIMIT $3 OFFSET $4`,
@@ -236,7 +236,7 @@ func (v *Pgvector) Search(ctx context.Context, kbID string, query []float32, opt
 		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
 		        1 - (c.embedding <=> $2) AS score, c.metadata
 		   FROM chunks c
-		   JOIN documents d ON d.id = c.document_id
+		   JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id
 		  WHERE c.kb_id = $1
 		    AND d.status = 'ready'
 		  ORDER BY c.embedding <=> $2
@@ -286,7 +286,7 @@ func (v *Pgvector) SearchForOwner(ctx context.Context, userID, kbID string, quer
 		`SELECT c.id, c.kb_id, c.document_id, d.title, c.seq, c.content,
 		        1 - (c.embedding <=> $3) AS score, c.metadata
 		   FROM chunks c
-		   JOIN documents d ON d.id = c.document_id
+		   JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id
 		   JOIN knowledge_bases kb ON kb.id = d.kb_id
 		  WHERE c.kb_id = $1
 		    AND kb.owner_user_id = $2
@@ -322,7 +322,8 @@ func (v *Pgvector) GetChunk(ctx context.Context, userID, kbID, chunkID string) (
 	err := v.pool.QueryRow(ctx,
 		`SELECT c.id, c.kb_id, c.document_id, c.seq, c.content, c.token_count, c.metadata, c.created_at
 		   FROM chunks c
-		   JOIN knowledge_bases kb ON kb.id = c.kb_id
+		   JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id
+		   JOIN knowledge_bases kb ON kb.id = d.kb_id
 		  WHERE c.kb_id = $1 AND c.id = $2 AND kb.owner_user_id = $3`,
 		kbID, chunkID, userID,
 	).Scan(&c.ID, &c.KBID, &c.DocumentID, &c.Seq, &c.Content, &c.TokenCount, &metaJSON, &c.CreatedAt)
@@ -341,7 +342,8 @@ func (v *Pgvector) ListNeighbors(ctx context.Context, userID, kbID, documentID s
 	rows, err := v.pool.Query(ctx,
 		`SELECT c.id, c.kb_id, c.document_id, c.seq, c.content, c.token_count, c.metadata, c.created_at
 		   FROM chunks c
-		   JOIN knowledge_bases kb ON kb.id = c.kb_id
+		   JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id
+		   JOIN knowledge_bases kb ON kb.id = d.kb_id
 		  WHERE c.kb_id = $1
 		    AND c.document_id = $2
 		    AND kb.owner_user_id = $3
