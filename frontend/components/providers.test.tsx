@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -31,6 +31,21 @@ function SeedAuthCache({ onReady }: { onReady: (client: QueryClient) => void }) 
     onReady(queryClient);
   }, [onReady, queryClient]);
   return null;
+}
+
+function StaleAuthLogin({ onReady }: { onReady: (client: QueryClient) => void }) {
+  const queryClient = useQueryClient();
+  const initialized = useRef(false);
+  if (!initialized.current) {
+    queryClient.setQueryData(
+      authQueryKey,
+      { id: "stale-user", display_name: "Stale" },
+      { updatedAt: 1 },
+    );
+    onReady(queryClient);
+    initialized.current = true;
+  }
+  return <LoginPage />;
 }
 
 describe("Providers authentication boundary", () => {
@@ -100,6 +115,31 @@ describe("Providers authentication boundary", () => {
     );
 
     expect(await screen.findByRole("link")).toHaveAttribute(
+      "href",
+      "http://localhost:8080/api/v1/auth/feishu/start",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale auth data after the login auth query returns 401", async () => {
+    let queryClient: QueryClient | undefined;
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: "unauthenticated", message: "login required" },
+    }), { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <Providers>
+        <StaleAuthLogin onReady={(client) => { queryClient = client; }} />
+      </Providers>,
+    );
+
+    await waitFor(() => expect(queryClient?.getQueryState(authQueryKey)).toMatchObject({
+      status: "error",
+      fetchStatus: "idle",
+    }));
+    expect(screen.getByRole("link")).toHaveAttribute(
       "href",
       "http://localhost:8080/api/v1/auth/feishu/start",
     );

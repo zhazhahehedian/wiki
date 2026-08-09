@@ -7,6 +7,7 @@ import { Rail } from "./rail";
 
 const replace = vi.fn();
 const logoutMutate = vi.fn();
+const useAuth = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ kbId: "kb-1" }),
@@ -14,9 +15,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
 }));
 vi.mock("@/lib/hooks/use-auth", () => ({
-  useAuth: () => ({
-    data: { id: "user-1", display_name: "Ada", email: "ada@example.test", avatar_url: "" },
-  }),
+  useAuth: () => useAuth(),
   useLogout: () => ({ mutate: logoutMutate, isPending: false }),
 }));
 vi.mock("@/components/layout/theme-toggle", () => ({ ThemeToggle: () => <button>主题</button> }));
@@ -25,6 +24,11 @@ describe("Rail user menu", () => {
   beforeEach(() => {
     replace.mockReset();
     logoutMutate.mockReset();
+    useAuth.mockReset();
+    useAuth.mockReturnValue({
+      isError: false,
+      data: { id: "user-1", display_name: "Ada", email: "ada@example.test", avatar_url: "" },
+    });
   });
 
   it("opens from the keyboard and redirects after logout", async () => {
@@ -42,5 +46,16 @@ describe("Rail user menu", () => {
     const options = logoutMutate.mock.calls[0][1] as { onSuccess: () => void };
     options.onSuccess();
     expect(replace).toHaveBeenCalledWith("/login");
+  });
+
+  it("does not render a stale user menu after an auth error", () => {
+    useAuth.mockReturnValue({
+      isError: true,
+      data: { id: "stale-user", display_name: "Ada", email: "ada@example.test", avatar_url: "" },
+    });
+
+    render(<TooltipProvider><Rail /></TooltipProvider>);
+
+    expect(screen.queryByRole("button", { name: /Ada/ })).not.toBeInTheDocument();
   });
 });

@@ -100,7 +100,7 @@ export function Rail() {
         label="知识库"
       />
       <div className="mt-auto flex flex-col items-center gap-1">
-        {auth.data && (
+        {auth.data && !auth.isError && (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={

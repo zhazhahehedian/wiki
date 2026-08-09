@@ -27,16 +27,17 @@ function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const auth = useAuth();
+  const authenticated = Boolean(auth.data) && !auth.isError && !auth.isFetching;
 
   useEffect(() => {
-    if (auth.data) router.replace("/");
-  }, [auth.data, router]);
+    if (authenticated) router.replace("/");
+  }, [authenticated, router]);
 
-  if (auth.isLoading) {
+  if (auth.isLoading || auth.isFetching) {
     return <LoginState message="正在检查登录状态…" />;
   }
 
-  if (auth.data) {
+  if (authenticated) {
     return <LoginState message="正在进入知识库…" />;
   }
 

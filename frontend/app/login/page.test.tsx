@@ -44,6 +44,20 @@ describe("LoginPage", () => {
     expect(screen.queryByRole("link", { name: "使用飞书登录" })).not.toBeInTheDocument();
   });
 
+  it("does not use stale auth data while revalidating a session", () => {
+    useAuth.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+      data: { id: "stale-user" },
+    });
+    render(<LoginPage />);
+
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   it("redirects an authenticated user into the application", () => {
     useAuth.mockReturnValue({ isLoading: false, isError: false, data: { id: "user-1" } });
     render(<LoginPage />);

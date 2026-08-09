@@ -59,7 +59,7 @@ describe("root authentication gate", () => {
       isLoading: false,
       isError: true,
       error: new APIError(401, "unauthenticated", "login required"),
-      data: undefined,
+      data: { id: "stale-user", display_name: "Stale" },
     });
 
     render(<Home />);
