@@ -1,6 +1,7 @@
 package ports
 
 import (
+	"context"
 	"errors"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
@@ -47,4 +48,33 @@ func (e *SourceResolveError) Unwrap() error {
 
 type SourceResolver interface {
 	Resolve(rawURL string) (domain.ResourceRef, error)
+}
+
+type SourceLoadErrorCode string
+
+const (
+	SourceLoadForbidden   SourceLoadErrorCode = "resource_forbidden"
+	SourceLoadNotFound    SourceLoadErrorCode = "resource_not_found"
+	SourceLoadRateLimit   SourceLoadErrorCode = "rate_limited"
+	SourceLoadAPIError    SourceLoadErrorCode = "api_error"
+	SourceLoadTooLarge    SourceLoadErrorCode = "too_large"
+	SourceLoadMalformed   SourceLoadErrorCode = "malformed"
+	SourceLoadUnsupported SourceLoadErrorCode = "unsupported_resource"
+)
+
+type SourceLoadError struct {
+	Code  SourceLoadErrorCode `json:"code"`
+	cause error
+}
+
+func NewSourceLoadError(code SourceLoadErrorCode, cause error) *SourceLoadError {
+	return &SourceLoadError{Code: code, cause: cause}
+}
+
+func (e *SourceLoadError) Error() string { return "Feishu source load failed" }
+
+func (e *SourceLoadError) Unwrap() error { return e.cause }
+
+type SourceLoader interface {
+	Load(ctx context.Context, ref domain.ResourceRef, accessToken string) (domain.CanonicalDocument, error)
 }
