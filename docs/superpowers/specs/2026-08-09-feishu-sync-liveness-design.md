@@ -21,7 +21,8 @@ The worker scans stale `syncing` Feishu documents with a PostgreSQL-clock cutoff
 For each stale document:
 
 - No pending fields: enqueue `feishu_sync` with the exact active revision.
-- Complete valid pending state: enqueue `ingestion` with the exact pending tuple, durable payload, and `updated_at` claim token.
+- Complete valid pending state whose checksum differs from the active checksum: enqueue normal `ingestion` with the exact pending tuple, durable payload, and `updated_at` claim token.
+- Complete valid pending state whose checksum equals the active checksum: enqueue metadata-only `ingestion` with the same exact guards. This path atomically patches chunk citation metadata and promotes the document without reading the snapshot, parsing, splitting, embedding, or replacing chunks.
 - Partial or invalid pending state: enqueue a fresh `feishu_sync` with the exact active revision; the normal claim path reclaims and replaces the broken pending state.
 
 Existing sync and ingestion active-state uniqueness makes insertion a no-op while the original job still exists. Discarded terminal jobs do not block recovery.

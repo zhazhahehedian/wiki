@@ -115,14 +115,17 @@ func (c *Client) EnqueueIngestion(ctx context.Context, docID string) error {
 }
 
 func (c *Client) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
-	_, err := c.rc.Insert(ctx, IngestionJobArgs{
-		DocumentID: snapshot.DocumentID.String(), PendingContentRef: snapshot.ContentRef,
-		PendingChecksum: snapshot.Checksum, PendingRemoteRevision: snapshot.RemoteRevision,
-		Title: snapshot.Title, Bytes: snapshot.Bytes, Metadata: snapshot.Metadata,
-		ClaimToken: snapshot.ClaimToken,
-	}, nil)
+	_, err := c.rc.Insert(ctx, ingestionJobArgs(snapshot), nil)
 	if err != nil {
 		return fmt.Errorf("insert staged ingestion job: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) EnqueueMetadataOnlyIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
+	_, err := c.rc.Insert(ctx, metadataOnlyIngestionJobArgs(snapshot), nil)
+	if err != nil {
+		return fmt.Errorf("insert metadata-only ingestion job: %w", err)
 	}
 	return nil
 }
@@ -141,6 +144,12 @@ func ingestionJobArgs(snapshot PendingFeishuSnapshot) IngestionJobArgs {
 		PendingChecksum: snapshot.Checksum, PendingRemoteRevision: snapshot.RemoteRevision,
 		Title: snapshot.Title, Bytes: snapshot.Bytes, Metadata: snapshot.Metadata, ClaimToken: snapshot.ClaimToken,
 	}
+}
+
+func metadataOnlyIngestionJobArgs(snapshot PendingFeishuSnapshot) IngestionJobArgs {
+	args := ingestionJobArgs(snapshot)
+	args.MetadataOnly = true
+	return args
 }
 
 func (c *Client) EnqueueFeishuSync(ctx context.Context, documentID, requestedRevision string) error {

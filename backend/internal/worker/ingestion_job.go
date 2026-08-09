@@ -17,6 +17,7 @@ type IngestionJobArgs struct {
 	Bytes                 int64           `json:"bytes,omitempty"`
 	Metadata              json.RawMessage `json:"metadata,omitempty"`
 	ClaimToken            time.Time       `json:"claim_token"`
+	MetadataOnly          bool            `json:"metadata_only,omitempty"`
 }
 
 func (IngestionJobArgs) Kind() string { return "ingestion" }

@@ -56,6 +56,7 @@ type FeishuReconcileRepository interface {
 type FeishuRecoveryQueue interface {
 	EnqueueFeishuSync(ctx context.Context, documentID, requestedRevision string) error
 	EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error
+	EnqueueMetadataOnlyIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error
 }
 
 type FeishuReconcileWorkerDeps struct {
@@ -128,7 +129,11 @@ func (w *FeishuReconcileWorker) Work(ctx context.Context, _ *river.Job[FeishuRec
 
 func (w *FeishuReconcileWorker) recover(ctx context.Context, document generated.Document) error {
 	if snapshot, ok := recoverableSnapshotFromDocument(document); ok {
-		if err := w.queue.EnqueueStagedIngestion(ctx, snapshot); err != nil {
+		enqueue := w.queue.EnqueueStagedIngestion
+		if snapshot.Checksum == document.Checksum {
+			enqueue = w.queue.EnqueueMetadataOnlyIngestion
+		}
+		if err := enqueue(ctx, snapshot); err != nil {
 			return errFeishuRecoveryEnqueue
 		}
 		return nil

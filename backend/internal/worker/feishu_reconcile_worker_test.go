@@ -55,8 +55,8 @@ func TestFeishuReconcilerReenqueuesLostSyncAndIngestion(t *testing.T) {
 	if len(queue.syncs) != 1 || queue.syncs[0].documentID != syncDoc.ID.String() || queue.syncs[0].revision != "rev-1" {
 		t.Fatalf("sync recovery = %+v", queue.syncs)
 	}
-	if len(queue.ingestions) != 1 {
-		t.Fatalf("ingestion recovery = %+v", queue.ingestions)
+	if len(queue.ingestions) != 1 || len(queue.metadataOnly) != 0 {
+		t.Fatalf("ingestion/metadata-only recovery = %+v/%+v", queue.ingestions, queue.metadataOnly)
 	}
 	got := queue.ingestions[0]
 	if got.DocumentID != ingestDoc.ID || got.ContentRef != "feishu/snapshot.md" || got.Checksum != "sum-2" || got.RemoteRevision != "rev-2" || got.ClaimToken != ingestDoc.UpdatedAt {
@@ -64,6 +64,32 @@ func TestFeishuReconcilerReenqueuesLostSyncAndIngestion(t *testing.T) {
 	}
 	if got.Title != "Sheet" || got.Bytes != 42 || string(got.Metadata) != string(ingestDoc.PendingMetadata) {
 		t.Fatalf("recovered snapshot payload = %+v", got)
+	}
+}
+
+func TestFeishuReconcilerReenqueuesSameChecksumPendingAsMetadataOnly(t *testing.T) {
+	claim := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	document := generated.Document{
+		ID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: claim, Checksum: "same-sum",
+	}
+	setPendingDocument(&document, PendingFeishuSnapshot{
+		ContentRef: "feishu/snapshot.md", Checksum: "same-sum", RemoteRevision: "rev-2",
+		Title: "Updated title", Bytes: 42, Metadata: validReconcileMetadata(t),
+	})
+	queue := &recordingRecoveryQueue{}
+	worker := NewFeishuReconcileWorker(FeishuReconcileWorkerDeps{
+		Repository: &fakeReconcileRepository{documents: []generated.Document{document}},
+		Queue:      queue, SyncLease: time.Hour, BatchSize: 10, MaxBatches: 1,
+	})
+
+	if err := worker.Work(context.Background(), &river.Job[FeishuReconcileJobArgs]{}); err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if len(queue.metadataOnly) != 1 || len(queue.ingestions) != 0 || len(queue.syncs) != 0 {
+		t.Fatalf("metadata-only/ingestion/sync recovery = %+v/%+v/%+v", queue.metadataOnly, queue.ingestions, queue.syncs)
+	}
+	if got := queue.metadataOnly[0]; got.DocumentID != document.ID || got.Checksum != document.Checksum || got.ClaimToken != claim {
+		t.Fatalf("metadata-only snapshot guards = %+v", got)
 	}
 }
 
@@ -86,8 +112,8 @@ func TestFeishuReconcilerFallsBackToFreshSyncForIncompleteOrInvalidPending(t *te
 	if err := worker.Work(context.Background(), &river.Job[FeishuReconcileJobArgs]{}); err != nil {
 		t.Fatalf("Work() error = %v", err)
 	}
-	if len(queue.syncs) != 2 || len(queue.ingestions) != 0 {
-		t.Fatalf("fallback syncs/ingestions = %+v/%+v", queue.syncs, queue.ingestions)
+	if len(queue.syncs) != 2 || len(queue.ingestions) != 0 || len(queue.metadataOnly) != 0 {
+		t.Fatalf("fallback syncs/ingestions/metadata-only = %+v/%+v/%+v", queue.syncs, queue.ingestions, queue.metadataOnly)
 	}
 }
 
@@ -98,6 +124,8 @@ func TestFeishuReconcilerRedactsRecoveryEnqueueFailures(t *testing.T) {
 		ContentRef: "pending.md", Checksum: "sum", RemoteRevision: "rev-2", Title: "Title", Bytes: 4,
 		Metadata: validReconcileMetadata(t),
 	})
+	metadataOnlyPending := validPending
+	metadataOnlyPending.Checksum = "sum"
 	tests := []struct {
 		name      string
 		document  generated.Document
@@ -112,6 +140,10 @@ func TestFeishuReconcilerRedactsRecoveryEnqueueFailures(t *testing.T) {
 			name: "ingestion", document: validPending,
 			queue: &recordingRecoveryQueue{ingestionErr: errors.New("provider SECRET body")}, wantCalls: 1,
 		},
+		{
+			name: "metadata-only ingestion", document: metadataOnlyPending,
+			queue: &recordingRecoveryQueue{ingestionErr: errors.New("provider SECRET body")}, wantCalls: 1,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -124,8 +156,8 @@ func TestFeishuReconcilerRedactsRecoveryEnqueueFailures(t *testing.T) {
 			if !errors.Is(err, errFeishuRecoveryEnqueue) || strings.Contains(err.Error(), "SECRET") {
 				t.Fatalf("Work() error = %v", err)
 			}
-			if len(tt.queue.syncs)+len(tt.queue.ingestions) != tt.wantCalls {
-				t.Fatalf("recovery calls = %d", len(tt.queue.syncs)+len(tt.queue.ingestions))
+			if len(tt.queue.syncs)+len(tt.queue.ingestions)+len(tt.queue.metadataOnly) != tt.wantCalls {
+				t.Fatalf("recovery calls = %d", len(tt.queue.syncs)+len(tt.queue.ingestions)+len(tt.queue.metadataOnly))
 			}
 		})
 	}
@@ -208,6 +240,7 @@ type recoverySyncCall struct {
 type recordingRecoveryQueue struct {
 	syncs        []recoverySyncCall
 	ingestions   []PendingFeishuSnapshot
+	metadataOnly []PendingFeishuSnapshot
 	syncErr      error
 	ingestionErr error
 }
@@ -219,5 +252,10 @@ func (q *recordingRecoveryQueue) EnqueueFeishuSync(_ context.Context, documentID
 
 func (q *recordingRecoveryQueue) EnqueueStagedIngestion(_ context.Context, snapshot PendingFeishuSnapshot) error {
 	q.ingestions = append(q.ingestions, snapshot)
+	return q.ingestionErr
+}
+
+func (q *recordingRecoveryQueue) EnqueueMetadataOnlyIngestion(_ context.Context, snapshot PendingFeishuSnapshot) error {
+	q.metadataOnly = append(q.metadataOnly, snapshot)
 	return q.ingestionErr
 }

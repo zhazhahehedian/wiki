@@ -156,6 +156,12 @@ func run() error {
 				}
 				return rclient.EnqueueFeishuSync(ctx, documentID, revision)
 			},
+			EnqueueMetadataOnlyFunc: func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueMetadataOnlyIngestion(ctx, snapshot)
+			},
 		}
 		feishuSyncWorker := worker.NewFeishuSyncWorker(worker.FeishuSyncWorkerDeps{
 			Repository: syncRepository,

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestWorkersExposeConfiguredJobTimeouts(t *testing.T) {
 
 func TestStagedIngestionEnqueuerFuncsForwardsReconciliationCalls(t *testing.T) {
 	var gotDocumentID, gotRevision string
-	var gotSnapshot PendingFeishuSnapshot
+	var gotSnapshot, gotMetadataOnly PendingFeishuSnapshot
 	forwarder := StagedIngestionEnqueuerFuncs{
 		EnqueueFunc: func(_ context.Context, snapshot PendingFeishuSnapshot) error {
 			gotSnapshot = snapshot
@@ -69,6 +70,10 @@ func TestStagedIngestionEnqueuerFuncsForwardsReconciliationCalls(t *testing.T) {
 		},
 		EnqueueFeishuSyncFunc: func(_ context.Context, documentID, revision string) error {
 			gotDocumentID, gotRevision = documentID, revision
+			return nil
+		},
+		EnqueueMetadataOnlyFunc: func(_ context.Context, snapshot PendingFeishuSnapshot) error {
+			gotMetadataOnly = snapshot
 			return nil
 		},
 	}
@@ -80,7 +85,47 @@ func TestStagedIngestionEnqueuerFuncsForwardsReconciliationCalls(t *testing.T) {
 	if err := queue.EnqueueStagedIngestion(context.Background(), wantSnapshot); err != nil {
 		t.Fatal(err)
 	}
-	if gotDocumentID != "doc-id" || gotRevision != "rev-2" || gotSnapshot.DocumentID != wantSnapshot.DocumentID {
-		t.Fatalf("forwarded sync/snapshot = %q/%q/%+v", gotDocumentID, gotRevision, gotSnapshot)
+	if err := queue.EnqueueMetadataOnlyIngestion(context.Background(), wantSnapshot); err != nil {
+		t.Fatal(err)
+	}
+	if gotDocumentID != "doc-id" || gotRevision != "rev-2" || gotSnapshot.DocumentID != wantSnapshot.DocumentID || gotMetadataOnly.DocumentID != wantSnapshot.DocumentID {
+		t.Fatalf("forwarded sync/snapshots = %q/%q/%+v/%+v", gotDocumentID, gotRevision, gotSnapshot, gotMetadataOnly)
+	}
+}
+
+func TestMetadataOnlyIngestionArgsPreserveGuardsAndDistinctRecoveryMode(t *testing.T) {
+	snapshot := PendingFeishuSnapshot{
+		DocumentID: uuid.New(), ContentRef: "pending.md", Checksum: "same-sum", RemoteRevision: "rev-2",
+		Title: "Title", Bytes: 42, Metadata: []byte(`{"source_type":"feishu-docx"}`),
+		ClaimToken: time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC),
+	}
+	normal := ingestionJobArgs(snapshot)
+	metadataOnly := metadataOnlyIngestionJobArgs(snapshot)
+
+	if normal.MetadataOnly || !metadataOnly.MetadataOnly {
+		t.Fatalf("recovery modes = normal:%v metadata-only:%v", normal.MetadataOnly, metadataOnly.MetadataOnly)
+	}
+	if metadataOnly.DocumentID != normal.DocumentID || metadataOnly.PendingContentRef != normal.PendingContentRef ||
+		metadataOnly.PendingChecksum != normal.PendingChecksum || metadataOnly.PendingRemoteRevision != normal.PendingRemoteRevision ||
+		!metadataOnly.ClaimToken.Equal(normal.ClaimToken) {
+		t.Fatalf("metadata-only guards differ: normal=%+v metadata-only=%+v", normal, metadataOnly)
+	}
+	if !metadataOnly.InsertOpts().UniqueOpts.ByArgs {
+		t.Fatalf("metadata-only uniqueness = %+v", metadataOnly.InsertOpts().UniqueOpts)
+	}
+	normalJSON, err := json.Marshal(normal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataOnlyJSON, err := json.Marshal(metadataOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeatedJSON, err := json.Marshal(metadataOnlyIngestionJobArgs(snapshot))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(normalJSON) == string(metadataOnlyJSON) || string(metadataOnlyJSON) != string(repeatedJSON) {
+		t.Fatalf("serialized recovery args = normal:%s metadata-only:%s repeated:%s", normalJSON, metadataOnlyJSON, repeatedJSON)
 	}
 }

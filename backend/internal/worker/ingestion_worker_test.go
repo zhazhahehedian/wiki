@@ -59,6 +59,133 @@ func TestIngestionRemoteReadsPendingMarkdownAndAtomicallyPromotes(t *testing.T) 
 	}
 }
 
+func TestIngestionRemoteMetadataOnlyAtomicallyPatchesAndPromotesWithoutReembedding(t *testing.T) {
+	docID := uuid.New()
+	pendingRef, pendingSum, pendingRevision := "feishu/doc/snapshot.md", "same-sum", "rev-2"
+	activeRef, activeRevision := "feishu/doc/old.md", "rev-1"
+	pendingTitle, pendingBytes := "Updated title", int64(18)
+	pendingMetadata := json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`)
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	repo := &fakeIngestionRepository{doc: generated.Document{
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", SourceRef: "feishu://feishu.cn/docx/DocToken_123",
+		ContentRef: &activeRef, RemoteRevision: &activeRevision, Checksum: pendingSum, Status: "ready", SyncStatus: "syncing", UpdatedAt: claimToken,
+		PendingContentRef: &pendingRef, PendingChecksum: &pendingSum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes, PendingMetadata: pendingMetadata,
+	}}
+	storage := &recordingIngestionStorage{objects: map[string]string{}}
+	parser := &recordingParser{}
+	regular := &fakeIngestionVectorStore{}
+	staged := &fakeStagedVectorStore{}
+	embedCalls, splitCalls := 0, 0
+	worker := newIngestionWorkerForTest(repo, storage, parser, regular, staged, fakeIngestionEmbedder{calls: &embedCalls})
+	worker.splitter = fakeIngestionSplitter{calls: &splitCalls}
+
+	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: pendingSum, PendingRemoteRevision: pendingRevision,
+		Title: "stale job title", Bytes: 999, Metadata: json.RawMessage(`{"unknown_secret":"must-not-pass"}`),
+		ClaimToken: claimToken, MetadataOnly: true,
+	}})
+	if err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if storage.gotKey != "" || parser.body != "" || parser.mime != "" || splitCalls != 0 || embedCalls != 0 || regular.replaceCalls != 0 || staged.calls != 0 {
+		t.Fatalf("metadata-only performed content pipeline: key=%q body=%q mime=%q split=%d embed=%d regular=%d staged=%d", storage.gotKey, parser.body, parser.mime, splitCalls, embedCalls, regular.replaceCalls, staged.calls)
+	}
+	if staged.patchCalls != 1 || staged.patchPromotion.Title != pendingTitle || staged.patchPromotion.Bytes != pendingBytes ||
+		string(staged.patchPromotion.Metadata) != string(pendingMetadata) || staged.patchPromotion.ClaimToken != claimToken {
+		t.Fatalf("metadata-only promotion = %+v calls=%d", staged.patchPromotion, staged.patchCalls)
+	}
+	patched := staged.patcher(map[string]any{"section_path": "Heading", "custom": "keep"})
+	if patched["source_type"] != "feishu-docx" || patched["remote_revision"] != pendingRevision || patched["custom"] != "keep" {
+		t.Fatalf("patched citation metadata = %+v", patched)
+	}
+}
+
+func TestIngestionRemoteMetadataOnlyStalePromotionIsNoOp(t *testing.T) {
+	docID := uuid.New()
+	pendingRef, checksum, pendingRevision := "pending.md", "same-sum", "rev-2"
+	pendingTitle, pendingBytes := "Updated title", int64(18)
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	repo := &fakeIngestionRepository{doc: generated.Document{
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", Checksum: checksum, SyncStatus: "syncing", UpdatedAt: claimToken,
+		PendingContentRef: &pendingRef, PendingChecksum: &checksum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
+		PendingMetadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
+	}}
+	storage := &recordingIngestionStorage{}
+	staged := &fakeStagedVectorStore{patchErr: ports.ErrStaleDocumentPromotion}
+	worker := newIngestionWorkerForTest(repo, storage, &recordingParser{}, &fakeIngestionVectorStore{}, staged, fakeIngestionEmbedder{})
+
+	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: checksum,
+		PendingRemoteRevision: pendingRevision, ClaimToken: claimToken, MetadataOnly: true,
+	}})
+	if err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if staged.patchCalls != 1 || storage.gotKey != "" || repo.failed != nil {
+		t.Fatalf("stale metadata-only result = patches:%d key:%q failure:%+v", staged.patchCalls, storage.gotKey, repo.failed)
+	}
+}
+
+func TestIngestionRemoteMetadataOnlyChecksumMismatchIsNoOp(t *testing.T) {
+	docID := uuid.New()
+	pendingRef, pendingChecksum, pendingRevision := "pending.md", "pending-sum", "rev-2"
+	pendingTitle, pendingBytes := "Updated title", int64(18)
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	repo := &fakeIngestionRepository{doc: generated.Document{
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", Checksum: "active-sum", SyncStatus: "syncing", UpdatedAt: claimToken,
+		PendingContentRef: &pendingRef, PendingChecksum: &pendingChecksum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
+		PendingMetadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
+	}}
+	storage := &recordingIngestionStorage{}
+	staged := &fakeStagedVectorStore{}
+	worker := newIngestionWorkerForTest(repo, storage, &recordingParser{}, &fakeIngestionVectorStore{}, staged, fakeIngestionEmbedder{})
+
+	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: pendingChecksum,
+		PendingRemoteRevision: pendingRevision, ClaimToken: claimToken, MetadataOnly: true,
+	}})
+	if err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if staged.patchCalls != 0 || storage.gotKey != "" || repo.failed != nil {
+		t.Fatalf("mismatched metadata-only job was processed = patches:%d key:%q failure:%+v", staged.patchCalls, storage.gotKey, repo.failed)
+	}
+}
+
+func TestIngestionRemoteMetadataOnlyPromotionFailureFailsExactPendingWithRedactedError(t *testing.T) {
+	docID := uuid.New()
+	pendingRef, checksum, pendingRevision := "pending.md", "same-sum", "rev-2"
+	pendingTitle, pendingBytes := "Updated title", int64(18)
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	repo := &fakeIngestionRepository{doc: generated.Document{
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", Checksum: checksum, SyncStatus: "syncing", UpdatedAt: claimToken,
+		PendingContentRef: &pendingRef, PendingChecksum: &checksum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
+		PendingMetadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
+	}}
+	storage := &recordingIngestionStorage{}
+	staged := &fakeStagedVectorStore{patchErr: errors.New("database SECRET detail")}
+	worker := newIngestionWorkerForTest(repo, storage, &recordingParser{}, &fakeIngestionVectorStore{}, staged, fakeIngestionEmbedder{})
+
+	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: checksum,
+		PendingRemoteRevision: pendingRevision, ClaimToken: claimToken, MetadataOnly: true,
+	}})
+	if err == nil || err.Error() != "snapshot promotion failed" || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if repo.failed == nil || repo.failed.PendingContentRef == nil || *repo.failed.PendingContentRef != pendingRef ||
+		repo.failed.SafeError == nil || *repo.failed.SafeError != "snapshot promotion failed" || repo.failed.ClaimToken != claimToken {
+		t.Fatalf("conditional metadata-only failure = %+v", repo.failed)
+	}
+	if storage.gotKey != "" {
+		t.Fatalf("metadata-only failure read storage key %q", storage.gotKey)
+	}
+}
+
 func TestIngestionRemoteInvalidDurablePayloadFailsExpectedPendingWithoutReadingSnapshot(t *testing.T) {
 	docID := uuid.New()
 	pendingRef, pendingSum, pendingRevision := "pending.md", "new-sum", "rev-2"
@@ -281,15 +408,24 @@ func (p *recordingParser) Parse(_ context.Context, body io.Reader, mime string) 
 	return &ports.ParseResult{Text: string(b), Metadata: map[string]any{"format": "text"}}, nil
 }
 
-type fakeIngestionSplitter struct{}
+type fakeIngestionSplitter struct{ calls *int }
 
-func (fakeIngestionSplitter) Split(_ context.Context, text string, _ ports.SplitOptions) ([]ports.SplitChunk, error) {
+func (f fakeIngestionSplitter) Split(_ context.Context, text string, _ ports.SplitOptions) ([]ports.SplitChunk, error) {
+	if f.calls != nil {
+		(*f.calls)++
+	}
 	return []ports.SplitChunk{{Content: text, TokenCount: 2}}, nil
 }
 
-type fakeIngestionEmbedder struct{ err error }
+type fakeIngestionEmbedder struct {
+	err   error
+	calls *int
+}
 
 func (f fakeIngestionEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	if f.calls != nil {
+		(*f.calls)++
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -314,11 +450,14 @@ func (*fakeIngestionVectorStore) Search(context.Context, string, []float32, port
 }
 
 type fakeStagedVectorStore struct {
-	calls      int
-	promotion  ports.PendingDocumentPromotion
-	items      []domain.ChunkWithEmbedding
-	patchCalls int
-	state      *memorySyncRepository
+	calls          int
+	promotion      ports.PendingDocumentPromotion
+	items          []domain.ChunkWithEmbedding
+	patchCalls     int
+	patchPromotion ports.PendingDocumentPromotion
+	patcher        ports.ChunkMetadataPatcher
+	patchErr       error
+	state          *memorySyncRepository
 }
 
 func (f *fakeStagedVectorStore) ReplaceChunksAndPromote(_ context.Context, promotion ports.PendingDocumentPromotion, items []domain.ChunkWithEmbedding) error {
@@ -328,8 +467,13 @@ func (f *fakeStagedVectorStore) ReplaceChunksAndPromote(_ context.Context, promo
 	return nil
 }
 
-func (f *fakeStagedVectorStore) PatchChunkMetadataAndPromote(_ context.Context, promotion ports.PendingDocumentPromotion, _ ports.ChunkMetadataPatcher) error {
+func (f *fakeStagedVectorStore) PatchChunkMetadataAndPromote(_ context.Context, promotion ports.PendingDocumentPromotion, patcher ports.ChunkMetadataPatcher) error {
 	f.patchCalls++
+	f.patchPromotion = promotion
+	f.patcher = patcher
+	if f.patchErr != nil {
+		return f.patchErr
+	}
 	if f.state != nil {
 		if f.state.promoteErr != nil {
 			return f.state.promoteErr

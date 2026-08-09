@@ -39,9 +39,10 @@ func (f StagedIngestionEnqueuerFunc) EnqueueStagedIngestion(ctx context.Context,
 }
 
 type StagedIngestionEnqueuerFuncs struct {
-	EnqueueFunc           func(context.Context, PendingFeishuSnapshot) error
-	EnqueueTxFunc         func(context.Context, pgx.Tx, PendingFeishuSnapshot) error
-	EnqueueFeishuSyncFunc func(context.Context, string, string) error
+	EnqueueFunc             func(context.Context, PendingFeishuSnapshot) error
+	EnqueueTxFunc           func(context.Context, pgx.Tx, PendingFeishuSnapshot) error
+	EnqueueFeishuSyncFunc   func(context.Context, string, string) error
+	EnqueueMetadataOnlyFunc func(context.Context, PendingFeishuSnapshot) error
 }
 
 func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
@@ -54,6 +55,10 @@ func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestionTx(ctx context.Conte
 
 func (f StagedIngestionEnqueuerFuncs) EnqueueFeishuSync(ctx context.Context, documentID, requestedRevision string) error {
 	return f.EnqueueFeishuSyncFunc(ctx, documentID, requestedRevision)
+}
+
+func (f StagedIngestionEnqueuerFuncs) EnqueueMetadataOnlyIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
+	return f.EnqueueMetadataOnlyFunc(ctx, snapshot)
 }
 
 type PendingFeishuSnapshot struct {

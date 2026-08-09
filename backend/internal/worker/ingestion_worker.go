@@ -34,6 +34,7 @@ type IngestionWorker struct {
 	embedder       ports.Embedder
 	vstore         ports.VectorStore
 	stagedVStore   ports.StagedVectorStore
+	citationStore  ports.CitationPromotionStore
 	chunkSize      int
 	overlap        int
 	batchSize      int
@@ -50,6 +51,7 @@ type WorkerDeps struct {
 	Embedder       ports.Embedder
 	VStore         ports.VectorStore
 	StagedVStore   ports.StagedVectorStore
+	CitationStore  ports.CitationPromotionStore
 	ChunkSize      int
 	Overlap        int
 	BatchSize      int
@@ -62,6 +64,13 @@ func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
 	if staged == nil {
 		staged, _ = d.VStore.(ports.StagedVectorStore)
 	}
+	citation := d.CitationStore
+	if citation == nil {
+		citation, _ = d.StagedVStore.(ports.CitationPromotionStore)
+	}
+	if citation == nil {
+		citation, _ = d.VStore.(ports.CitationPromotionStore)
+	}
 	if d.BatchSize < 1 {
 		d.BatchSize = 1
 	}
@@ -73,7 +82,7 @@ func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
 	}
 	return &IngestionWorker{
 		queries: d.Queries, storage: d.Storage, parser: d.Parser, splitter: d.Splitter,
-		embedder: d.Embedder, vstore: d.VStore, stagedVStore: staged,
+		embedder: d.Embedder, vstore: d.VStore, stagedVStore: staged, citationStore: citation,
 		chunkSize: d.ChunkSize, overlap: d.Overlap, batchSize: d.BatchSize, cleanupTimeout: d.CleanupTimeout, jobTimeout: d.JobTimeout,
 	}
 }
@@ -138,6 +147,22 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 	}
 	if remote && !pendingPayloadValid {
 		return failRemote("pending snapshot invalid")
+	}
+	if job.Args.MetadataOnly {
+		if !remote || pending.Checksum != doc.Checksum {
+			return nil
+		}
+		if w.citationStore == nil {
+			return failRemote("snapshot promotion failed")
+		}
+		err := w.citationStore.PatchChunkMetadataAndPromote(ctx, pending, citationMetadataPatcher(pending.Metadata))
+		if errors.Is(err, ports.ErrStaleDocumentPromotion) {
+			return nil
+		}
+		if err != nil {
+			return failRemote("snapshot promotion failed")
+		}
+		return nil
 	}
 
 	if !remote {
