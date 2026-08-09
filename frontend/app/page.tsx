@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { useSessionExpired } from "@/components/auth/auth-session-boundary";
 import { APIError } from "@/lib/api/client";
+import { getAuthenticatedUser } from "@/lib/auth-state";
 import { useAuth } from "@/lib/hooks/use-auth";
 import { useKbs } from "@/lib/hooks/use-kbs";
 import { getLastKbId } from "@/lib/last-kb";
@@ -13,7 +14,7 @@ export default function Home() {
   const router = useRouter();
   const sessionExpired = useSessionExpired();
   const auth = useAuth();
-  const authenticated = Boolean(auth.data) && !auth.isLoading && !auth.isError && !sessionExpired;
+  const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
   const { data, isError, error } = useKbs(20, 0, authenticated);
   const unauthenticated = sessionExpired || (
     auth.isError

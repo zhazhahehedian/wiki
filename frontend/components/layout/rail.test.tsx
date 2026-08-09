@@ -58,4 +58,17 @@ describe("Rail user menu", () => {
 
     expect(screen.queryByRole("button", { name: /Ada/ })).not.toBeInTheDocument();
   });
+
+  it("does not render a stale user menu while auth revalidates", () => {
+    useAuth.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+      data: { id: "stale-user", display_name: "Ada", email: "ada@example.test", avatar_url: "" },
+    });
+
+    render(<TooltipProvider><Rail /></TooltipProvider>);
+
+    expect(screen.queryByRole("button", { name: /Ada/ })).not.toBeInTheDocument();
+  });
 });

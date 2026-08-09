@@ -11,6 +11,7 @@ import { Rail } from "@/components/layout/rail";
 import { Button } from "@/components/ui/button";
 import { Sidebar, SidebarContent, SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { APIError } from "@/lib/api/client";
+import { getAuthenticatedUser } from "@/lib/auth-state";
 import { useAuth } from "@/lib/hooks/use-auth";
 import { setLastKbId } from "@/lib/last-kb";
 
@@ -20,6 +21,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const sessionExpired = useSessionExpired();
   const auth = useAuth();
+  const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
   const isChats = pathname.includes("/chats");
 
   useEffect(() => {
@@ -32,7 +34,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (unauthenticated) router.replace("/login");
   }, [router, unauthenticated]);
 
-  if (auth.isLoading) {
+  if (auth.isLoading || auth.isFetching) {
     return <AuthState message="正在验证登录状态…" />;
   }
 
@@ -46,6 +48,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <Button variant="outline" onClick={() => auth.refetch()}>重试</Button>
       </AuthState>
     );
+  }
+
+  if (!authenticated) {
+    return null;
   }
 
   return (

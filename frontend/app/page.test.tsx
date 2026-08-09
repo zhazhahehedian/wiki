@@ -40,6 +40,20 @@ describe("root authentication gate", () => {
     expect(screen.queryByText("private knowledge base")).not.toBeInTheDocument();
   });
 
+  it("does not request knowledge bases while stale auth data is revalidating", () => {
+    useAuth.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: false,
+      data: { id: "stale-user", display_name: "Stale" },
+    });
+
+    render(<Home />);
+
+    expect(useKbs).toHaveBeenCalledWith(20, 0, false);
+    expect(replace).not.toHaveBeenCalled();
+  });
+
   it("does not request knowledge bases after a non-authentication auth error", () => {
     useAuth.mockReturnValue({
       isLoading: false,

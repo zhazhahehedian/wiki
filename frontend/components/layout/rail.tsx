@@ -6,6 +6,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import { BookOpen, CircleUserRound, Library, LogOut, MessageSquare, Settings } from "lucide-react";
 import { toast } from "sonner";
 
+import { useSessionExpired } from "@/components/auth/auth-session-boundary";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { getAuthenticatedUser } from "@/lib/auth-state";
 import { useAuth, useLogout } from "@/lib/hooks/use-auth";
 import { getLastKbId } from "@/lib/last-kb";
 import { cn } from "@/lib/utils";
@@ -65,7 +67,9 @@ export function Rail() {
   const pathname = usePathname();
   const params = useParams<{ kbId?: string }>();
   const router = useRouter();
+  const sessionExpired = useSessionExpired();
   const auth = useAuth();
+  const authenticatedUser = getAuthenticatedUser(auth, sessionExpired);
   const logout = useLogout();
   const activeSection: RailSection = pathname.includes("/chats") ? "chats" : "kbs";
   // localStorage 只能客户端读；用 state + effect 避免 SSR/CSR href 不一致的 hydration 告警
@@ -100,7 +104,7 @@ export function Rail() {
         label="知识库"
       />
       <div className="mt-auto flex flex-col items-center gap-1">
-        {auth.data && !auth.isError && (
+        {authenticatedUser && (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -108,7 +112,7 @@ export function Rail() {
                   type="button"
                   variant="ghost"
                   size="icon"
-                  aria-label={`${auth.data.display_name} 的账号菜单`}
+                  aria-label={`${authenticatedUser.display_name} 的账号菜单`}
                 />
               }
             >
@@ -117,8 +121,8 @@ export function Rail() {
             <DropdownMenuContent side="right" align="end" className="w-56">
               <DropdownMenuGroup>
                 <DropdownMenuLabel className="space-y-0.5">
-                  <span className="block truncate text-sm text-foreground">{auth.data.display_name}</span>
-                  <span className="block truncate font-normal">{auth.data.email}</span>
+                  <span className="block truncate text-sm text-foreground">{authenticatedUser.display_name}</span>
+                  <span className="block truncate font-normal">{authenticatedUser.email}</span>
                 </DropdownMenuLabel>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />

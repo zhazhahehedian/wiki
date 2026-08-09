@@ -4,8 +4,10 @@ import { Suspense, useEffect } from "react";
 import { BookOpen } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
+import { useSessionExpired } from "@/components/auth/auth-session-boundary";
 import { FeishuLoginButton } from "@/components/auth/feishu-login-button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { getAuthenticatedUser } from "@/lib/auth-state";
 import { useAuth } from "@/lib/hooks/use-auth";
 
 const LOGIN_ERRORS: Record<string, string> = {
@@ -26,8 +28,9 @@ export default function LoginPage() {
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const sessionExpired = useSessionExpired();
   const auth = useAuth();
-  const authenticated = Boolean(auth.data) && !auth.isError && !auth.isFetching;
+  const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
 
   useEffect(() => {
     if (authenticated) router.replace("/");
