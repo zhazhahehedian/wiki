@@ -76,6 +76,31 @@ func TestHTTPChatSinkRedactsAndSafelyLogsStreamErrors(t *testing.T) {
 	}
 }
 
+func TestHTTPChatSinkRedactsAndSafelyLogsToolErrors(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	recorder := httptest.NewRecorder()
+	sink := &httpChatSink{w: recorder}
+	ctx := context.WithValue(context.Background(), middleware.RequestIDKey, "request-tool-123")
+	if err := sink.SendToolResult(ctx, domain.ToolResultEvent{ID: "call-1", Name: "kb_retrieval", Error: publicErrorSecret}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"error":"tool execution failed"`) {
+		t.Fatalf("body=%s", body)
+	}
+	if !strings.Contains(logs.String(), "request_id=request-tool-123") || !strings.Contains(logs.String(), "error_category=tool_execution_error") {
+		t.Fatalf("logs=%q", logs.String())
+	}
+	if strings.Contains(body, publicErrorSecret) || strings.Contains(logs.String(), publicErrorSecret) {
+		t.Fatalf("secret leaked: body=%q logs=%q", body, logs.String())
+	}
+}
+
 func TestKnowledgeBaseDocumentAndChatJSONErrorsAreRedacted(t *testing.T) {
 	userID := uuid.NewString()
 	tests := []struct {

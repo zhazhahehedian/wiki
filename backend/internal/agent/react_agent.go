@@ -125,9 +125,9 @@ func (a *ReactAgent) Run(ctx context.Context, msgs []ports.Message, tools []port
 			ev := domain.ToolResultEvent{ID: call.ID, Name: call.Name, DurationMs: elapsed}
 			if invokeErr != nil {
 				// 工具失败不中断循环：错误作为 result 回喂 LLM（spec §4.1）
-				step.Error = invokeErr.Error()
-				ev.Error = invokeErr.Error()
-				resultText = fmt.Sprintf(`{"error":%q}`, invokeErr.Error())
+				step.Error = domain.ToolExecutionFailed
+				ev.Error = domain.ToolExecutionFailed
+				resultText = fmt.Sprintf(`{"error":%q}`, domain.ToolExecutionFailed)
 			} else {
 				step.Result = truncateRunes(resultText, resultMaxRunes)
 				ev.Result = step.Result

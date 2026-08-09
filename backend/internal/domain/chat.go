@@ -14,6 +14,7 @@ const (
 	EvidenceNone          = "none"
 	EvidenceWeak          = "weak"
 	EvidenceSufficient    = "sufficient"
+	ToolExecutionFailed   = "tool execution failed"
 )
 
 type Conversation struct {

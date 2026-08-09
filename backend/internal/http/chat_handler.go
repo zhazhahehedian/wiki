@@ -186,8 +186,13 @@ func (s *httpChatSink) SendToolCall(_ context.Context, ev domain.ToolCallEvent) 
 	return WriteSSEEvent(s.w, "tool_call", ev)
 }
 
-func (s *httpChatSink) SendToolResult(_ context.Context, ev domain.ToolResultEvent) error {
+func (s *httpChatSink) SendToolResult(ctx context.Context, ev domain.ToolResultEvent) error {
 	s.ensureStarted()
+	if ev.Error != "" {
+		log.Printf("request failed request_id=%s error_category=tool_execution_error", middleware.GetReqID(ctx))
+		ev.Error = domain.ToolExecutionFailed
+		ev.Result = ""
+	}
 	return WriteSSEEvent(s.w, "tool_result", ev)
 }
 

@@ -54,8 +54,9 @@ func (t *fakeTool) Invoke(_ context.Context, args string) (string, error) {
 }
 
 type recordingSink struct {
-	events []string
-	tokens strings.Builder
+	events      []string
+	tokens      strings.Builder
+	toolResults []domain.ToolResultEvent
 }
 
 func (s *recordingSink) SendToken(_ context.Context, text string) error {
@@ -71,6 +72,7 @@ func (s *recordingSink) SendToolCall(_ context.Context, ev domain.ToolCallEvent)
 
 func (s *recordingSink) SendToolResult(_ context.Context, ev domain.ToolResultEvent) error {
 	s.events = append(s.events, "tool_result:"+ev.Name)
+	s.toolResults = append(s.toolResults, ev)
 	return nil
 }
 
@@ -131,22 +133,30 @@ func TestRunSingleToolRoundThenAnswer(t *testing.T) {
 }
 
 func TestRunFeedsToolErrorBackAndContinues(t *testing.T) {
+	secret := "oauth_token=secret provider_body=private-content"
 	llm := &scriptedLLM{rounds: [][]ports.StreamChunk{
 		{{ToolCalls: []ports.ToolCall{{ID: "c1", Name: "kb_retrieval", Arguments: `{}`}}, Done: true}},
 		{{Text: "工具失败了，基于已知信息回答。"}, {Done: true}},
 	}}
-	tool := &fakeTool{name: "kb_retrieval", err: errors.New("boom")}
+	tool := &fakeTool{name: "kb_retrieval", err: errors.New(secret)}
+	sink := &recordingSink{}
 
-	res, err := New(llm, "m", 5).Run(context.Background(), BuildReActMessages(nil, "q"), []ports.Tool{tool}, &recordingSink{})
+	res, err := New(llm, "m", 5).Run(context.Background(), BuildReActMessages(nil, "q"), []ports.Tool{tool}, sink)
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if res.Steps[0].Error != "boom" {
+	if res.Steps[0].Error != "tool execution failed" {
 		t.Errorf("step error = %q", res.Steps[0].Error)
 	}
 	toolMsg := llm.msgsLog[1][len(llm.msgsLog[1])-1]
-	if !strings.Contains(toolMsg.Content, "boom") {
-		t.Errorf("error not fed back to llm: %q", toolMsg.Content)
+	if !strings.Contains(toolMsg.Content, "tool execution failed") {
+		t.Errorf("safe error not fed back to llm: %q", toolMsg.Content)
+	}
+	if len(sink.toolResults) != 1 || sink.toolResults[0].Error != "tool execution failed" {
+		t.Fatalf("tool result events = %#v", sink.toolResults)
+	}
+	if strings.Contains(res.Steps[0].Error, secret) || strings.Contains(toolMsg.Content, secret) || strings.Contains(sink.toolResults[0].Error, secret) {
+		t.Fatalf("tool cause leaked: step=%q llm=%q event=%q", res.Steps[0].Error, toolMsg.Content, sink.toolResults[0].Error)
 	}
 }
 
@@ -159,7 +169,7 @@ func TestRunUnknownToolNameFeedsErrorBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !strings.Contains(res.Steps[0].Error, "unknown tool") {
+	if res.Steps[0].Error != domain.ToolExecutionFailed {
 		t.Errorf("step error = %q", res.Steps[0].Error)
 	}
 }
