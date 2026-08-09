@@ -20,6 +20,11 @@ const (
 	defaultFeishuAuthorizeURL = "https://accounts.feishu.cn/open-apis/authen/v1/authorize"
 	OAuthStateCookieName      = "it_wiki_oauth_state"
 	oauthStateCookieTTL       = 5 * time.Minute
+	oauthErrorCancelled       = "oauth_cancelled"
+	oauthErrorInvalidState    = "oauth_state_invalid"
+	oauthErrorTenant          = "tenant_not_allowed"
+	oauthErrorReauth          = "feishu_reauth_required"
+	oauthErrorUnavailable     = "auth_service_unavailable"
 )
 
 type AuthFlow interface {
@@ -50,6 +55,7 @@ type AuthHandler struct {
 	authorizeURL     *url.URL
 	frontendOrigin   string
 	frontendRedirect string
+	frontendLoginURL string
 }
 
 func NewDisabledAuthHandler() *AuthHandler {
@@ -91,6 +97,7 @@ func NewAuthHandler(config AuthHandlerConfig, flow AuthFlow, sessions ports.Sess
 		authorizeURL:     authorizeURL,
 		frontendOrigin:   origin,
 		frontendRedirect: origin + config.FrontendPath,
+		frontendLoginURL: origin + "/login",
 	}, nil
 }
 
@@ -122,13 +129,21 @@ func (h *AuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	h.clearOAuthStateCookie(w)
 	state := r.URL.Query().Get("state")
-	code := r.URL.Query().Get("code")
 	stateCookie, cookieErr := r.Cookie(OAuthStateCookieName)
-	if state == "" || code == "" || cookieErr != nil ||
+	if state == "" || cookieErr != nil ||
 		subtle.ConstantTimeCompare([]byte(state), []byte(stateCookie.Value)) != 1 {
-		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "state and code are required"))
+		h.redirectOAuthError(w, r, oauthErrorInvalidState)
+		return
+	}
+	h.clearOAuthStateCookie(w)
+	if r.URL.Query().Get("error") != "" {
+		h.redirectOAuthError(w, r, oauthErrorCancelled)
+		return
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		h.redirectOAuthError(w, r, oauthErrorInvalidState)
 		return
 	}
 	result, err := h.flow.CompleteOAuth(r.Context(), state, code)
@@ -216,12 +231,21 @@ func (h *AuthHandler) clearAuthCookies(w http.ResponseWriter) {
 func (h *AuthHandler) writeOAuthError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case service.IsAuthError(err, service.AuthErrorInvalidState):
-		WriteError(w, r, NewAPIError(http.StatusBadRequest, string(service.AuthErrorInvalidState), "oauth state is invalid or expired"))
+		h.redirectOAuthError(w, r, oauthErrorInvalidState)
 	case service.IsAuthError(err, service.AuthErrorTenantNotAllowed):
-		WriteError(w, r, NewAPIError(http.StatusForbidden, string(service.AuthErrorTenantNotAllowed), "tenant is not allowed"))
-	case service.IsAuthError(err, service.AuthErrorInsufficientScope):
-		WriteError(w, r, NewAPIError(http.StatusForbidden, string(service.AuthErrorInsufficientScope), "required feishu scopes were not granted"))
+		h.redirectOAuthError(w, r, oauthErrorTenant)
+	case service.IsAuthError(err, service.AuthErrorInsufficientScope),
+		service.IsAuthError(err, service.AuthErrorReauthRequired):
+		h.redirectOAuthError(w, r, oauthErrorReauth)
 	default:
-		WriteError(w, r, fmt.Errorf("complete oauth: %w", err))
+		h.redirectOAuthError(w, r, oauthErrorUnavailable)
 	}
+}
+
+func (h *AuthHandler) redirectOAuthError(w http.ResponseWriter, r *http.Request, code string) {
+	destination, _ := url.Parse(h.frontendLoginURL)
+	query := destination.Query()
+	query.Set("error", code)
+	destination.RawQuery = query.Encode()
+	http.Redirect(w, r, destination.String(), http.StatusFound)
 }

@@ -4,11 +4,11 @@ import { useEffect } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { AuthErrorState } from "@/components/auth/auth-error-state";
 import { useSessionExpired } from "@/components/auth/auth-session-boundary";
 import { ChatPanel } from "@/components/layout/chat-panel";
 import { KbPanel } from "@/components/layout/kb-panel";
 import { Rail } from "@/components/layout/rail";
-import { Button } from "@/components/ui/button";
 import { Sidebar, SidebarContent, SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { APIError } from "@/lib/api/client";
 import { getAuthenticatedUser } from "@/lib/auth-state";
@@ -28,26 +28,25 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (params.kbId) setLastKbId(params.kbId);
   }, [params.kbId]);
 
-  const unauthenticated = sessionExpired
-    || (auth.isError && auth.error instanceof APIError && auth.error.status === 401);
+  const authUnauthenticated = auth.isError
+    && auth.error instanceof APIError
+    && auth.error.status === 401;
+  const unauthenticated = sessionExpired || authUnauthenticated;
+  const authFailed = auth.isError && !authUnauthenticated;
   useEffect(() => {
     if (unauthenticated) router.replace("/login");
   }, [router, unauthenticated]);
-
-  if (auth.isLoading || auth.isFetching) {
-    return <AuthState message="正在验证登录状态…" />;
-  }
 
   if (unauthenticated) {
     return <AuthState message="正在跳转登录…" />;
   }
 
-  if (auth.isError) {
-    return (
-      <AuthState message="登录状态检查失败，请稍后重试。">
-        <Button variant="outline" onClick={() => auth.refetch()}>重试</Button>
-      </AuthState>
-    );
+  if (authFailed) {
+    return <AuthErrorState onRetry={() => void auth.refetch()} retrying={auth.isFetching} />;
+  }
+
+  if (auth.isLoading || auth.isFetching) {
+    return <AuthState message="正在验证登录状态…" />;
   }
 
   if (!authenticated) {

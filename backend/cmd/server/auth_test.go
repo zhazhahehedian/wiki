@@ -135,7 +135,12 @@ func TestProductionAuthRejectsMissingRequiredScopeBeforeSession(t *testing.T) {
 	rec := httptest.NewRecorder()
 	authHandler.Callback(rec, callback)
 
-	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "insufficient_scope") {
-		t.Fatalf("callback status/body = %d %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "https://app.example.test/login?error=feishu_reauth_required" {
+		t.Fatalf("callback status/location = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == httpx.SessionCookieName && cookie.Value != "" {
+			t.Fatalf("callback issued session cookie after scope failure: %#v", cookie)
+		}
 	}
 }

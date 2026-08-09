@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { APIError } from "@/lib/api/client";
@@ -8,6 +9,7 @@ const replace = vi.fn();
 const useAuth = vi.fn();
 const useKbs = vi.fn();
 const useSessionExpired = vi.fn();
+const refetch = vi.fn();
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace }),
@@ -26,6 +28,7 @@ describe("root authentication gate", () => {
     useAuth.mockReset();
     useKbs.mockReset();
     useSessionExpired.mockReset();
+    refetch.mockReset();
     useSessionExpired.mockReturnValue(false);
     useKbs.mockReturnValue({ data: undefined, isError: false });
   });
@@ -54,18 +57,41 @@ describe("root authentication gate", () => {
     expect(replace).not.toHaveBeenCalled();
   });
 
-  it("does not request knowledge bases after a non-authentication auth error", () => {
+  it("shows a retryable error without requesting knowledge bases after an auth service failure", async () => {
+    const user = userEvent.setup();
     useAuth.mockReturnValue({
       isLoading: false,
+      isFetching: false,
       isError: true,
       error: new APIError(503, "unavailable", "auth unavailable"),
       data: { id: "stale-user", display_name: "Stale" },
+      refetch,
     });
 
     render(<Home />);
 
     expect(useKbs).toHaveBeenCalledWith(20, 0, false);
     expect(replace).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("private knowledge base")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button"));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it("disables retry while the auth service request is in flight", () => {
+    useAuth.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: true,
+      error: new APIError(503, "unavailable", "internal provider detail"),
+      data: { id: "stale-user", display_name: "Stale" },
+      refetch,
+    });
+
+    render(<Home />);
+
+    expect(screen.getByRole("button")).toBeDisabled();
+    expect(screen.queryByText("internal provider detail")).not.toBeInTheDocument();
   });
 
   it("redirects an unauthenticated visitor directly to login without requesting KBs", async () => {

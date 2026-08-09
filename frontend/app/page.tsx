@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 
+import { AuthErrorState } from "@/components/auth/auth-error-state";
 import { useSessionExpired } from "@/components/auth/auth-session-boundary";
 import { APIError } from "@/lib/api/client";
 import { getAuthenticatedUser } from "@/lib/auth-state";
@@ -16,11 +17,11 @@ export default function Home() {
   const auth = useAuth();
   const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
   const { data, isError, error } = useKbs(20, 0, authenticated);
-  const unauthenticated = sessionExpired || (
-    auth.isError
+  const authUnauthenticated = auth.isError
     && auth.error instanceof APIError
-    && auth.error.status === 401
-  );
+    && auth.error.status === 401;
+  const unauthenticated = sessionExpired || authUnauthenticated;
+  const authFailed = auth.isError && !authUnauthenticated;
   const kbUnauthenticated = isError
     && error instanceof APIError
     && error.status === 401;
@@ -45,6 +46,10 @@ export default function Home() {
   useEffect(() => {
     if (authenticated && isError && !kbUnauthenticated) router.replace("/kbs");
   }, [authenticated, isError, kbUnauthenticated, router]);
+
+  if (authFailed) {
+    return <AuthErrorState onRetry={() => void auth.refetch()} retrying={auth.isFetching} />;
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center">

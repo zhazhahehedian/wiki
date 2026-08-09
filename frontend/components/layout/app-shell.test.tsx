@@ -104,6 +104,24 @@ describe("AppShell auth guard", () => {
     expect(screen.queryByText("private docs")).not.toBeInTheDocument();
   });
 
+  it("keeps the auth error visible and disables retry while refetching", () => {
+    useAuth.mockReturnValue({
+      isLoading: false,
+      isFetching: true,
+      isError: true,
+      error: new APIError(503, "unavailable", "internal provider detail"),
+      data: undefined,
+      refetch,
+    });
+    renderShell(<p>private docs</p>);
+
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button")).toBeDisabled();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("internal provider detail")).not.toBeInTheDocument();
+    expect(screen.queryByText("private docs")).not.toBeInTheDocument();
+  });
+
   it("renders the application only for an authenticated user", () => {
     useAuth.mockReturnValue({
       isLoading: false,

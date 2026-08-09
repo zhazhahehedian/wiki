@@ -218,12 +218,11 @@ func TestAuthCallbackRejectsMissingOrMismatchedStateCookieBeforeExchange(t *test
 
 			h.Callback(rec, req)
 
-			if rec.Code != http.StatusBadRequest || flow.completeCalls != 0 {
+			if rec.Code != http.StatusFound || rec.Header().Get("Location") != "https://app.example.test/login?error=oauth_state_invalid" || flow.completeCalls != 0 {
 				t.Fatalf("status/calls = %d/%d", rec.Code, flow.completeCalls)
 			}
-			cleared := findCookie(rec.Result().Cookies(), OAuthStateCookieName)
-			if cleared == nil || cleared.MaxAge >= 0 {
-				t.Fatalf("state cookie not cleared: %#v", cleared)
+			if cleared := findCookie(rec.Result().Cookies(), OAuthStateCookieName); cleared != nil {
+				t.Fatalf("invalid callback changed active state cookie: %#v", cleared)
 			}
 		})
 	}
@@ -248,8 +247,111 @@ func TestAuthCallbackClearsStateCookieOnProviderFailureAndReplay(t *testing.T) {
 
 	replay := httptest.NewRecorder()
 	h.Callback(replay, httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=state&code=code", nil))
-	if replay.Code != http.StatusBadRequest || flow.completeCalls != 1 {
+	if replay.Code != http.StatusFound || replay.Header().Get("Location") != "https://app.example.test/login?error=oauth_state_invalid" || flow.completeCalls != 1 {
 		t.Fatalf("replay status/calls = %d/%d", replay.Code, flow.completeCalls)
+	}
+}
+
+func TestAuthCallbackRedirectsFailuresToConfiguredLogin(t *testing.T) {
+	tests := []struct {
+		name         string
+		rawQuery     string
+		cookie       string
+		flowErr      error
+		wantCode     string
+		wantComplete int
+	}{
+		{
+			name:     "provider cancellation",
+			rawQuery: "state=state&error=access_denied&error_description=provider-secret&next=https%3A%2F%2Fevil.test",
+			cookie:   "state",
+			wantCode: "oauth_cancelled",
+		},
+		{
+			name:     "provider error missing state",
+			rawQuery: "error=access_denied&error_description=provider-secret",
+			wantCode: "oauth_state_invalid",
+		},
+		{
+			name:     "provider error mismatched state",
+			rawQuery: "state=state&error=access_denied&error_description=provider-secret",
+			cookie:   "other-state",
+			wantCode: "oauth_state_invalid",
+		},
+		{
+			name:     "invalid state",
+			rawQuery: "state=state&code=code",
+			cookie:   "other-state",
+			wantCode: "oauth_state_invalid",
+		},
+		{
+			name:         "consumed or expired state",
+			rawQuery:     "state=state&code=code",
+			cookie:       "state",
+			flowErr:      &service.AuthError{Code: service.AuthErrorInvalidState, Cause: errors.New("state-secret")},
+			wantCode:     "oauth_state_invalid",
+			wantComplete: 1,
+		},
+		{
+			name:         "tenant rejected",
+			rawQuery:     "state=state&code=code",
+			cookie:       "state",
+			flowErr:      &service.AuthError{Code: service.AuthErrorTenantNotAllowed, Cause: errors.New("tenant-secret")},
+			wantCode:     "tenant_not_allowed",
+			wantComplete: 1,
+		},
+		{
+			name:         "scope rejected",
+			rawQuery:     "state=state&code=code",
+			cookie:       "state",
+			flowErr:      &service.AuthError{Code: service.AuthErrorInsufficientScope, Cause: errors.New("scope-secret")},
+			wantCode:     "feishu_reauth_required",
+			wantComplete: 1,
+		},
+		{
+			name:         "reauth required",
+			rawQuery:     "state=state&code=code",
+			cookie:       "state",
+			flowErr:      &service.AuthError{Code: service.AuthErrorReauthRequired, Cause: errors.New("token-secret")},
+			wantCode:     "feishu_reauth_required",
+			wantComplete: 1,
+		},
+		{
+			name:         "provider or service unavailable",
+			rawQuery:     "state=state&code=code",
+			cookie:       "state",
+			flowErr:      errors.New("provider body access_token=secret-token"),
+			wantCode:     "auth_service_unavailable",
+			wantComplete: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flow := &fakeAuthFlow{err: tt.flowErr}
+			h := newTestAuthHandler(t, flow, &fakeSessionStore{}, fakeUserResolver{})
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?"+tt.rawQuery, nil)
+			if tt.cookie != "" {
+				req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: tt.cookie})
+			}
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			wantLocation := "https://app.example.test/login?error=" + url.QueryEscape(tt.wantCode)
+			if rec.Code != http.StatusFound || rec.Header().Get("Location") != wantLocation {
+				t.Fatalf("status/location = %d %q, want %d %q", rec.Code, rec.Header().Get("Location"), http.StatusFound, wantLocation)
+			}
+			if flow.completeCalls != tt.wantComplete {
+				t.Fatalf("CompleteOAuth calls = %d, want %d", flow.completeCalls, tt.wantComplete)
+			}
+			response := rec.Header().Get("Location") + rec.Body.String()
+			for _, forbidden := range []string{"evil.test", "provider-secret", "state-secret", "tenant-secret", "scope-secret", "token-secret", "secret-token", "access_token"} {
+				if strings.Contains(response, forbidden) {
+					t.Fatalf("callback response exposed %q: %s", forbidden, response)
+				}
+			}
+		})
 	}
 }
 
