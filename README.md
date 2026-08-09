@@ -2,7 +2,7 @@
 
 团队/企业知识库 Agent · 单机 Docker Compose Demo。
 
-> **当前阶段**：阶段 2.5（检索质量修复与评测基线）已完成。详见 [CLAUDE.md](CLAUDE.md) 第 2 节。
+> **当前阶段**：飞书知识源集成（OAuth、owner 隔离、导入、snapshot 同步与恢复）已实现；阶段 4 的其余打磨仍在推进。详见 [CLAUDE.md](CLAUDE.md) 第 2 节。
 
 ---
 
@@ -37,6 +37,23 @@ make down               # 停止服务，保留数据
 make clean              # 停止 + 清空 volumes(DB & 上传文件全删)
 ```
 
+### 飞书快速配置
+
+1. 在飞书开放平台创建企业自建应用，添加本项目要求的 7 个用户只读 scope。
+2. 将控制台 redirect URL 与 `.env` 的 `FEISHU_REDIRECT_URL` 配成完全相同的值；本地默认是 `http://localhost:8080/api/v1/auth/feishu/callback`。
+3. 在 `.env` 填写 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_TENANT_KEY`、`OAUTH_ENCRYPTION_KEY` 和 `FRONTEND_ORIGIN`。生产 HTTPS 同时设置 `SESSION_COOKIE_SECURE=true`。
+4. 如果升级前已有 KB 或 conversation，先设置 `BOOTSTRAP_OWNER_FEISHU_OPEN_ID`；没有 NULL owner 时留空。
+5. 启动后从 `http://localhost:8080/api/v1/auth/feishu/start` 登录，在知识库文档页导入飞书 URL，或对已有飞书文档执行“立即同步”。
+
+完整 scope/env 清单、cookie/CSRF/反代要求、同步语义和排错方法见 [飞书集成部署与排错](docs/deploy-debug-feishu.md)。
+
+不连接真实飞书的验证：
+
+```bash
+cd backend && go test ./...
+cd ../frontend && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+```
+
 ---
 
 ## 项目结构
@@ -69,5 +86,5 @@ it-wiki/
 - [x] 阶段 1：文档摄入闭环
 - [x] 阶段 2：RAG 对话最小闭环
 - [x] 阶段 2.5：检索质量修复与评测基线
-- [ ] 阶段 3：ReAct Agent 模式
-- [ ] 阶段 4：打磨 + Demo 友好
+- [x] 阶段 3：ReAct Agent 模式与 UI 3.5
+- [ ] 阶段 4：飞书知识源集成已实现，其余打磨 + Demo 友好继续推进

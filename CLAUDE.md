@@ -21,7 +21,7 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 3.5 已完成（2026-07-10，UI 视觉升级，spec：[2026-07-09-phase-3-5-ui-upgrade-design.md](docs/superpowers/specs/2026-07-09-phase-3-5-ui-upgrade-design.md)，plan：[2026-07-09-phase-3-5-ui-upgrade-plan.md](docs/superpowers/plans/2026-07-09-phase-3-5-ui-upgrade-plan.md)）。紫罗兰 OKLCH 主题 + next-themes 明暗切换；rail + 二级面板 AppShell（components/layout/）；对话页改为文档流 + 垂直 agent-timeline（工具轨迹/思考引用/自动折叠）+ 引用 chips 与 Sheet 抽屉；组件 loading/empty/error 状态补齐；全站界面文案中文化。后端零改动。lint/typecheck/vitest（10 files / 42 tests）全绿；截图验收（spec §9.2）与 build 验证（本机 Google Fonts 网络受限）待用户人工完成。下一阶段：**阶段 4（打磨 + Demo 友好，见主 spec §7）**。
+> **当前进度**：阶段 4 的飞书知识源集成已实现（2026-08-10）。当前包含单租户飞书 OAuth、加密 token、本地 session + CSRF/Origin、owner 隔离、docx/sheet/bitable/wiki 导入、River 手动同步、MinIO pending snapshot、原子 promotion、失败保留旧 snapshot/chunks、stuck-sync reconciler，以及前端最长 60s 的本地状态 watch。`POST /api/v1/kbs/{kbID}/feishu-imports` 和 `POST /api/v1/docs/{docID}/sync` 均由服务端从 session 解析 owner/account；跨 owner 请求返回 404 且不入队。部署前必须按 [飞书集成部署与排错](docs/deploy-debug-feishu.md) 配置 scope、redirect URL、tenant、cookie 和 bootstrap owner。阶段 4 的其余打磨与真实 Docker/PostgreSQL/MinIO 运行态验收仍在推进。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 
@@ -108,6 +108,15 @@ shadcn 组件复制到 `components/ui/` 后可以改样式，**不要把 ui/ 组
 2. 在 cmd/server/main.go 的 agentToolFactory 注册
 3. 前端 agent-timeline 无需改动（按 name/arguments/result 通用渲染）；如需专属展示再加分支
 ```
+
+### 5.5 飞书认证与同步
+
+- scope 以 `backend/cmd/server/auth.go` 的 `requiredFeishuScopes()` 为真相源；env 以 `backend/internal/config/config.go` 和 `.env.example` 为真相源。
+- 飞书控制台 redirect URL 必须与 `FEISHU_REDIRECT_URL` 完全一致；生产 HTTPS 使用 `SESSION_COOKIE_SECURE=true`，前端请求必须携带 credentials、精确 Origin 和 session 绑定的 CSRF header。
+- 导入走 `POST /api/v1/kbs/{kbID}/feishu-imports`；手动同步走 `POST /api/v1/docs/{docID}/sync`。两者只接受 session 推导的 owner/account，禁止浏览器提交身份字段。
+- 同步采用 pending snapshot → ingestion/chunks → atomic promotion；失败保留旧 active snapshot。reconciler 只恢复卡住的本地 pipeline，不轮询飞书远端版本。
+- 遗留 KB/conversation 有 NULL owner 时，启动必须配置 `BOOTSTRAP_OWNER_FEISHU_OPEN_ID`；bootstrap 只填 NULL，不覆盖已有 owner。
+- 运维和排错细节统一维护在 [docs/deploy-debug-feishu.md](docs/deploy-debug-feishu.md)。
 
 ---
 
@@ -198,7 +207,30 @@ EMBEDDING_DIM=1024           # 必须与 chunks.embedding 列维度一致
 # Server
 PORT=8080
 LOG_LEVEL=info
+
+# Feishu OAuth / session（启用时成组配置）
+FEISHU_APP_ID=[REPLACE_ME]
+FEISHU_APP_SECRET=[REPLACE_ME]
+FEISHU_REDIRECT_URL=http://localhost:8080/api/v1/auth/feishu/callback
+FEISHU_TENANT_KEY=[REPLACE_ME]
+OAUTH_ENCRYPTION_KEY=REPLACE_WITH_32_BYTE_RANDOM_KEY_
+SESSION_COOKIE_SECURE=false       # 生产 HTTPS 必须 true
+SESSION_TTL=24h
+FRONTEND_ORIGIN=http://localhost:3000
+BOOTSTRAP_OWNER_FEISHU_OPEN_ID=   # 仅遗留 NULL owner 时填写
+
+# Feishu sync / liveness
+FEISHU_SYNC_JOB_TIMEOUT=10m
+INGESTION_JOB_TIMEOUT=20m
+FEISHU_RECONCILE_JOB_TIMEOUT=2m
+FEISHU_RECONCILE_INTERVAL=5m
+FEISHU_SYNC_LEASE=45m
+RIVER_RESCUE_STUCK_JOBS_AFTER=30m
+FEISHU_RECONCILE_BATCH_SIZE=100
+FEISHU_RECONCILE_MAX_BATCHES=10
 ```
+
+飞书 API base、15s request timeout、3 次 retry、10,000 行和 10 MiB output 限制当前是代码默认值，没有 env 开关；不要虚构 `FEISHU_API_*` 配置。完整 scope/env 清单见 `docs/deploy-debug-feishu.md`。
 
 ---
 
