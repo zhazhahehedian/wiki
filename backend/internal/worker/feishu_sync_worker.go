@@ -147,6 +147,9 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 	}
 	expected := FeishuSyncExpectation{DocumentID: documentID, RemoteRevision: cloneString(doc.RemoteRevision), Checksum: doc.Checksum, ClaimToken: doc.UpdatedAt, Pending: snapshotFromDocument(doc)}
 	fail := func(pending *PendingFeishuSnapshot, safe string) error {
+		if pending == nil {
+			pending = snapshotFromDocument(doc)
+		}
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cleanupTimeout)
 		defer cancel()
 		_, _ = w.repo.FailFeishuSync(cleanupCtx, FailFeishuSyncInput{DocumentID: documentID, Pending: pending, SafeError: safe, ClaimToken: doc.UpdatedAt})

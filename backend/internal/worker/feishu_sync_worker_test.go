@@ -578,6 +578,28 @@ func TestFeishuSyncReconcilesExpiredPendingSnapshotAndDeletesOnlySupersededObjec
 	}
 }
 
+func TestFeishuSyncReclaimedPendingFailureRetainsReferenceAndMarksFailed(t *testing.T) {
+	now := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	state := newSyncState("rev-1", "old-sum", "active.md")
+	state.doc.SyncStatus = "syncing"
+	state.doc.UpdatedAt = now.Add(-20 * time.Minute)
+	state.doc.PendingContentRef, state.doc.PendingChecksum, state.doc.PendingRemoteRevision = ptr("pending.md"), ptr("pending-sum"), ptr("rev-pending")
+	state.claimNow = now
+	worker := NewFeishuSyncWorker(FeishuSyncWorkerDeps{
+		Repository: state, Resolver: feishu.NewURLResolver(),
+		Loaders: map[domain.ResourceType]ports.SourceLoader{domain.ResourceDocx: &fakeSourceLoader{err: errors.New("provider failed")}},
+		Tokens:  fakeTokenProvider{token: "token"}, Storage: newMemoryStorage(), Ingestion: &fakeStagedIngestionQueue{},
+		Now: func() time.Time { return now }, SyncLease: 10 * time.Minute,
+	})
+
+	if err := worker.Work(context.Background(), syncJob(state.doc.ID, "rev-1")); err == nil {
+		t.Fatal("Work() error = nil, want source failure")
+	}
+	if state.doc.SyncStatus != "failed" || state.doc.PendingContentRef == nil || *state.doc.PendingContentRef != "pending.md" {
+		t.Fatalf("reclaimed failure state = %+v", state.doc)
+	}
+}
+
 func newTestFeishuWorker(t *testing.T, state *memorySyncRepository, canonical domain.CanonicalDocument, storage *memoryStorage, queue *fakeStagedIngestionQueue) *FeishuSyncWorker {
 	t.Helper()
 	return NewFeishuSyncWorker(FeishuSyncWorkerDeps{
