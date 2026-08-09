@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,8 +39,9 @@ func (f StagedIngestionEnqueuerFunc) EnqueueStagedIngestion(ctx context.Context,
 }
 
 type StagedIngestionEnqueuerFuncs struct {
-	EnqueueFunc   func(context.Context, PendingFeishuSnapshot) error
-	EnqueueTxFunc func(context.Context, pgx.Tx, PendingFeishuSnapshot) error
+	EnqueueFunc           func(context.Context, PendingFeishuSnapshot) error
+	EnqueueTxFunc         func(context.Context, pgx.Tx, PendingFeishuSnapshot) error
+	EnqueueFeishuSyncFunc func(context.Context, string, string) error
 }
 
 func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestion(ctx context.Context, snapshot PendingFeishuSnapshot) error {
@@ -48,6 +50,10 @@ func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestion(ctx context.Context
 
 func (f StagedIngestionEnqueuerFuncs) EnqueueStagedIngestionTx(ctx context.Context, tx pgx.Tx, snapshot PendingFeishuSnapshot) error {
 	return f.EnqueueTxFunc(ctx, tx, snapshot)
+}
+
+func (f StagedIngestionEnqueuerFuncs) EnqueueFeishuSync(ctx context.Context, documentID, requestedRevision string) error {
+	return f.EnqueueFeishuSyncFunc(ctx, documentID, requestedRevision)
 }
 
 type PendingFeishuSnapshot struct {
@@ -100,8 +106,10 @@ type FeishuSyncWorkerDeps struct {
 	Storage        ports.ObjectStorage
 	Ingestion      StagedIngestionEnqueuer
 	CleanupTimeout time.Duration
+	JobTimeout     time.Duration
 	SyncLease      time.Duration
 	CitationStore  ports.CitationPromotionStore
+	Logger         *slog.Logger
 }
 
 type FeishuSyncWorker struct {
@@ -113,8 +121,10 @@ type FeishuSyncWorker struct {
 	storage        ports.ObjectStorage
 	ingestion      StagedIngestionEnqueuer
 	cleanupTimeout time.Duration
+	jobTimeout     time.Duration
 	syncLease      time.Duration
 	citationStore  ports.CitationPromotionStore
+	logger         *slog.Logger
 }
 
 func NewFeishuSyncWorker(deps FeishuSyncWorkerDeps) *FeishuSyncWorker {
@@ -124,8 +134,16 @@ func NewFeishuSyncWorker(deps FeishuSyncWorkerDeps) *FeishuSyncWorker {
 	if deps.SyncLease <= 0 {
 		deps.SyncLease = 15 * time.Minute
 	}
-	return &FeishuSyncWorker{repo: deps.Repository, resolver: deps.Resolver, loaders: deps.Loaders, tokens: deps.Tokens, storage: deps.Storage, ingestion: deps.Ingestion, cleanupTimeout: deps.CleanupTimeout, syncLease: deps.SyncLease, citationStore: deps.CitationStore}
+	if deps.JobTimeout <= 0 {
+		deps.JobTimeout = 10 * time.Minute
+	}
+	if deps.Logger == nil {
+		deps.Logger = slog.Default()
+	}
+	return &FeishuSyncWorker{repo: deps.Repository, resolver: deps.Resolver, loaders: deps.Loaders, tokens: deps.Tokens, storage: deps.Storage, ingestion: deps.Ingestion, cleanupTimeout: deps.CleanupTimeout, jobTimeout: deps.JobTimeout, syncLease: deps.SyncLease, citationStore: deps.CitationStore, logger: deps.Logger}
 }
+
+func (w *FeishuSyncWorker) Timeout(*river.Job[FeishuSyncJobArgs]) time.Duration { return w.jobTimeout }
 
 func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJobArgs]) error {
 	documentID, err := uuid.Parse(job.Args.DocumentID)
@@ -192,7 +210,7 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 	}
 	key := snapshotKey(documentID, canonical.RemoteRevision, checksum, doc.UpdatedAt)
 	if err := w.storage.Put(ctx, key, bytes.NewReader(body), int64(len(body)), "text/markdown"); err != nil {
-		w.deleteSnapshot(ctx, key)
+		w.deleteSnapshot(ctx, documentID, doc.UpdatedAt, key)
 		return fail(nil, "snapshot write failed")
 	}
 	pending := PendingFeishuSnapshot{
@@ -206,7 +224,7 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 			return fail(snapshotFromDocument(doc), "snapshot stage failed")
 		}
 		if !staged {
-			w.deleteSnapshot(ctx, key)
+			w.deleteSnapshot(ctx, documentID, doc.UpdatedAt, key)
 			return nil
 		}
 		if w.citationStore == nil {
@@ -225,12 +243,12 @@ func (w *FeishuSyncWorker) Work(ctx context.Context, job *river.Job[FeishuSyncJo
 	staged, err := w.repo.StageFeishuSnapshotAndEnqueue(ctx, StageFeishuSnapshotInput{Expected: expected, Snapshot: pending}, w.ingestion)
 	if err != nil {
 		if errors.Is(err, errSnapshotStageRolledBack) {
-			w.deleteSnapshot(ctx, key)
+			w.deleteSnapshot(ctx, documentID, doc.UpdatedAt, key)
 		}
 		return fail(snapshotFromDocument(doc), "ingestion enqueue failed")
 	}
 	if !staged {
-		w.deleteSnapshot(ctx, key)
+		w.deleteSnapshot(ctx, documentID, doc.UpdatedAt, key)
 		return nil
 	}
 	w.deleteSupersededPending(ctx, doc, key)
@@ -261,17 +279,30 @@ func citationMetadataPatcher(raw json.RawMessage) ports.ChunkMetadataPatcher {
 	}
 }
 
-func (w *FeishuSyncWorker) deleteSnapshot(ctx context.Context, key string) {
+func (w *FeishuSyncWorker) deleteSnapshot(ctx context.Context, documentID uuid.UUID, claimToken time.Time, key string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), w.cleanupTimeout)
 	defer cancel()
-	_ = w.storage.Delete(cleanupCtx, key)
+	if err := w.storage.Delete(cleanupCtx, key); err != nil {
+		w.logger.WarnContext(cleanupCtx, "Feishu snapshot cleanup failed",
+			"event", "feishu_snapshot_cleanup_failed",
+			"error_code", "snapshot_delete_failed",
+			"document_id", documentID.String(),
+			"claim_timestamp", claimToken.UTC().Format(time.RFC3339Nano),
+			"storage_key_hash", shortStorageKeyHash(key),
+		)
+	}
 }
 
 func (w *FeishuSyncWorker) deleteSupersededPending(ctx context.Context, doc generated.Document, newRef string) {
 	if doc.PendingContentRef == nil || *doc.PendingContentRef == newRef || (doc.ContentRef != nil && *doc.ContentRef == *doc.PendingContentRef) {
 		return
 	}
-	w.deleteSnapshot(ctx, *doc.PendingContentRef)
+	w.deleteSnapshot(ctx, doc.ID, doc.UpdatedAt, *doc.PendingContentRef)
+}
+
+func shortStorageKeyHash(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(sum[:8])
 }
 
 func snapshotFromDocument(doc generated.Document) *PendingFeishuSnapshot {
@@ -345,6 +376,12 @@ func NewSQLFeishuSyncRepository(pool syncTxBeginner) *SQLFeishuSyncRepository {
 
 func (r *SQLFeishuSyncRepository) ClaimFeishuSync(ctx context.Context, documentID uuid.UUID, expectedRemoteRevision *string, lease time.Duration) (generated.Document, error) {
 	return r.queries.ClaimFeishuSync(ctx, generated.ClaimFeishuSyncParams{ID: documentID, ExpectedRemoteRevision: expectedRemoteRevision, LeaseSeconds: durationSecondsCeil(lease)})
+}
+
+func (r *SQLFeishuSyncRepository) ListStaleFeishuSyncs(ctx context.Context, lease time.Duration, afterUpdatedAt time.Time, afterID uuid.UUID, batchSize int32) ([]generated.Document, error) {
+	return r.queries.ListStaleFeishuSyncs(ctx, generated.ListStaleFeishuSyncsParams{
+		LeaseSeconds: durationSecondsCeil(lease), AfterUpdatedAt: afterUpdatedAt, AfterID: afterID, BatchSize: batchSize,
+	})
 }
 
 func (r *SQLFeishuSyncRepository) CompleteUnchangedFeishuSync(ctx context.Context, input FeishuSyncExpectation) (bool, error) {

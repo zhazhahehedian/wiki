@@ -21,10 +21,13 @@ func TestIngestionRemoteReadsPendingMarkdownAndAtomicallyPromotes(t *testing.T) 
 	docID := uuid.New()
 	pendingRef, pendingSum, pendingRevision := "feishu/doc/snapshot.md", "new-sum", "rev-2"
 	activeRef, activeRevision := "feishu/doc/old.md", "rev-1"
+	pendingTitle, pendingBytes := "New title", int64(18)
+	pendingMetadata := json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`)
 	repo := &fakeIngestionRepository{doc: generated.Document{
 		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", SourceRef: "feishu://feishu.cn/docx/DocToken_123",
 		ContentRef: &activeRef, RemoteRevision: &activeRevision, Checksum: "old-sum", Status: "ready", SyncStatus: "syncing",
 		PendingContentRef: &pendingRef, PendingChecksum: &pendingSum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes, PendingMetadata: pendingMetadata,
 		Metadata: json.RawMessage(`{"source_type":"docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2"}`),
 	}}
 	storage := &recordingIngestionStorage{objects: map[string]string{pendingRef: "# New\n\nRemote body"}}
@@ -34,8 +37,7 @@ func TestIngestionRemoteReadsPendingMarkdownAndAtomicallyPromotes(t *testing.T) 
 
 	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
 		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: pendingSum, PendingRemoteRevision: pendingRevision,
-		Title: "New title", Bytes: 18,
-		Metadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2"}`),
+		Title: "stale job title", Bytes: 999, Metadata: json.RawMessage(`{"unknown_secret":"must-not-pass"}`),
 	}})
 	if err != nil {
 		t.Fatalf("Work() error = %v", err)
@@ -46,7 +48,7 @@ func TestIngestionRemoteReadsPendingMarkdownAndAtomicallyPromotes(t *testing.T) 
 	if staged.calls != 1 || staged.promotion.ContentRef != pendingRef || staged.promotion.Checksum != pendingSum || staged.promotion.RemoteRevision != pendingRevision {
 		t.Fatalf("staged promotion = %+v calls=%d", staged.promotion, staged.calls)
 	}
-	if staged.promotion.Title != "New title" || staged.promotion.Bytes != 18 || !strings.Contains(string(staged.promotion.Metadata), "source_url") {
+	if staged.promotion.Title != pendingTitle || staged.promotion.Bytes != pendingBytes || string(staged.promotion.Metadata) != string(pendingMetadata) {
 		t.Fatalf("staged active metadata = %+v", staged.promotion)
 	}
 	if len(staged.items) != 1 || staged.items[0].Metadata["source_type"] != "feishu-docx" || staged.items[0].Metadata["remote_revision"] != "rev-2" {
@@ -54,6 +56,65 @@ func TestIngestionRemoteReadsPendingMarkdownAndAtomicallyPromotes(t *testing.T) 
 	}
 	if repo.statusCalls != 0 {
 		t.Fatalf("remote ingestion used non-atomic status updates: %d", repo.statusCalls)
+	}
+}
+
+func TestIngestionRemoteInvalidDurablePayloadFailsExpectedPendingWithoutReadingSnapshot(t *testing.T) {
+	docID := uuid.New()
+	pendingRef, pendingSum, pendingRevision := "pending.md", "new-sum", "rev-2"
+	pendingTitle, pendingBytes := "New title", int64(11)
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	repo := &fakeIngestionRepository{doc: generated.Document{
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: claimToken,
+		PendingContentRef: &pendingRef, PendingChecksum: &pendingSum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
+		PendingMetadata: json.RawMessage(`{"unknown_secret":"must-not-pass"}`),
+	}}
+	storage := &recordingIngestionStorage{objects: map[string]string{pendingRef: "remote body"}}
+	staged := &fakeStagedVectorStore{}
+	worker := newIngestionWorkerForTest(repo, storage, &recordingParser{}, &fakeIngestionVectorStore{}, staged, fakeIngestionEmbedder{})
+
+	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: pendingSum, PendingRemoteRevision: pendingRevision,
+		Title: "apparently valid", Bytes: 11,
+		Metadata:   json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
+		ClaimToken: claimToken,
+	}})
+	if err == nil || err.Error() != "pending snapshot invalid" {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if repo.failed == nil || repo.failed.SafeError == nil || *repo.failed.SafeError != "pending snapshot invalid" || repo.failed.ClaimToken != claimToken {
+		t.Fatalf("conditional remote failure = %+v", repo.failed)
+	}
+	if storage.gotKey != "" || staged.calls != 0 {
+		t.Fatalf("invalid pending payload reached snapshot processing: key=%q promotions=%d", storage.gotKey, staged.calls)
+	}
+}
+
+func TestIngestionRemoteStaleClaimTokenIsNoOp(t *testing.T) {
+	docID := uuid.New()
+	pendingRef, pendingSum, pendingRevision := "pending.md", "new-sum", "rev-2"
+	pendingTitle, pendingBytes := "New title", int64(11)
+	currentClaim := time.Date(2026, 8, 9, 12, 5, 0, 0, time.UTC)
+	repo := &fakeIngestionRepository{doc: generated.Document{
+		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", SyncStatus: "syncing", UpdatedAt: currentClaim,
+		PendingContentRef: &pendingRef, PendingChecksum: &pendingSum, PendingRemoteRevision: &pendingRevision,
+		PendingTitle: &pendingTitle, PendingBytes: &pendingBytes,
+		PendingMetadata: json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`),
+	}}
+	storage := &recordingIngestionStorage{objects: map[string]string{pendingRef: "remote body"}}
+	staged := &fakeStagedVectorStore{}
+	worker := newIngestionWorkerForTest(repo, storage, &recordingParser{}, &fakeIngestionVectorStore{}, staged, fakeIngestionEmbedder{})
+
+	err := worker.Work(context.Background(), &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{
+		DocumentID: docID.String(), PendingContentRef: pendingRef, PendingChecksum: pendingSum, PendingRemoteRevision: pendingRevision,
+		ClaimToken: currentClaim.Add(-time.Minute),
+	}})
+	if err != nil {
+		t.Fatalf("Work() error = %v", err)
+	}
+	if storage.gotKey != "" || staged.calls != 0 || repo.failed != nil {
+		t.Fatalf("stale claim was processed: key=%q promotions=%d failure=%+v", storage.gotKey, staged.calls, repo.failed)
 	}
 }
 
@@ -84,14 +145,17 @@ func TestIngestionRemoteEmbeddingFailurePreservesActiveAndFailsOnlyExpectedPendi
 	docID := uuid.New()
 	pendingRef, pendingSum, pendingRevision := "pending.md", "new-sum", "rev-2"
 	activeRef, activeRevision := "active.md", "rev-1"
+	pendingTitle, pendingBytes := "New title", int64(11)
+	pendingMetadata := json.RawMessage(`{"source_type":"feishu-docx","source_url":"https://acme.feishu.cn/docx/DocToken_123","remote_revision":"rev-2","image_url":null,"source_locator":"https://acme.feishu.cn/docx/DocToken_123"}`)
+	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	repo := &fakeIngestionRepository{doc: generated.Document{
 		ID: docID, KbID: uuid.New(), SourceType: "feishu-docx", ContentRef: &activeRef, RemoteRevision: &activeRevision,
-		Checksum: "old-sum", Status: "ready", SyncStatus: "syncing", PendingContentRef: &pendingRef,
-		PendingChecksum: &pendingSum, PendingRemoteRevision: &pendingRevision, Metadata: json.RawMessage(`{}`),
+		Checksum: "old-sum", Status: "ready", SyncStatus: "syncing", UpdatedAt: claimToken, PendingContentRef: &pendingRef,
+		PendingChecksum: &pendingSum, PendingRemoteRevision: &pendingRevision, PendingTitle: &pendingTitle,
+		PendingBytes: &pendingBytes, PendingMetadata: pendingMetadata, Metadata: json.RawMessage(`{}`),
 	}}
 	worker := newIngestionWorkerForTest(repo, &recordingIngestionStorage{objects: map[string]string{pendingRef: "remote body"}}, &recordingParser{}, &fakeIngestionVectorStore{}, &fakeStagedVectorStore{}, fakeIngestionEmbedder{err: errors.New("provider SECRET body")})
 
-	claimToken := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := worker.Work(ctx, &river.Job[IngestionJobArgs]{Args: IngestionJobArgs{

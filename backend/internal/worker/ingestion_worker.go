@@ -38,6 +38,7 @@ type IngestionWorker struct {
 	overlap        int
 	batchSize      int
 	cleanupTimeout time.Duration
+	jobTimeout     time.Duration
 }
 
 type WorkerDeps struct {
@@ -53,6 +54,7 @@ type WorkerDeps struct {
 	Overlap        int
 	BatchSize      int
 	CleanupTimeout time.Duration
+	JobTimeout     time.Duration
 }
 
 func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
@@ -66,12 +68,17 @@ func NewIngestionWorker(d WorkerDeps) *IngestionWorker {
 	if d.CleanupTimeout <= 0 {
 		d.CleanupTimeout = 5 * time.Second
 	}
+	if d.JobTimeout <= 0 {
+		d.JobTimeout = 20 * time.Minute
+	}
 	return &IngestionWorker{
 		queries: d.Queries, storage: d.Storage, parser: d.Parser, splitter: d.Splitter,
 		embedder: d.Embedder, vstore: d.VStore, stagedVStore: staged,
-		chunkSize: d.ChunkSize, overlap: d.Overlap, batchSize: d.BatchSize, cleanupTimeout: d.CleanupTimeout,
+		chunkSize: d.ChunkSize, overlap: d.Overlap, batchSize: d.BatchSize, cleanupTimeout: d.CleanupTimeout, jobTimeout: d.JobTimeout,
 	}
 }
+
+func (w *IngestionWorker) Timeout(*river.Job[IngestionJobArgs]) time.Duration { return w.jobTimeout }
 
 func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobArgs]) error {
 	docID, err := uuid.Parse(job.Args.DocumentID)
@@ -85,11 +92,13 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 
 	remote := strings.HasPrefix(doc.SourceType, "feishu-")
 	var pending ports.PendingDocumentPromotion
+	pendingPayloadValid := true
 	if remote {
 		if job.Args.PendingContentRef == "" || job.Args.PendingChecksum == "" || job.Args.PendingRemoteRevision == "" ||
 			doc.PendingContentRef == nil || *doc.PendingContentRef != job.Args.PendingContentRef ||
 			doc.PendingChecksum == nil || *doc.PendingChecksum != job.Args.PendingChecksum ||
-			doc.PendingRemoteRevision == nil || *doc.PendingRemoteRevision != job.Args.PendingRemoteRevision {
+			doc.PendingRemoteRevision == nil || *doc.PendingRemoteRevision != job.Args.PendingRemoteRevision ||
+			!doc.UpdatedAt.Equal(job.Args.ClaimToken) {
 			return nil
 		}
 		pending = ports.PendingDocumentPromotion{
@@ -97,6 +106,14 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 			Checksum: job.Args.PendingChecksum, RemoteRevision: job.Args.PendingRemoteRevision,
 			Title: job.Args.Title, Bytes: job.Args.Bytes, Metadata: append(json.RawMessage(nil), job.Args.Metadata...),
 			ClaimToken: job.Args.ClaimToken,
+		}
+		if snapshot, ok := recoverableSnapshotFromDocument(doc); ok {
+			pending.Title = snapshot.Title
+			pending.Bytes = snapshot.Bytes
+			pending.Metadata = snapshot.Metadata
+			pending.ClaimToken = snapshot.ClaimToken
+		} else {
+			pendingPayloadValid = false
 		}
 	}
 
@@ -118,6 +135,9 @@ func (w *IngestionWorker) Work(ctx context.Context, job *river.Job[IngestionJobA
 			ClaimToken: pending.ClaimToken,
 		})
 		return errors.New(safe)
+	}
+	if remote && !pendingPayloadValid {
+		return failRemote("pending snapshot invalid")
 	}
 
 	if !remote {

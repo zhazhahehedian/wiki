@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -275,6 +276,44 @@ func TestFeishuSyncStorageFailureDeletesPartialAttemptObject(t *testing.T) {
 	}
 	if len(storage.deleted) != 1 || len(storage.objects) != 0 {
 		t.Fatalf("partial attempt cleanup = deleted:%v objects:%v", storage.deleted, storage.objects)
+	}
+}
+
+func TestFeishuSyncSnapshotDeleteWarningIsStructuredAndRedacted(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	storage := newMemoryStorage()
+	storage.deleteErr = errors.New("provider SECRET https://secret.example response body")
+	worker := NewFeishuSyncWorker(FeishuSyncWorkerDeps{Storage: storage, Logger: logger})
+	documentID := uuid.MustParse("d046f3f4-f690-4aa3-86a5-10dfd48c59cd")
+	claimToken := time.Date(2026, 8, 9, 12, 34, 56, 123000000, time.UTC)
+	key := "tenant/token/https://secret.example/body.md"
+
+	worker.deleteSnapshot(context.Background(), documentID, claimToken, key)
+
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("decode log = %v; output=%q", err, output.String())
+	}
+	allowed := map[string]bool{
+		"time": true, "level": true, "msg": true, "event": true, "error_code": true,
+		"document_id": true, "claim_timestamp": true, "storage_key_hash": true,
+	}
+	for field := range record {
+		if !allowed[field] {
+			t.Fatalf("unexpected log field %q in %+v", field, record)
+		}
+	}
+	if record["level"] != "WARN" || record["msg"] != "Feishu snapshot cleanup failed" ||
+		record["event"] != "feishu_snapshot_cleanup_failed" || record["error_code"] != "snapshot_delete_failed" ||
+		record["document_id"] != documentID.String() || record["claim_timestamp"] != claimToken.Format(time.RFC3339Nano) ||
+		record["storage_key_hash"] != "9436fb8335fdc735" {
+		t.Fatalf("cleanup warning = %+v", record)
+	}
+	for _, secret := range []string{key, "SECRET", "secret.example", "provider", "response body"} {
+		if strings.Contains(output.String(), secret) {
+			t.Fatalf("cleanup warning leaked %q: %s", secret, output.String())
+		}
 	}
 }
 
