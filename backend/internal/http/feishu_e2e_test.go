@@ -147,6 +147,22 @@ func TestFeishuOperatorDocumentationMatchesRuntimeContracts(t *testing.T) {
 			t.Errorf("README is missing OAuth key contract %q", readmeContract)
 		}
 	}
+	firstMakeUp := strings.Index(readme, "make up")
+	if firstMakeUp < 0 {
+		t.Fatal("README does not contain the Quick Start make up command")
+	}
+	quickStartBeforeMakeUp := readme[:firstMakeUp]
+	for _, prerequisite := range []string{
+		"FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_TENANT_KEY", "FEISHU_REDIRECT_URL",
+		"OAUTH_ENCRYPTION_KEY", "FRONTEND_ORIGIN", "openssl rand -hex 16",
+	} {
+		if !strings.Contains(quickStartBeforeMakeUp, prerequisite) {
+			t.Errorf("README must require %q before the first make up", prerequisite)
+		}
+	}
+	if strings.Contains(readme, "阶段 0 还用不上") {
+		t.Error("README still says required startup keys are unnecessary in phase 0")
+	}
 	if !slices.Equal(runtimeScopes, feishuE2ERequiredScopes()) {
 		t.Fatalf("runtime requiredFeishuScopes = %#v, E2E contract = %#v", runtimeScopes, feishuE2ERequiredScopes())
 	}

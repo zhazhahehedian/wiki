@@ -19,7 +19,10 @@
 ```bash
 # 1. 复制环境变量模板并填写
 cp .env.example .env
-# 编辑 .env：至少填好 LLM_API_KEY 和 EMBEDDING_API_KEY（阶段 0 还用不上, 占位即可）
+# 编辑 .env，填写 LLM_API_KEY、EMBEDDING_API_KEY 和以下飞书必填项：
+# FEISHU_APP_ID、FEISHU_APP_SECRET、FEISHU_TENANT_KEY、FEISHU_REDIRECT_URL、FRONTEND_ORIGIN
+# 生成私有随机 key，并将输出原样填入 OAUTH_ENCRYPTION_KEY（不可使用模板值）
+openssl rand -hex 16
 
 # 2. 启动整套服务
 make up                 # 等价: docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
@@ -41,7 +44,7 @@ make clean              # 停止 + 清空 volumes(DB & 上传文件全删)
 
 1. 在飞书开放平台创建企业自建应用，添加本项目要求的 7 个用户只读 scope。
 2. 将控制台 redirect URL 与 `.env` 的 `FEISHU_REDIRECT_URL` 配成完全相同的值；本地默认是 `http://localhost:8080/api/v1/auth/feishu/callback`。
-3. 启用飞书时必须填写 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URL`、`FEISHU_TENANT_KEY`、随机 `OAUTH_ENCRYPTION_KEY` 和 `FRONTEND_ORIGIN`，不可使用模板值。运行 `openssl rand -hex 16` 会输出恰好 32 个随机 ASCII 字符，将输出原样填入 `OAUTH_ENCRYPTION_KEY`。生产 HTTPS 同时设置 `SESSION_COOKIE_SECURE=true`。
+3. 启动前按上面的快速启动步骤填好飞书六项并使用生成的私有随机 key；生产 HTTPS 同时设置 `SESSION_COOKIE_SECURE=true`。
 4. 如果升级前已有 KB 或 conversation，先设置 `BOOTSTRAP_OWNER_FEISHU_OPEN_ID`；没有 NULL owner 时留空。
 5. 启动后从 `http://localhost:8080/api/v1/auth/feishu/start` 登录，在知识库文档页导入飞书 URL，或对已有飞书文档执行“立即同步”。
 
