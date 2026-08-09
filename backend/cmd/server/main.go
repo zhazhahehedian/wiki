@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	stdhttp "net/http"
 	"os"
 	"os/signal"
@@ -122,17 +123,42 @@ func run() error {
 		Parser:   parserDispatcher,
 		Splitter: split, Embedder: embed, VStore: vstore, StagedVStore: vstore,
 		ChunkSize: cfg.ChunkSize, Overlap: cfg.ChunkOverlap, BatchSize: cfg.EmbedBatchSize,
+		JobTimeout: cfg.IngestionJobTimeout,
 	})
 	var rclient *worker.Client
-	var feishuSyncWorker *worker.FeishuSyncWorker
+	riverConfig := worker.RiverClientConfig{
+		IngestionWorker: ingestionWorker, MaxWorkers: cfg.RiverMaxWorkers,
+		RescueStuckJobsAfter: cfg.RiverRescueStuckJobsAfter,
+	}
 	if authService != nil {
 		apiClient := feishu.NewClient(feishu.ClientConfig{}, stdhttp.DefaultClient)
 		docxLoader := feishu.NewDocxLoader(apiClient)
 		sheetLoader := feishu.NewSheetLoader(apiClient)
 		bitableLoader := feishu.NewBitableLoader(apiClient, feishu.BitableConfig{})
 		wikiLoader := feishu.NewWikiLoader(apiClient, docxLoader, sheetLoader, bitableLoader)
-		feishuSyncWorker = worker.NewFeishuSyncWorker(worker.FeishuSyncWorkerDeps{
-			Repository: worker.NewSQLFeishuSyncRepository(pool),
+		syncRepository := worker.NewSQLFeishuSyncRepository(pool)
+		queueForwarder := worker.StagedIngestionEnqueuerFuncs{
+			EnqueueFunc: func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueStagedIngestion(ctx, snapshot)
+			},
+			EnqueueTxFunc: func(ctx context.Context, tx pgx.Tx, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueStagedIngestionTx(ctx, tx, snapshot)
+			},
+			EnqueueFeishuSyncFunc: func(ctx context.Context, documentID, revision string) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueFeishuSync(ctx, documentID, revision)
+			},
+		}
+		feishuSyncWorker := worker.NewFeishuSyncWorker(worker.FeishuSyncWorkerDeps{
+			Repository: syncRepository,
 			Resolver:   feishu.NewURLResolver(),
 			Loaders: map[domain.ResourceType]ports.SourceLoader{
 				domain.ResourceDocx: docxLoader, domain.ResourceSheet: sheetLoader,
@@ -140,23 +166,19 @@ func run() error {
 			},
 			Tokens: authService, Storage: mc,
 			CitationStore: vstore,
-			Ingestion: worker.StagedIngestionEnqueuerFuncs{
-				EnqueueFunc: func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
-					if rclient == nil {
-						return errors.New("River client unavailable")
-					}
-					return rclient.EnqueueStagedIngestion(ctx, snapshot)
-				},
-				EnqueueTxFunc: func(ctx context.Context, tx pgx.Tx, snapshot worker.PendingFeishuSnapshot) error {
-					if rclient == nil {
-						return errors.New("River client unavailable")
-					}
-					return rclient.EnqueueStagedIngestionTx(ctx, tx, snapshot)
-				},
-			},
+			Ingestion:     queueForwarder, JobTimeout: cfg.FeishuSyncJobTimeout, SyncLease: cfg.FeishuSyncLease,
+			Logger: slog.Default(),
 		})
+		reconcileWorker := worker.NewFeishuReconcileWorker(worker.FeishuReconcileWorkerDeps{
+			Repository: syncRepository, Queue: queueForwarder, SyncLease: cfg.FeishuSyncLease,
+			JobTimeout: cfg.FeishuReconcileJobTimeout, BatchSize: cfg.FeishuReconcileBatchSize,
+			MaxBatches: cfg.FeishuReconcileMaxBatches,
+		})
+		riverConfig.FeishuSyncWorker = feishuSyncWorker
+		riverConfig.ReconcileWorker = reconcileWorker
+		riverConfig.ReconcileInterval = cfg.FeishuReconcileInterval
 	}
-	rclient, err = worker.NewClient(bootCtx, pool, ingestionWorker, cfg.RiverMaxWorkers, feishuSyncWorker)
+	rclient, err = worker.NewConfiguredClient(bootCtx, pool, riverConfig)
 	if err != nil {
 		return fmt.Errorf("river client: %w", err)
 	}

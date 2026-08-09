@@ -36,6 +36,15 @@ type Config struct {
 	UploadMaxBytes    int64
 	RiverMaxWorkers   int
 
+	FeishuSyncJobTimeout      time.Duration
+	IngestionJobTimeout       time.Duration
+	FeishuReconcileJobTimeout time.Duration
+	FeishuReconcileInterval   time.Duration
+	FeishuSyncLease           time.Duration
+	RiverRescueStuckJobsAfter time.Duration
+	FeishuReconcileBatchSize  int
+	FeishuReconcileMaxBatches int
+
 	RAGTopK            int
 	RAGMinScore        float32
 	RAGHistoryMessages int
@@ -71,6 +80,48 @@ func Load() (*Config, error) {
 	}
 	if sessionTTL <= 0 {
 		return nil, fmt.Errorf("invalid SESSION_TTL: must be positive")
+	}
+	feishuSyncJobTimeout, err := positiveDurationEnv("FEISHU_SYNC_JOB_TIMEOUT", "10m")
+	if err != nil {
+		return nil, err
+	}
+	ingestionJobTimeout, err := positiveDurationEnv("INGESTION_JOB_TIMEOUT", "20m")
+	if err != nil {
+		return nil, err
+	}
+	feishuReconcileJobTimeout, err := positiveDurationEnv("FEISHU_RECONCILE_JOB_TIMEOUT", "2m")
+	if err != nil {
+		return nil, err
+	}
+	feishuReconcileInterval, err := positiveDurationEnv("FEISHU_RECONCILE_INTERVAL", "5m")
+	if err != nil {
+		return nil, err
+	}
+	feishuSyncLease, err := positiveDurationEnv("FEISHU_SYNC_LEASE", "45m")
+	if err != nil {
+		return nil, err
+	}
+	riverRescueStuckJobsAfter, err := positiveDurationEnv("RIVER_RESCUE_STUCK_JOBS_AFTER", "30m")
+	if err != nil {
+		return nil, err
+	}
+	feishuReconcileBatchSize, err := boundedPositiveIntEnv("FEISHU_RECONCILE_BATCH_SIZE", "100", 500)
+	if err != nil {
+		return nil, err
+	}
+	feishuReconcileMaxBatches, err := boundedPositiveIntEnv("FEISHU_RECONCILE_MAX_BATCHES", "10", 20)
+	if err != nil {
+		return nil, err
+	}
+	if feishuReconcileInterval >= feishuSyncLease {
+		return nil, fmt.Errorf("invalid FEISHU_RECONCILE_INTERVAL: must be less than FEISHU_SYNC_LEASE")
+	}
+	if feishuSyncLease <= feishuSyncJobTimeout+ingestionJobTimeout {
+		return nil, fmt.Errorf("invalid FEISHU_SYNC_LEASE: must exceed FEISHU_SYNC_JOB_TIMEOUT plus INGESTION_JOB_TIMEOUT")
+	}
+	maxWorkerTimeout := max(feishuSyncJobTimeout, ingestionJobTimeout, feishuReconcileJobTimeout)
+	if riverRescueStuckJobsAfter <= maxWorkerTimeout {
+		return nil, fmt.Errorf("invalid RIVER_RESCUE_STUCK_JOBS_AFTER: must exceed every worker timeout")
 	}
 
 	feishuValues := map[string]string{
@@ -124,6 +175,15 @@ func Load() (*Config, error) {
 		EmbeddingModel:   getEnv("EMBEDDING_MODEL", ""),
 		EmbeddingDim:     dim,
 
+		FeishuSyncJobTimeout:      feishuSyncJobTimeout,
+		IngestionJobTimeout:       ingestionJobTimeout,
+		FeishuReconcileJobTimeout: feishuReconcileJobTimeout,
+		FeishuReconcileInterval:   feishuReconcileInterval,
+		FeishuSyncLease:           feishuSyncLease,
+		RiverRescueStuckJobsAfter: riverRescueStuckJobsAfter,
+		FeishuReconcileBatchSize:  feishuReconcileBatchSize,
+		FeishuReconcileMaxBatches: feishuReconcileMaxBatches,
+
 		FeishuEnabled:      feishuEnabled,
 		FeishuAppID:        feishuValues["FEISHU_APP_ID"],
 		FeishuAppSecret:    feishuValues["FEISHU_APP_SECRET"],
@@ -157,6 +217,28 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func positiveDurationEnv(key, fallback string) (time.Duration, error) {
+	value, err := time.ParseDuration(getEnv(key, fallback))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("invalid %s: must be positive", key)
+	}
+	return value, nil
+}
+
+func boundedPositiveIntEnv(key, fallback string, upperBound int) (int, error) {
+	value, err := strconv.Atoi(getEnv(key, fallback))
+	if err != nil {
+		return 0, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	if value < 1 || value > upperBound {
+		return 0, fmt.Errorf("invalid %s: must be between 1 and %d", key, upperBound)
+	}
+	return value, nil
 }
 
 func getEnv(key, fallback string) string {
