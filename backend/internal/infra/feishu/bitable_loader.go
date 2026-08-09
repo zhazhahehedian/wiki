@@ -106,12 +106,16 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 	limits := l.client.resourceLimits
 	limits.MaxRows = l.config.MaxRows
 	limits.MaxOutputBytes = l.config.MaxOutputBytes
-	budget := resourceBudgetFromContext(ctx, limits)
+	budget, err := resourceBudgetFromContext(ctx, limits)
+	if err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	tables, err := l.listTables(ctx, basePath, accessToken, budget)
 	if err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 	loaded := make([]loadedBitableView, 0)
+	estimatedOutputBytes := 0
 	for _, table := range tables {
 		if err := ctx.Err(); err != nil {
 			return domain.CanonicalDocument{}, err
@@ -120,7 +124,7 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 			continue
 		}
 		if ref.ViewID == "" {
-			records, err := l.listRecords(ctx, basePath, table.TableID, "", accessToken, budget)
+			records, err := l.listRecords(ctx, basePath, table.TableID, "", accessToken, budget, &estimatedOutputBytes)
 			if err != nil {
 				return domain.CanonicalDocument{}, err
 			}
@@ -135,7 +139,7 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 			if ref.ViewID != view.ViewID {
 				continue
 			}
-			records, err := l.listRecords(ctx, basePath, table.TableID, view.ViewID, accessToken, budget)
+			records, err := l.listRecords(ctx, basePath, table.TableID, view.ViewID, accessToken, budget, &estimatedOutputBytes)
 			if err != nil {
 				return domain.CanonicalDocument{}, err
 			}
@@ -166,7 +170,7 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 		parts = append(parts, strings.Join(section, "\n\n"))
 	}
 	markdown := l.normalizer.Finalize(parts)
-	if err := budget.OutputBytes(len(markdown)); err != nil {
+	if err := budget.Bytes(len(markdown)); err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 
@@ -247,7 +251,7 @@ func (l *BitableLoader) listViews(ctx context.Context, basePath, tableID, access
 	return items, err
 }
 
-func (l *BitableLoader) listRecords(ctx context.Context, basePath, tableID, viewID, accessToken string, budget *resourceBudget) ([]bitableRecord, error) {
+func (l *BitableLoader) listRecords(ctx context.Context, basePath, tableID, viewID, accessToken string, budget *resourceBudget, estimatedOutputBytes *int) ([]bitableRecord, error) {
 	items := make([]bitableRecord, 0)
 	path := basePath + "/tables/" + tableID + "/records"
 	var baseQuery url.Values
@@ -267,7 +271,8 @@ func (l *BitableLoader) listRecords(ctx context.Context, basePath, tableID, view
 				return false, "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
 			for field, value := range item.Fields {
-				if err := budget.Bytes(len(field) + len(flattenBitableValue(value)) + 6); err != nil {
+				*estimatedOutputBytes += len(field) + len(flattenBitableValue(value)) + 6
+				if err := budget.CheckAdditionalOutputBytes(*estimatedOutputBytes); err != nil {
 					return false, "", err
 				}
 			}

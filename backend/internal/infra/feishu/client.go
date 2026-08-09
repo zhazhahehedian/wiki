@@ -135,11 +135,14 @@ func newResourceBudget(limits ResourceLimits) *resourceBudget {
 
 type resourceBudgetContextKey struct{}
 
-func resourceBudgetFromContext(ctx context.Context, limits ResourceLimits) *resourceBudget {
+func resourceBudgetFromContext(ctx context.Context, limits ResourceLimits) (*resourceBudget, error) {
 	if budget, ok := ctx.Value(resourceBudgetContextKey{}).(*resourceBudget); ok && budget != nil {
-		return budget
+		if err := budget.tighten(limits); err != nil {
+			return nil, err
+		}
+		return budget, nil
 	}
-	return newResourceBudget(limits)
+	return newResourceBudget(limits), nil
 }
 
 func contextWithResourceBudget(ctx context.Context, budget *resourceBudget) context.Context {
@@ -154,6 +157,19 @@ func (b *resourceBudget) consume(current *int, amount, maximum int) error {
 	return nil
 }
 
+func (b *resourceBudget) tighten(limits ResourceLimits) error {
+	limits = withDefaultResourceLimits(limits)
+	b.limits.MaxPages = min(b.limits.MaxPages, limits.MaxPages)
+	b.limits.MaxBlocks = min(b.limits.MaxBlocks, limits.MaxBlocks)
+	b.limits.MaxRows = min(b.limits.MaxRows, limits.MaxRows)
+	b.limits.MaxOutputBytes = min(b.limits.MaxOutputBytes, limits.MaxOutputBytes)
+	b.limits.MaxDepth = min(b.limits.MaxDepth, limits.MaxDepth)
+	if b.pages > b.limits.MaxPages || b.blocks > b.limits.MaxBlocks || b.rows > b.limits.MaxRows || b.bytes > b.limits.MaxOutputBytes {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	return nil
+}
+
 func (b *resourceBudget) Page() error { return b.consume(&b.pages, 1, b.limits.MaxPages) }
 func (b *resourceBudget) Blocks(count int) error {
 	return b.consume(&b.blocks, count, b.limits.MaxBlocks)
@@ -162,15 +178,8 @@ func (b *resourceBudget) Rows(count int) error { return b.consume(&b.rows, count
 func (b *resourceBudget) Bytes(count int) error {
 	return b.consume(&b.bytes, count, b.limits.MaxOutputBytes)
 }
-func (b *resourceBudget) OutputBytes(total int) error {
-	if total < 0 || total > b.limits.MaxOutputBytes {
-		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
-	}
-	b.bytes = total
-	return nil
-}
-func (b *resourceBudget) CheckOutputBytes(total int) error {
-	if total < 0 || total > b.limits.MaxOutputBytes {
+func (b *resourceBudget) CheckAdditionalOutputBytes(total int) error {
+	if total < 0 || b.bytes > b.limits.MaxOutputBytes-total {
 		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
 	}
 	return nil

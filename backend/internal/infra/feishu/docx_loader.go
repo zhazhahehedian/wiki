@@ -132,7 +132,10 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 
 	blocks := make(map[string]docxBlock)
 	order := make([]string, 0)
-	budget := resourceBudgetFromContext(ctx, l.client.resourceLimits)
+	budget, err := resourceBudgetFromContext(ctx, l.client.resourceLimits)
+	if err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	tracker := newPageTokenTracker()
 	pageToken := ""
 	for {
@@ -185,7 +188,7 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
 	markdown := l.normalizer.Finalize(parts)
-	if err := budget.OutputBytes(len(markdown)); err != nil {
+	if err := budget.Bytes(len(markdown)); err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 	document, err := domain.NewCanonicalDocument(domain.CanonicalDocumentInput{
@@ -244,7 +247,7 @@ func (r docxRenderer) renderChildren(ids []string, depth int, stack map[string]b
 		if part != "" {
 			totalBytes += len(part) + 1
 			if r.budget != nil {
-				if err := r.budget.CheckOutputBytes(totalBytes); err != nil {
+				if err := r.budget.CheckAdditionalOutputBytes(totalBytes); err != nil {
 					return nil, err
 				}
 			}
@@ -349,7 +352,7 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 		}
 	}
 	if r.budget != nil {
-		if err := r.budget.CheckOutputBytes(len(rendered)); err != nil {
+		if err := r.budget.CheckAdditionalOutputBytes(len(rendered)); err != nil {
 			return "", err
 		}
 	}

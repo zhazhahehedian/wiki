@@ -231,6 +231,57 @@ func TestClientHonorsHTTPDateRetryAfterAndPerRequestTimeout(t *testing.T) {
 	}
 }
 
+func TestResourceBudgetTighteningPreservesUsageAndNeverLoosens(t *testing.T) {
+	budget := newResourceBudget(ResourceLimits{MaxPages: 10, MaxBlocks: 10, MaxRows: 10, MaxOutputBytes: 100, MaxDepth: 10})
+	if err := budget.Page(); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Blocks(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Rows(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Bytes(10); err != nil {
+		t.Fatal(err)
+	}
+	ctx := contextWithResourceBudget(context.Background(), budget)
+
+	got, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 2, MaxBlocks: 1, MaxRows: 3, MaxOutputBytes: 20, MaxDepth: 2})
+	if err != nil || got != budget {
+		t.Fatalf("tighten = %p, %v; want existing %p", got, err, budget)
+	}
+	if budget.pages != 1 || budget.blocks != 1 || budget.rows != 2 || budget.bytes != 10 {
+		t.Fatalf("usage reset during tightening: %+v", budget)
+	}
+	if _, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 100, MaxBlocks: 100, MaxRows: 100, MaxOutputBytes: 1000, MaxDepth: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if budget.limits.MaxPages != 2 || budget.limits.MaxRows != 3 || budget.limits.MaxOutputBytes != 20 || budget.limits.MaxDepth != 2 {
+		t.Fatalf("limits loosened: %+v", budget.limits)
+	}
+
+	if err := budget.Page(); err != nil {
+		t.Fatal(err)
+	}
+	assertLoadCode(t, budget.Page(), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.Blocks(1), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.Rows(2), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.CheckAdditionalOutputBytes(11), ports.SourceLoadTooLarge)
+	if err := budget.Bytes(10); err != nil {
+		t.Fatal(err)
+	}
+	assertLoadCode(t, budget.Bytes(1), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.Depth(3), ports.SourceLoadTooLarge)
+
+	overused := newResourceBudget(ResourceLimits{MaxRows: 10})
+	if err := overused.Rows(2); err != nil {
+		t.Fatal(err)
+	}
+	_, err = resourceBudgetFromContext(contextWithResourceBudget(context.Background(), overused), ResourceLimits{MaxRows: 1})
+	assertLoadCode(t, err, ports.SourceLoadTooLarge)
+}
+
 type leakingError struct{ Secret string }
 
 func (e leakingError) Error() string { return e.Secret }

@@ -79,12 +79,16 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
 
-	budget := resourceBudgetFromContext(ctx, l.client.resourceLimits)
+	budget, err := resourceBudgetFromContext(ctx, l.client.resourceLimits)
+	if err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	sheets, err := l.listSheets(ctx, ref, accessToken, budget)
 	if err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 	loaded := make([]loadedSheet, 0, len(sheets))
+	estimatedOutputBytes := 0
 	for _, sheet := range sheets {
 		if ref.SheetID != "" && ref.SheetID != sheet.SheetID {
 			continue
@@ -93,7 +97,7 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		if rowCount == 0 {
 			rowCount = sheet.GridProperties.RowCount
 		}
-		segments, revision, err := l.loadRows(ctx, ref.Token, sheet.SheetID, rowCount, accessToken, budget)
+		segments, revision, err := l.loadRows(ctx, ref.Token, sheet.SheetID, rowCount, accessToken, budget, &estimatedOutputBytes)
 		if err != nil {
 			return domain.CanonicalDocument{}, err
 		}
@@ -149,7 +153,7 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
 	markdown := l.normalizer.Finalize(parts)
-	if err := budget.OutputBytes(len(markdown)); err != nil {
+	if err := budget.Bytes(len(markdown)); err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 	document, err := domain.NewCanonicalDocument(domain.CanonicalDocumentInput{
@@ -183,7 +187,7 @@ func (l *SheetLoader) listSheets(ctx context.Context, ref domain.ResourceRef, ac
 	return data.Sheets, nil
 }
 
-func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID string, rowCount int, accessToken string, budget *resourceBudget) ([]sheetRowSegment, int64, error) {
+func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID string, rowCount int, accessToken string, budget *resourceBudget, estimatedOutputBytes *int) ([]sheetRowSegment, int64, error) {
 	segments := make([]sheetRowSegment, 0)
 	revision := int64(0)
 	ranges := [][2]int{{0, 0}}
@@ -230,13 +234,15 @@ func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID strin
 			if err := ctx.Err(); err != nil {
 				return nil, 0, err
 			}
-			if err := budget.Bytes(4 + len(values)*3); err != nil {
+			*estimatedOutputBytes += 4 + len(values)*3
+			if err := budget.CheckAdditionalOutputBytes(*estimatedOutputBytes); err != nil {
 				return nil, 0, err
 			}
 			row := make([]string, len(values))
 			for i, value := range values {
 				row[i] = canonicalCell(value)
-				if err := budget.Bytes(len(row[i])); err != nil {
+				*estimatedOutputBytes += len(row[i])
+				if err := budget.CheckAdditionalOutputBytes(*estimatedOutputBytes); err != nil {
 					return nil, 0, err
 				}
 			}
