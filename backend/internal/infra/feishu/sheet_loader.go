@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -23,16 +22,13 @@ func NewSheetLoader(client *Client) *SheetLoader {
 
 type sheetWorkbookData struct {
 	Spreadsheet struct {
-		SpreadsheetToken string `json:"spreadsheet_token"`
-		Title            string `json:"title"`
-		Revision         int64  `json:"revision"`
+		Token string `json:"token"`
+		Title string `json:"title"`
 	} `json:"spreadsheet"`
 }
 
 type sheetListData struct {
-	Sheets    []sheetInfo `json:"sheets"`
-	HasMore   bool        `json:"has_more"`
-	PageToken string      `json:"page_token"`
+	Sheets []sheetInfo `json:"sheets"`
 }
 
 type sheetInfo struct {
@@ -60,8 +56,14 @@ type sheetValueRange struct {
 type loadedSheet struct {
 	id       string
 	title    string
-	rows     [][]string
+	segments []sheetRowSegment
 	revision int64
+}
+
+type sheetRowSegment struct {
+	start int
+	end   int
+	rows  [][]string
 }
 
 func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessToken string) (domain.CanonicalDocument, error) {
@@ -73,11 +75,12 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 	if err := l.client.Get(ctx, accessToken, metaPath, nil, &workbook); err != nil {
 		return domain.CanonicalDocument{}, err
 	}
-	if strings.TrimSpace(workbook.Spreadsheet.Title) == "" || workbook.Spreadsheet.Revision < 0 {
+	if workbook.Spreadsheet.Token != ref.Token || strings.TrimSpace(workbook.Spreadsheet.Title) == "" {
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
 
-	sheets, err := l.listSheets(ctx, ref, accessToken)
+	budget := resourceBudgetFromContext(ctx, l.client.resourceLimits)
+	sheets, err := l.listSheets(ctx, ref, accessToken, budget)
 	if err != nil {
 		return domain.CanonicalDocument{}, err
 	}
@@ -90,11 +93,11 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		if rowCount == 0 {
 			rowCount = sheet.GridProperties.RowCount
 		}
-		rows, revision, err := l.loadRows(ctx, ref.Token, sheet.SheetID, rowCount, accessToken)
+		segments, revision, err := l.loadRows(ctx, ref.Token, sheet.SheetID, rowCount, accessToken, budget)
 		if err != nil {
 			return domain.CanonicalDocument{}, err
 		}
-		loaded = append(loaded, loadedSheet{id: sheet.SheetID, title: sheet.Title, rows: rows, revision: revision})
+		loaded = append(loaded, loadedSheet{id: sheet.SheetID, title: sheet.Title, segments: segments, revision: revision})
 	}
 	if ref.SheetID != "" && len(loaded) == 0 {
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadNotFound, nil)
@@ -102,18 +105,19 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 
 	parts := make([]string, 0, len(loaded))
 	for _, sheet := range loaded {
-		rowStart, rowEnd := rowBounds(len(sheet.rows))
+		rows := flattenSheetSegments(sheet.segments)
+		rowStart, rowEnd := segmentBounds(sheet.segments)
 		section := []string{
 			l.normalizer.Heading(2, sheet.title),
 			fmt.Sprintf(`<!-- feishu-sheet sheet_id="%s" rows="%d-%d" -->`, sheet.id, rowStart, rowEnd),
 		}
-		if table := l.normalizer.Table(sheet.rows); table != "" {
+		if table := l.normalizer.Table(rows); table != "" {
 			section = append(section, table)
 		}
 		parts = append(parts, strings.Join(section, "\n\n"))
 	}
 
-	revision := workbook.Spreadsheet.Revision
+	revision := int64(0)
 	for _, sheet := range loaded {
 		if sheet.revision > revision {
 			revision = sheet.revision
@@ -125,23 +129,31 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		Locations: make([]domain.SourceLocation, 0, len(loaded)),
 	}
 	for _, sheet := range loaded {
-		rowStart, rowEnd := rowBounds(len(sheet.rows))
-		metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{
-			SectionPath: workbook.Spreadsheet.Title + " / " + sheet.title,
-			SheetName:   sheet.title, SheetID: sheet.id, RowStart: rowStart, RowEnd: rowEnd,
-		})
+		if len(sheet.segments) == 0 {
+			metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{SectionPath: workbook.Spreadsheet.Title + " / " + sheet.title, SheetName: sheet.title, SheetID: sheet.id})
+		}
+		for _, segment := range sheet.segments {
+			metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{
+				SectionPath: workbook.Spreadsheet.Title + " / " + sheet.title,
+				SheetName:   sheet.title, SheetID: sheet.id, RowStart: segment.start, RowEnd: segment.end,
+			})
+		}
 	}
 	if len(loaded) == 1 {
 		metadataInput.SheetID = loaded[0].id
 		metadataInput.SheetName = loaded[0].title
-		metadataInput.RowStart, metadataInput.RowEnd = rowBounds(len(loaded[0].rows))
+		metadataInput.RowStart, metadataInput.RowEnd = segmentBounds(loaded[0].segments)
 	}
 	metadata, err := domain.NewSourceMetadata(metadataInput)
 	if err != nil {
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
+	markdown := l.normalizer.Finalize(parts)
+	if err := budget.OutputBytes(len(markdown)); err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	document, err := domain.NewCanonicalDocument(domain.CanonicalDocumentInput{
-		Title: workbook.Spreadsheet.Title, Markdown: l.normalizer.Finalize(parts),
+		Title: workbook.Spreadsheet.Title, Markdown: markdown,
 		RemoteRevision: strconv.FormatInt(revision, 10),
 		SourceMetadata: metadata, SafeSourceURL: ref.CanonicalURL,
 	})
@@ -151,38 +163,28 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 	return document, nil
 }
 
-func (l *SheetLoader) listSheets(ctx context.Context, ref domain.ResourceRef, accessToken string) ([]sheetInfo, error) {
-	var result []sheetInfo
-	tracker := newPageTokenTracker()
-	token := ""
-	for {
-		query := url.Values{"page_size": {"100"}}
-		if token != "" {
-			query.Set("page_token", token)
-		}
-		var page sheetListData
-		path := "/open-apis/sheets/v3/spreadsheets/" + ref.Token + "/sheets/query"
-		if err := l.client.Get(ctx, accessToken, path, query, &page); err != nil {
-			return nil, err
-		}
-		for _, sheet := range page.Sheets {
-			if !validAPIIdentifier(sheet.SheetID) || strings.TrimSpace(sheet.Title) == "" {
-				return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
-			}
-		}
-		result = append(result, page.Sheets...)
-		if !page.HasMore {
-			return result, nil
-		}
-		if page.PageToken == "" || tracker.Advance(page.PageToken) != nil {
+func (l *SheetLoader) listSheets(ctx context.Context, ref domain.ResourceRef, accessToken string, budget *resourceBudget) ([]sheetInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := budget.Page(); err != nil {
+		return nil, err
+	}
+	var data sheetListData
+	path := "/open-apis/sheets/v3/spreadsheets/" + ref.Token + "/sheets/query"
+	if err := l.client.Get(ctx, accessToken, path, nil, &data); err != nil {
+		return nil, err
+	}
+	for _, sheet := range data.Sheets {
+		if !validAPIIdentifier(sheet.SheetID) || strings.TrimSpace(sheet.Title) == "" {
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 		}
-		token = page.PageToken
 	}
+	return data.Sheets, nil
 }
 
-func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID string, rowCount int, accessToken string) ([][]string, int64, error) {
-	rows := make([][]string, 0)
+func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID string, rowCount int, accessToken string, budget *resourceBudget) ([]sheetRowSegment, int64, error) {
+	segments := make([]sheetRowSegment, 0)
 	revision := int64(0)
 	ranges := [][2]int{{0, 0}}
 	if rowCount > 0 {
@@ -196,6 +198,12 @@ func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID strin
 		}
 	}
 	for _, rowRange := range ranges {
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		if err := budget.Page(); err != nil {
+			return nil, 0, err
+		}
 		path := "/open-apis/sheets/v2/spreadsheets/" + workbookToken + "/values/" + sheetID
 		if rowRange[0] > 0 {
 			path += "!A" + strconv.Itoa(rowRange[0]) + ":ZZZ" + strconv.Itoa(rowRange[1])
@@ -214,15 +222,48 @@ func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID strin
 		if page.Revision > revision {
 			revision = page.Revision
 		}
+		if err := budget.Rows(len(valueRange.Values)); err != nil {
+			return nil, 0, err
+		}
+		rows := make([][]string, 0, len(valueRange.Values))
 		for _, values := range valueRange.Values {
+			if err := ctx.Err(); err != nil {
+				return nil, 0, err
+			}
+			if err := budget.Bytes(4 + len(values)*3); err != nil {
+				return nil, 0, err
+			}
 			row := make([]string, len(values))
 			for i, value := range values {
 				row[i] = canonicalCell(value)
+				if err := budget.Bytes(len(row[i])); err != nil {
+					return nil, 0, err
+				}
 			}
 			rows = append(rows, row)
 		}
+		if rowRange[0] > 0 {
+			segments = append(segments, sheetRowSegment{start: rowRange[0], end: rowRange[1], rows: rows})
+		} else if len(rows) > 0 {
+			segments = append(segments, sheetRowSegment{start: 1, end: len(rows), rows: rows})
+		}
 	}
-	return rows, revision, nil
+	return segments, revision, nil
+}
+
+func flattenSheetSegments(segments []sheetRowSegment) [][]string {
+	var rows [][]string
+	for _, segment := range segments {
+		rows = append(rows, segment.rows...)
+	}
+	return rows
+}
+
+func segmentBounds(segments []sheetRowSegment) (int, int) {
+	if len(segments) == 0 {
+		return 0, 0
+	}
+	return segments[0].start, segments[len(segments)-1].end
 }
 
 func canonicalCell(value any) string {

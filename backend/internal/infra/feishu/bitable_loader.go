@@ -31,9 +31,15 @@ type BitableLoader struct {
 func NewBitableLoader(client *Client, config BitableConfig) *BitableLoader {
 	if config.MaxRows <= 0 {
 		config.MaxRows = defaultBitableMaxRows
+		if client != nil && client.resourceLimits.MaxRows > 0 {
+			config.MaxRows = client.resourceLimits.MaxRows
+		}
 	}
 	if config.MaxOutputBytes <= 0 {
 		config.MaxOutputBytes = defaultBitableMaxOutputBytes
+		if client != nil && client.resourceLimits.MaxOutputBytes > 0 {
+			config.MaxOutputBytes = client.resourceLimits.MaxOutputBytes
+		}
 	}
 	return &BitableLoader{client: client, config: config, normalizer: NewMarkdownNormalizer()}
 }
@@ -97,34 +103,39 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 	if strings.TrimSpace(app.App.Name) == "" || app.App.Revision < 0 {
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
-	tables, err := l.listTables(ctx, basePath, accessToken)
+	limits := l.client.resourceLimits
+	limits.MaxRows = l.config.MaxRows
+	limits.MaxOutputBytes = l.config.MaxOutputBytes
+	budget := resourceBudgetFromContext(ctx, limits)
+	tables, err := l.listTables(ctx, basePath, accessToken, budget)
 	if err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 	loaded := make([]loadedBitableView, 0)
-	totalRows := 0
-	outputBytes := 0
 	for _, table := range tables {
+		if err := ctx.Err(); err != nil {
+			return domain.CanonicalDocument{}, err
+		}
 		if ref.TableID != "" && ref.TableID != table.TableID {
 			continue
 		}
-		views, err := l.listViews(ctx, basePath, table.TableID, accessToken)
-		if err != nil {
-			return domain.CanonicalDocument{}, err
-		}
 		if ref.ViewID == "" {
-			records, err := l.listRecords(ctx, basePath, table.TableID, "", accessToken, &totalRows, &outputBytes)
+			records, err := l.listRecords(ctx, basePath, table.TableID, "", accessToken, budget)
 			if err != nil {
 				return domain.CanonicalDocument{}, err
 			}
 			loaded = append(loaded, loadedBitableView{table: table, records: records})
 			continue
 		}
+		views, err := l.listViews(ctx, basePath, table.TableID, accessToken, budget)
+		if err != nil {
+			return domain.CanonicalDocument{}, err
+		}
 		for _, view := range views {
 			if ref.ViewID != view.ViewID {
 				continue
 			}
-			records, err := l.listRecords(ctx, basePath, table.TableID, view.ViewID, accessToken, &totalRows, &outputBytes)
+			records, err := l.listRecords(ctx, basePath, table.TableID, view.ViewID, accessToken, budget)
 			if err != nil {
 				return domain.CanonicalDocument{}, err
 			}
@@ -145,29 +156,42 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 			comment = fmt.Sprintf(`<!-- feishu-bitable table_id="%s" view_id="%s" rows="%d-%d" -->`, item.table.TableID, item.view.ViewID, rowStart, rowEnd)
 		}
 		section := []string{l.normalizer.Heading(2, heading), comment}
-		if table := l.recordsTable(item.records); table != "" {
+		table, err := l.recordsTable(ctx, item.records)
+		if err != nil {
+			return domain.CanonicalDocument{}, err
+		}
+		if table != "" {
 			section = append(section, table)
 		}
 		parts = append(parts, strings.Join(section, "\n\n"))
 	}
 	markdown := l.normalizer.Finalize(parts)
-	if len(markdown) > l.config.MaxOutputBytes {
-		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	if err := budget.OutputBytes(len(markdown)); err != nil {
+		return domain.CanonicalDocument{}, err
 	}
 
 	metadataInput := domain.SourceMetadataInput{
 		SourceType: domain.ResourceBitable, SectionPath: app.App.Name,
 		RemoteRevision: strconv.FormatInt(app.App.Revision, 10), SourceLocator: ref.CanonicalURL,
+		Locations: make([]domain.SourceLocation, 0, len(loaded)),
 	}
 	if ref.TableID != "" {
 		metadataInput.TableID = ref.TableID
+	}
+	for _, item := range loaded {
+		rowStart, rowEnd := rowBounds(len(item.records))
+		path := app.App.Name + " / " + item.table.Name
+		if item.view.ViewID != "" {
+			path += " / " + item.view.ViewName
+		}
+		metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{
+			SectionPath: path, TableID: item.table.TableID, ViewID: item.view.ViewID, RowStart: rowStart, RowEnd: rowEnd,
+		})
 	}
 	if len(loaded) == 1 {
 		metadataInput.TableID = loaded[0].table.TableID
 		metadataInput.ViewID = loaded[0].view.ViewID
 		metadataInput.RowStart, metadataInput.RowEnd = rowBounds(len(loaded[0].records))
-	} else if totalRows > 0 {
-		metadataInput.RowStart, metadataInput.RowEnd = 1, totalRows
 	}
 	metadata, err := domain.NewSourceMetadata(metadataInput)
 	if err != nil {
@@ -183,14 +207,17 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 	return document, nil
 }
 
-func (l *BitableLoader) listTables(ctx context.Context, basePath, accessToken string) ([]bitableTable, error) {
+func (l *BitableLoader) listTables(ctx context.Context, basePath, accessToken string, budget *resourceBudget) ([]bitableTable, error) {
 	items := make([]bitableTable, 0)
-	err := l.paginate(nil, 100, func(query url.Values) (bool, string, error) {
+	err := l.paginate(ctx, budget, nil, 100, func(query url.Values) (bool, string, error) {
 		var page bitableTablePage
 		if err := l.client.Get(ctx, accessToken, basePath+"/tables", query, &page); err != nil {
 			return false, "", err
 		}
 		for _, item := range page.Items {
+			if err := ctx.Err(); err != nil {
+				return false, "", err
+			}
 			if !validAPIIdentifier(item.TableID) || strings.TrimSpace(item.Name) == "" {
 				return false, "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
@@ -201,10 +228,10 @@ func (l *BitableLoader) listTables(ctx context.Context, basePath, accessToken st
 	return items, err
 }
 
-func (l *BitableLoader) listViews(ctx context.Context, basePath, tableID, accessToken string) ([]bitableView, error) {
+func (l *BitableLoader) listViews(ctx context.Context, basePath, tableID, accessToken string, budget *resourceBudget) ([]bitableView, error) {
 	items := make([]bitableView, 0)
 	path := basePath + "/tables/" + tableID + "/views"
-	err := l.paginate(nil, 100, func(query url.Values) (bool, string, error) {
+	err := l.paginate(ctx, budget, nil, 100, func(query url.Values) (bool, string, error) {
 		var page bitableViewPage
 		if err := l.client.Get(ctx, accessToken, path, query, &page); err != nil {
 			return false, "", err
@@ -220,41 +247,47 @@ func (l *BitableLoader) listViews(ctx context.Context, basePath, tableID, access
 	return items, err
 }
 
-func (l *BitableLoader) listRecords(ctx context.Context, basePath, tableID, viewID, accessToken string, totalRows, outputBytes *int) ([]bitableRecord, error) {
+func (l *BitableLoader) listRecords(ctx context.Context, basePath, tableID, viewID, accessToken string, budget *resourceBudget) ([]bitableRecord, error) {
 	items := make([]bitableRecord, 0)
 	path := basePath + "/tables/" + tableID + "/records"
-	baseQuery := url.Values{"view_id": {viewID}}
-	err := l.paginate(baseQuery, 500, func(query url.Values) (bool, string, error) {
+	var baseQuery url.Values
+	if viewID != "" {
+		baseQuery = url.Values{"view_id": {viewID}}
+	}
+	err := l.paginate(ctx, budget, baseQuery, 500, func(query url.Values) (bool, string, error) {
 		var page bitableRecordPage
 		if err := l.client.Get(ctx, accessToken, path, query, &page); err != nil {
 			return false, "", err
 		}
-		if *totalRows+len(page.Items) > l.config.MaxRows {
-			return false, "", ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+		if err := budget.Rows(len(page.Items)); err != nil {
+			return false, "", err
 		}
 		for _, item := range page.Items {
 			if item.RecordID == "" {
 				return false, "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
-			*outputBytes += len(item.RecordID)
 			for field, value := range item.Fields {
-				*outputBytes += len(field) + len(flattenBitableValue(value))
-			}
-			if *outputBytes > l.config.MaxOutputBytes {
-				return false, "", ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+				if err := budget.Bytes(len(field) + len(flattenBitableValue(value)) + 6); err != nil {
+					return false, "", err
+				}
 			}
 		}
-		*totalRows += len(page.Items)
 		items = append(items, page.Items...)
 		return page.HasMore, page.PageToken, nil
 	})
 	return items, err
 }
 
-func (l *BitableLoader) paginate(base url.Values, pageSize int, fetch func(url.Values) (bool, string, error)) error {
+func (l *BitableLoader) paginate(ctx context.Context, budget *resourceBudget, base url.Values, pageSize int, fetch func(url.Values) (bool, string, error)) error {
 	tracker := newPageTokenTracker()
 	token := ""
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := budget.Page(); err != nil {
+			return err
+		}
 		query := make(url.Values, len(base)+2)
 		for key, values := range base {
 			query[key] = append([]string(nil), values...)
@@ -277,12 +310,15 @@ func (l *BitableLoader) paginate(base url.Values, pageSize int, fetch func(url.V
 	}
 }
 
-func (l *BitableLoader) recordsTable(records []bitableRecord) string {
+func (l *BitableLoader) recordsTable(ctx context.Context, records []bitableRecord) (string, error) {
 	if len(records) == 0 {
-		return ""
+		return "", nil
 	}
 	fieldSet := make(map[string]struct{})
 	for _, record := range records {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		for field := range record.Fields {
 			fieldSet[field] = struct{}{}
 		}
@@ -293,16 +329,18 @@ func (l *BitableLoader) recordsTable(records []bitableRecord) string {
 	}
 	sort.Strings(fields)
 	rows := make([][]string, 0, len(records)+1)
-	rows = append(rows, append([]string{"Record ID"}, fields...))
+	rows = append(rows, fields)
 	for _, record := range records {
-		row := make([]string, 1, len(fields)+1)
-		row[0] = record.RecordID
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		row := make([]string, 0, len(fields))
 		for _, field := range fields {
 			row = append(row, flattenBitableValue(record.Fields[field]))
 		}
 		rows = append(rows, row)
 	}
-	return l.normalizer.Table(rows)
+	return l.normalizer.Table(rows), nil
 }
 
 func flattenBitableValue(value any) string {
@@ -316,25 +354,34 @@ func flattenBitableValue(value any) string {
 	case float64:
 		return strconv.FormatFloat(value, 'f', -1, 64)
 	case []any:
-		parts := make([]string, len(value))
-		for i, item := range value {
-			parts[i] = flattenBitableValue(item)
+		parts := make([]string, 0, len(value))
+		for _, item := range value {
+			if part := flattenBitableValue(item); part != "" {
+				parts = append(parts, part)
+			}
 		}
 		return strings.Join(parts, "; ")
 	case map[string]any:
-		keys := make([]string, 0, len(value))
-		for key := range value {
-			keys = append(keys, key)
+		parts := make([]string, 0, 4)
+		for _, key := range []string{"text", "name", "display_name"} {
+			if part := flattenBitableValue(value[key]); part != "" {
+				parts = append(parts, part)
+			}
 		}
-		sort.Strings(keys)
-		parts := make([]string, 0, len(keys))
-		for _, key := range keys {
-			parts = append(parts, key+"="+flattenBitableValue(value[key]))
+		for _, key := range []string{"url", "link"} {
+			if raw, ok := value[key].(string); ok && permanentBitableURL(raw) {
+				parts = append(parts, raw)
+			}
 		}
 		return strings.Join(parts, "; ")
 	default:
 		return canonicalCell(value)
 	}
+}
+
+func permanentBitableURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	return err == nil && parsed.Scheme == "https" && parsed.Hostname() != "" && parsed.User == nil && parsed.Port() == "" && parsed.RawQuery == "" && parsed.Fragment == ""
 }
 
 var _ ports.SourceLoader = (*BitableLoader)(nil)

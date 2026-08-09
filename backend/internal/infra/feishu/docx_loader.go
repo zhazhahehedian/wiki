@@ -52,7 +52,35 @@ type docxBlock struct {
 	Ordered   *docxText `json:"ordered"`
 	Quote     *docxText `json:"quote"`
 	Code      *docxText `json:"code"`
-	Table     *struct {
+	Todo      *docxText `json:"todo"`
+	Equation  *struct {
+		Content  string            `json:"content"`
+		Elements []docxTextElement `json:"elements"`
+	} `json:"equation"`
+	File *struct {
+		Name string `json:"name"`
+	} `json:"file"`
+	Callout        *struct{} `json:"callout"`
+	Grid           *struct{} `json:"grid"`
+	GridColumn     *struct{} `json:"grid_column"`
+	QuoteContainer *struct{} `json:"quote_container"`
+	Sheet          *struct{} `json:"sheet"`
+	Bitable        *struct{} `json:"bitable"`
+	ChatCard       *struct{} `json:"chat_card"`
+	Diagram        *struct{} `json:"diagram"`
+	Iframe         *struct{} `json:"iframe"`
+	ISV            *struct{} `json:"isv"`
+	Mindnote       *struct{} `json:"mindnote"`
+	View           *struct{} `json:"view"`
+	Task           *struct{} `json:"task"`
+	OKR            *struct{} `json:"okr"`
+	OKRObjective   *struct{} `json:"okr_objective"`
+	OKRKeyResult   *struct{} `json:"okr_key_result"`
+	AddOns         *struct{} `json:"add_ons"`
+	JiraIssue      *struct{} `json:"jira_issue"`
+	WikiCatalog    *struct{} `json:"wiki_catalog"`
+	Board          *struct{} `json:"board"`
+	Table          *struct {
 		Property struct {
 			RowSize    int `json:"row_size"`
 			ColumnSize int `json:"column_size"`
@@ -104,15 +132,25 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 
 	blocks := make(map[string]docxBlock)
 	order := make([]string, 0)
+	budget := resourceBudgetFromContext(ctx, l.client.resourceLimits)
 	tracker := newPageTokenTracker()
 	pageToken := ""
 	for {
+		if err := ctx.Err(); err != nil {
+			return domain.CanonicalDocument{}, err
+		}
+		if err := budget.Page(); err != nil {
+			return domain.CanonicalDocument{}, err
+		}
 		query := url.Values{"page_size": {"500"}}
 		if pageToken != "" {
 			query.Set("page_token", pageToken)
 		}
 		var page docxBlocksData
 		if err := l.client.Get(ctx, accessToken, basePath+"/blocks", query, &page); err != nil {
+			return domain.CanonicalDocument{}, err
+		}
+		if err := budget.Blocks(len(page.Items)); err != nil {
 			return domain.CanonicalDocument{}, err
 		}
 		for _, block := range page.Items {
@@ -134,7 +172,7 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 		pageToken = page.PageToken
 	}
 
-	renderer := docxRenderer{blocks: blocks, normalizer: l.normalizer, sourceURL: ref.CanonicalURL.String()}
+	renderer := docxRenderer{ctx: ctx, budget: budget, blocks: blocks, normalizer: l.normalizer, sourceURL: ref.CanonicalURL.String()}
 	parts, err := renderer.renderRoots(order)
 	if err != nil {
 		return domain.CanonicalDocument{}, err
@@ -146,8 +184,12 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 	if err != nil {
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
+	markdown := l.normalizer.Finalize(parts)
+	if err := budget.OutputBytes(len(markdown)); err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	document, err := domain.NewCanonicalDocument(domain.CanonicalDocumentInput{
-		Title: info.Document.Title, Markdown: l.normalizer.Finalize(parts),
+		Title: info.Document.Title, Markdown: markdown,
 		RemoteRevision: strconv.FormatInt(info.Document.RevisionID, 10),
 		SourceMetadata: metadata, SafeSourceURL: ref.CanonicalURL,
 	})
@@ -158,6 +200,8 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 }
 
 type docxRenderer struct {
+	ctx        context.Context
+	budget     *resourceBudget
 	blocks     map[string]docxBlock
 	normalizer MarkdownNormalizer
 	sourceURL  string
@@ -191,12 +235,19 @@ func (r docxRenderer) renderRoots(order []string) ([]string, error) {
 
 func (r docxRenderer) renderChildren(ids []string, depth int, stack map[string]bool) ([]string, error) {
 	parts := make([]string, 0, len(ids))
+	totalBytes := 0
 	for _, id := range ids {
 		part, err := r.renderBlock(id, depth, stack)
 		if err != nil {
 			return nil, err
 		}
 		if part != "" {
+			totalBytes += len(part) + 1
+			if r.budget != nil {
+				if err := r.budget.CheckOutputBytes(totalBytes); err != nil {
+					return nil, err
+				}
+			}
 			parts = append(parts, part)
 		}
 	}
@@ -204,6 +255,16 @@ func (r docxRenderer) renderChildren(ids []string, depth int, stack map[string]b
 }
 
 func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (string, error) {
+	if r.ctx != nil {
+		if err := r.ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+	if r.budget != nil {
+		if err := r.budget.Depth(depth); err != nil {
+			return "", err
+		}
+	}
 	block, ok := r.blocks[id]
 	if !ok || stack[id] {
 		return "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
@@ -243,6 +304,16 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 		content := text(block.Code)
 		fence := codeFence(content)
 		rendered = fence + docxCodeLanguage(block.Code.Style.Language) + "\n" + content + "\n" + fence
+	case block.Todo != nil:
+		rendered = "- [ ] " + r.normalizer.Paragraph(text(block.Todo))
+	case block.Equation != nil:
+		rendered = r.normalizer.Paragraph(docxEquationText(block.Equation.Content, block.Equation.Elements))
+	case block.File != nil:
+		name := strings.TrimSpace(block.File.Name)
+		if name == "" {
+			name = "file"
+		}
+		rendered = r.normalizer.Paragraph("Unsupported file: " + name)
 	case block.Table != nil:
 		rows, err := r.renderTable(block, stack)
 		if err != nil {
@@ -251,9 +322,15 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 		rendered = r.normalizer.tableCells(rows)
 	case block.Image != nil:
 		rendered = r.normalizer.UnsupportedImage("", r.sourceURL)
+	case block.Sheet != nil:
+		rendered = r.normalizer.Paragraph("Unsupported sheet")
+	case block.Bitable != nil:
+		rendered = r.normalizer.Paragraph("Unsupported bitable")
+	case documentedDocxLeafLabel(block) != "":
+		rendered = r.normalizer.Paragraph("Unsupported " + documentedDocxLeafLabel(block))
 	case block.BlockType == 22:
 		rendered = "---"
-	case block.BlockType == 1 || block.BlockType == 32:
+	case block.BlockType == 1 || block.BlockType == 32 || block.Callout != nil || block.Grid != nil || block.GridColumn != nil || block.QuoteContainer != nil:
 		// Containers only render their children.
 	default:
 		return "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
@@ -269,6 +346,11 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 			} else {
 				rendered += "\n" + strings.Join(children, "\n")
 			}
+		}
+	}
+	if r.budget != nil {
+		if err := r.budget.CheckOutputBytes(len(rendered)); err != nil {
+			return "", err
 		}
 	}
 	return rendered, nil
@@ -288,7 +370,7 @@ func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]m
 			if !ok || cell.BlockType != 32 {
 				return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
-			parts, err := r.plainChildren(cell.Children, stack)
+			parts, err := r.plainChildren(cell.Children, 1, stack)
 			if err != nil {
 				return nil, err
 			}
@@ -298,9 +380,19 @@ func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]m
 	return result, nil
 }
 
-func (r docxRenderer) plainChildren(ids []string, stack map[string]bool) ([]markdownTableCell, error) {
+func (r docxRenderer) plainChildren(ids []string, depth int, stack map[string]bool) ([]markdownTableCell, error) {
 	parts := make([]markdownTableCell, 0, len(ids))
 	for _, id := range ids {
+		if r.ctx != nil {
+			if err := r.ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
+		if r.budget != nil {
+			if err := r.budget.Depth(depth); err != nil {
+				return nil, err
+			}
+		}
 		block, ok := r.blocks[id]
 		if !ok || stack[id] {
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
@@ -324,13 +416,21 @@ func (r docxRenderer) plainChildren(ids []string, stack map[string]bool) ([]mark
 			value.text = docxPlainText(block.Quote)
 		case block.Code != nil:
 			value.text = docxPlainText(block.Code)
+		case block.Todo != nil:
+			value.text = docxPlainText(block.Todo)
+		case block.Equation != nil:
+			value.text = docxEquationText(block.Equation.Content, block.Equation.Elements)
+		case block.File != nil:
+			value.text = block.File.Name
 		case block.Image != nil:
 			value.safeMarkdown = r.normalizer.UnsupportedInlineImage("", r.sourceURL)
-		case block.BlockType != 32 && block.BlockType != 1:
+		case documentedDocxLeafLabel(block) != "":
+			value.text = "Unsupported " + documentedDocxLeafLabel(block)
+		case block.BlockType != 32 && block.BlockType != 1 && block.Callout == nil && block.Grid == nil && block.GridColumn == nil && block.QuoteContainer == nil:
 			delete(stack, id)
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 		}
-		children, err := r.plainChildren(block.Children, stack)
+		children, err := r.plainChildren(block.Children, depth+1, stack)
 		delete(stack, id)
 		if err != nil {
 			return nil, err
@@ -341,6 +441,53 @@ func (r docxRenderer) plainChildren(ids []string, stack map[string]bool) ([]mark
 		parts = append(parts, children...)
 	}
 	return parts, nil
+}
+
+func docxEquationText(content string, elements []docxTextElement) string {
+	if content != "" {
+		return content
+	}
+	text := &docxText{Elements: elements}
+	return docxPlainText(text)
+}
+
+func documentedDocxLeafLabel(block docxBlock) string {
+	switch {
+	case block.Bitable != nil:
+		return "bitable"
+	case block.ChatCard != nil:
+		return "chat card"
+	case block.Diagram != nil:
+		return "diagram"
+	case block.Iframe != nil:
+		return "iframe"
+	case block.ISV != nil:
+		return "extension"
+	case block.Mindnote != nil:
+		return "mindnote"
+	case block.Sheet != nil:
+		return "sheet"
+	case block.View != nil:
+		return "view"
+	case block.Task != nil:
+		return "task"
+	case block.OKR != nil:
+		return "OKR"
+	case block.OKRObjective != nil:
+		return "OKR objective"
+	case block.OKRKeyResult != nil:
+		return "OKR key result"
+	case block.AddOns != nil:
+		return "add-on"
+	case block.JiraIssue != nil:
+		return "Jira issue"
+	case block.WikiCatalog != nil:
+		return "wiki catalog"
+	case block.Board != nil:
+		return "board"
+	default:
+		return ""
+	}
 }
 
 func docxCodeLanguage(value any) string {

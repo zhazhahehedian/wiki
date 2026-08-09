@@ -20,29 +20,44 @@ const (
 	defaultMaxRetries     = 3
 	defaultMaxRetryDelay  = 30 * time.Second
 	maxAPIResponseBytes   = 8 << 20
+	defaultMaxPages       = 1_000
+	defaultMaxBlocks      = 100_000
+	defaultMaxRows        = 10_000
+	defaultMaxOutputBytes = 10 << 20
+	defaultMaxDepth       = 100
 )
 
 type WaitFunc func(context.Context, time.Duration) error
 
 type ClientConfig struct {
-	BaseURL       string
-	Timeout       time.Duration
-	MaxRetries    int
-	Backoff       time.Duration
-	MaxRetryDelay time.Duration
-	Wait          WaitFunc
-	Now           func() time.Time
+	BaseURL        string
+	Timeout        time.Duration
+	MaxRetries     int
+	Backoff        time.Duration
+	MaxRetryDelay  time.Duration
+	Wait           WaitFunc
+	Now            func() time.Time
+	ResourceLimits ResourceLimits
+}
+
+type ResourceLimits struct {
+	MaxPages       int
+	MaxBlocks      int
+	MaxRows        int
+	MaxOutputBytes int
+	MaxDepth       int
 }
 
 type Client struct {
-	baseURL       string
-	timeout       time.Duration
-	maxRetries    int
-	backoff       time.Duration
-	maxRetryDelay time.Duration
-	wait          WaitFunc
-	now           func() time.Time
-	http          *http.Client
+	baseURL        string
+	timeout        time.Duration
+	maxRetries     int
+	backoff        time.Duration
+	maxRetryDelay  time.Duration
+	wait           WaitFunc
+	now            func() time.Time
+	http           *http.Client
+	resourceLimits ResourceLimits
 }
 
 type apiEnvelope struct {
@@ -79,11 +94,92 @@ func NewClient(config ClientConfig, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	config.ResourceLimits = withDefaultResourceLimits(config.ResourceLimits)
 	return &Client{
 		baseURL: strings.TrimRight(config.BaseURL, "/"), timeout: config.Timeout,
 		maxRetries: config.MaxRetries, backoff: config.Backoff, maxRetryDelay: config.MaxRetryDelay, wait: config.Wait,
-		now: config.Now, http: httpClient,
+		now: config.Now, http: httpClient, resourceLimits: config.ResourceLimits,
 	}
+}
+
+func withDefaultResourceLimits(limits ResourceLimits) ResourceLimits {
+	if limits.MaxPages <= 0 {
+		limits.MaxPages = defaultMaxPages
+	}
+	if limits.MaxBlocks <= 0 {
+		limits.MaxBlocks = defaultMaxBlocks
+	}
+	if limits.MaxRows <= 0 {
+		limits.MaxRows = defaultMaxRows
+	}
+	if limits.MaxOutputBytes <= 0 {
+		limits.MaxOutputBytes = defaultMaxOutputBytes
+	}
+	if limits.MaxDepth <= 0 {
+		limits.MaxDepth = defaultMaxDepth
+	}
+	return limits
+}
+
+type resourceBudget struct {
+	limits ResourceLimits
+	pages  int
+	blocks int
+	rows   int
+	bytes  int
+}
+
+func newResourceBudget(limits ResourceLimits) *resourceBudget {
+	return &resourceBudget{limits: withDefaultResourceLimits(limits)}
+}
+
+type resourceBudgetContextKey struct{}
+
+func resourceBudgetFromContext(ctx context.Context, limits ResourceLimits) *resourceBudget {
+	if budget, ok := ctx.Value(resourceBudgetContextKey{}).(*resourceBudget); ok && budget != nil {
+		return budget
+	}
+	return newResourceBudget(limits)
+}
+
+func contextWithResourceBudget(ctx context.Context, budget *resourceBudget) context.Context {
+	return context.WithValue(ctx, resourceBudgetContextKey{}, budget)
+}
+
+func (b *resourceBudget) consume(current *int, amount, maximum int) error {
+	if amount < 0 || *current > maximum-amount {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	*current += amount
+	return nil
+}
+
+func (b *resourceBudget) Page() error { return b.consume(&b.pages, 1, b.limits.MaxPages) }
+func (b *resourceBudget) Blocks(count int) error {
+	return b.consume(&b.blocks, count, b.limits.MaxBlocks)
+}
+func (b *resourceBudget) Rows(count int) error { return b.consume(&b.rows, count, b.limits.MaxRows) }
+func (b *resourceBudget) Bytes(count int) error {
+	return b.consume(&b.bytes, count, b.limits.MaxOutputBytes)
+}
+func (b *resourceBudget) OutputBytes(total int) error {
+	if total < 0 || total > b.limits.MaxOutputBytes {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	b.bytes = total
+	return nil
+}
+func (b *resourceBudget) CheckOutputBytes(total int) error {
+	if total < 0 || total > b.limits.MaxOutputBytes {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	return nil
+}
+func (b *resourceBudget) Depth(depth int) error {
+	if depth > b.limits.MaxDepth {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	return nil
 }
 
 func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Values, out any) error {
@@ -119,6 +215,12 @@ func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Va
 		_ = resp.Body.Close()
 		cancel()
 		if readErr != nil {
+			if attempt < c.maxRetries {
+				if err := c.wait(ctx, c.retryDelay(attempt, resp.Header.Get("Retry-After"))); err != nil {
+					return err
+				}
+				continue
+			}
 			return ports.NewSourceLoadError(ports.SourceLoadAPIError, readErr)
 		}
 		if retryableStatus(resp.StatusCode) && attempt < c.maxRetries {

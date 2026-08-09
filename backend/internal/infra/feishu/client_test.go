@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -141,6 +142,46 @@ func TestClientRedactsBodyReadErrorFromUnwrapChain(t *testing.T) {
 	var loadErr *ports.SourceLoadError
 	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
 		t.Fatalf("Get() error = %#v", err)
+	}
+}
+
+func TestClientRetriesBodyReadFailureWithoutLeakingCause(t *testing.T) {
+	const secret = "body-read-secret"
+	attempts := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: maliciousReadCloser{err: errors.New(secret)}, Request: request}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"value":"ok"}}`)), Request: request}, nil
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid", MaxRetries: 1, Wait: noWait}, httpClient)
+	var data struct {
+		Value string `json:"value"`
+	}
+	err := client.Get(context.Background(), "token", "/resource", nil, &data)
+	if err != nil || attempts != 2 || data.Value != "ok" {
+		t.Fatalf("Get() = data=%+v err=%v attempts=%d", data, err, attempts)
+	}
+	assertRedactedErrorChain(t, err, secret)
+}
+
+func TestClientRetriesBodyReadFailureFromSuccessfulGET(t *testing.T) {
+	attempts := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		body := io.ReadCloser(maliciousReadCloser{err: errors.New("private read failure")})
+		if attempts == 2 {
+			body = io.NopCloser(strings.NewReader(`{"code":0,"data":{"value":"ok"}}`))
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: request}, nil
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid", MaxRetries: 1, Wait: noWait}, httpClient)
+	var data struct {
+		Value string `json:"value"`
+	}
+	if err := client.Get(context.Background(), "token", "/resource", nil, &data); err != nil || attempts != 2 || data.Value != "ok" {
+		t.Fatalf("Get() = data=%+v err=%v attempts=%d", data, err, attempts)
 	}
 }
 

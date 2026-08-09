@@ -17,9 +17,10 @@ func TestSheetLoaderPaginatesSheetsAndRowsIntoCanonicalSections(t *testing.T) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/spreadsheets/sheetbook"):
 			fixture = "testdata/sheet_workbook.json"
-		case strings.HasSuffix(r.URL.Path, "/sheets/query") && r.URL.Query().Get("page_token") == "s2":
-			fixture = "testdata/sheet_list_page2.json"
 		case strings.HasSuffix(r.URL.Path, "/sheets/query"):
+			if r.URL.RawQuery != "" {
+				t.Fatalf("unexpected sheet query parameters: %s", r.URL.RawQuery)
+			}
 			fixture = "testdata/sheet_list_page1.json"
 		case strings.HasSuffix(r.URL.Path, "/values/sh1!A1:ZZZ3"):
 			fixture = "testdata/sheet_values_page1.json"
@@ -60,9 +61,9 @@ func TestSheetLoaderRetainsTypedLocationsForEverySheet(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/spreadsheets/sheetbook"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"spreadsheet_token":"sheetbook","title":"Book","revision":1}}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"token":"sheetbook","title":"Book"}}}`))
 		case strings.HasSuffix(r.URL.Path, "/sheets/query"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"First"},{"sheet_id":"sh2","title":"Empty"}],"has_more":false}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"First"},{"sheet_id":"sh2","title":"Empty"}]}}`))
 		case strings.HasSuffix(r.URL.Path, "/values/sh1"):
 			_, _ = w.Write([]byte(`{"code":0,"data":{"valueRange":{"revision":1,"values":[["H"],["V"]]}}}`))
 		case strings.HasSuffix(r.URL.Path, "/values/sh2"):
@@ -93,9 +94,9 @@ func TestSheetLoaderRetainsSelectedSheetMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/spreadsheets/sheetbook"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"spreadsheet_token":"sheetbook","title":"Book","revision":1}}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"token":"sheetbook","title":"Book"}}}`))
 		case strings.HasSuffix(r.URL.Path, "/sheets/query"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"Only"}],"has_more":false}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"Only"}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"code":0,"data":{"value_range":{"values":[["H"],["V"]]},"has_more":false}}`))
 		}
@@ -116,9 +117,9 @@ func TestSheetLoaderAcceptsCamelCaseValueRangeRevision(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/spreadsheets/sheetbook"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"spreadsheet_token":"sheetbook","title":"Book"}}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"token":"sheetbook","title":"Book"}}}`))
 		case strings.HasSuffix(r.URL.Path, "/sheets/query"):
-			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"Only"}],"has_more":false}}`))
+			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"Only"}]}}`))
 		default:
 			_, _ = w.Write([]byte(`{"code":0,"data":{"valueRange":{"revision":12,"values":[["H"],["V"]]},"has_more":false}}`))
 		}

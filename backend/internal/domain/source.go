@@ -78,6 +78,9 @@ func NewSourceMetadata(input SourceMetadataInput) (SourceMetadata, error) {
 	if (input.RowStart == 0) != (input.RowEnd == 0) || input.RowStart < 0 || input.RowEnd < 0 || input.RowStart > input.RowEnd || input.RowEnd > maxSourceRow {
 		return SourceMetadata{}, sourceMetadataError("invalid_row_range")
 	}
+	if err := validateSourceCompatibility(input.SourceType, input.SheetName, input.TableID, input.ViewID, input.SheetID); err != nil {
+		return SourceMetadata{}, err
+	}
 	if len(input.Locations) > maxSourceLocations {
 		return SourceMetadata{}, sourceMetadataError("too_many_locations")
 	}
@@ -85,9 +88,48 @@ func NewSourceMetadata(input SourceMetadataInput) (SourceMetadata, error) {
 		if err := validateSourceLocation(location); err != nil {
 			return SourceMetadata{}, err
 		}
+		if err := validateSourceCompatibility(input.SourceType, location.SheetName, location.TableID, location.ViewID, location.SheetID); err != nil {
+			return SourceMetadata{}, err
+		}
+	}
+	if input.SourceType == ResourceWiki {
+		hasSheet := input.SheetName != "" || input.SheetID != ""
+		hasTable := input.TableID != "" || input.ViewID != ""
+		for _, location := range input.Locations {
+			hasSheet = hasSheet || location.SheetName != "" || location.SheetID != ""
+			hasTable = hasTable || location.TableID != "" || location.ViewID != ""
+		}
+		if hasSheet && hasTable {
+			return SourceMetadata{}, sourceMetadataError("mixed_wiki_source_fields")
+		}
 	}
 	input.Locations = cloneSourceLocations(input.Locations)
 	return SourceMetadata{values: input}, nil
+}
+
+func validateSourceCompatibility(sourceType ResourceType, sheetName, tableID, viewID, sheetID string) error {
+	if viewID != "" && tableID == "" {
+		return sourceMetadataError("view_without_table")
+	}
+	switch sourceType {
+	case ResourceSheet:
+		if tableID != "" || viewID != "" {
+			return sourceMetadataError("incompatible_source_fields")
+		}
+	case ResourceBitable:
+		if sheetName != "" || sheetID != "" {
+			return sourceMetadataError("incompatible_source_fields")
+		}
+	case ResourceDocx:
+		if sheetName != "" || sheetID != "" || tableID != "" || viewID != "" {
+			return sourceMetadataError("incompatible_source_fields")
+		}
+	case ResourceWiki:
+		if (sheetName != "" || sheetID != "") && (tableID != "" || viewID != "") {
+			return sourceMetadataError("incompatible_source_fields")
+		}
+	}
+	return nil
 }
 
 func (m SourceMetadata) Values() SourceMetadataInput {

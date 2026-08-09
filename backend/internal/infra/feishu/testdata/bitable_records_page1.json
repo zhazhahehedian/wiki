@@ -1,1 +1,1 @@
-{"code":0,"data":{"items":[{"record_id":"rec1","fields":{"Name":"张三","Active":true,"Complex":{"z":"尾","a":[2,1]}}}],"has_more":true,"page_token":"p2"}}
+{"code":0,"data":{"items":[{"record_id":"rec1","fields":{"Name":"张三","Active":true,"Complex":{"text":"尾","file_token":"must-not-leak"}}}],"has_more":true,"page_token":"p2"}}

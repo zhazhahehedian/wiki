@@ -200,6 +200,46 @@ func TestSourceMetadataRejectsInvalidOrSecretBearingSectionLocations(t *testing.
 	}
 }
 
+func TestSourceMetadataRejectsTypeIncompatibleFields(t *testing.T) {
+	tests := []domain.SourceMetadataInput{
+		{SourceType: domain.ResourceDocx, SheetID: "sh1"},
+		{SourceType: domain.ResourceWiki, TableID: "tb1", SheetID: "sh1"},
+		{SourceType: domain.ResourceSheet, TableID: "tb1"},
+		{SourceType: domain.ResourceBitable, SheetID: "sh1"},
+		{SourceType: domain.ResourceBitable, ViewID: "vw1"},
+		{SourceType: domain.ResourceSheet, Locations: []domain.SourceLocation{{TableID: "tb1"}}},
+		{SourceType: domain.ResourceBitable, Locations: []domain.SourceLocation{{SheetID: "sh1"}}},
+		{SourceType: domain.ResourceBitable, Locations: []domain.SourceLocation{{ViewID: "vw1"}}},
+	}
+	for _, input := range tests {
+		if _, err := domain.NewSourceMetadata(input); err == nil {
+			t.Fatalf("NewSourceMetadata(%+v) error = nil", input)
+		}
+		encoded, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded domain.SourceMetadata
+		if err := json.Unmarshal(encoded, &decoded); err == nil {
+			t.Fatalf("Unmarshal(%s) error = nil", encoded)
+		}
+	}
+}
+
+func TestWikiSourceMetadataAllowsOneDelegatedLocationFamily(t *testing.T) {
+	for _, input := range []domain.SourceMetadataInput{
+		{SourceType: domain.ResourceWiki, SheetName: "Sheet", SheetID: "sh1", Locations: []domain.SourceLocation{{SheetName: "Sheet", SheetID: "sh1"}}},
+		{SourceType: domain.ResourceWiki, TableID: "tb1", ViewID: "vw1", Locations: []domain.SourceLocation{{TableID: "tb1", ViewID: "vw1"}}},
+	} {
+		if _, err := domain.NewSourceMetadata(input); err != nil {
+			t.Fatalf("NewSourceMetadata(%+v) error = %v", input, err)
+		}
+	}
+	if _, err := domain.NewSourceMetadata(domain.SourceMetadataInput{SourceType: domain.ResourceWiki, SheetID: "sh1", TableID: "tb1"}); err == nil {
+		t.Fatal("mixed Wiki selector families error = nil")
+	}
+}
+
 func TestCanonicalDocumentUsesOpaqueSafeSourceURL(t *testing.T) {
 	metadata, err := domain.NewSourceMetadata(domain.SourceMetadataInput{SourceType: domain.ResourceDocx, SectionPath: "Overview"})
 	if err != nil {

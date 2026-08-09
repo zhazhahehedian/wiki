@@ -24,8 +24,8 @@ func TestBitableLoaderPaginatesAndDeterministicallyFlattensRecords(t *testing.T)
 	}
 	want := []string{
 		"## 主表", `<!-- feishu-bitable table_id="tb1" rows="1-2" -->`,
-		"| Record ID | Active | Complex | Name |", "| rec1 | true | a=2; 1; z=尾 | 张三 |",
-		"| rec2 | false |  | 李四 |",
+		"| Active | Complex | Name |", "| true | 尾 | 张三 |",
+		"| false |  | 李四 |",
 	}
 	for _, fragment := range want {
 		if !strings.Contains(document.Markdown, fragment) {

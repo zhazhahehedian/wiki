@@ -62,7 +62,8 @@ func (l *WikiLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 	if err != nil {
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
-	document, err := delegate.Load(ctx, underlyingRef, accessToken)
+	budget := resourceBudgetFromContext(ctx, l.client.resourceLimits)
+	document, err := delegate.Load(contextWithResourceBudget(ctx, budget), underlyingRef, accessToken)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return domain.CanonicalDocument{}, err
