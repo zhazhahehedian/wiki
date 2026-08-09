@@ -68,7 +68,14 @@ type SourceLoadError struct {
 }
 
 func NewSourceLoadError(code SourceLoadErrorCode, cause error) *SourceLoadError {
-	return &SourceLoadError{Code: code, cause: cause}
+	var safeCause error
+	switch {
+	case errors.Is(cause, context.Canceled):
+		safeCause = context.Canceled
+	case errors.Is(cause, context.DeadlineExceeded):
+		safeCause = context.DeadlineExceeded
+	}
+	return &SourceLoadError{Code: code, cause: safeCause}
 }
 
 func (e *SourceLoadError) Error() string { return "Feishu source load failed" }

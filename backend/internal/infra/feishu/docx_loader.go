@@ -248,7 +248,7 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 		if err != nil {
 			return "", err
 		}
-		rendered = r.normalizer.Table(rows)
+		rendered = r.normalizer.tableCells(rows)
 	case block.Image != nil:
 		rendered = r.normalizer.UnsupportedImage("", r.sourceURL)
 	case block.BlockType == 22:
@@ -274,14 +274,14 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 	return rendered, nil
 }
 
-func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]string, error) {
+func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]markdownTableCell, error) {
 	rows, columns := block.Table.Property.RowSize, block.Table.Property.ColumnSize
 	if rows <= 0 || columns <= 0 || len(block.Table.Cells) != rows*columns {
 		return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
-	result := make([][]string, rows)
+	result := make([][]markdownTableCell, rows)
 	for row := 0; row < rows; row++ {
-		result[row] = make([]string, columns)
+		result[row] = make([]markdownTableCell, columns)
 		for column := 0; column < columns; column++ {
 			cellID := block.Table.Cells[row*columns+column]
 			cell, ok := r.blocks[cellID]
@@ -292,40 +292,40 @@ func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]s
 			if err != nil {
 				return nil, err
 			}
-			result[row][column] = strings.Join(parts, " ")
+			result[row][column] = r.normalizer.combineTableCells(parts)
 		}
 	}
 	return result, nil
 }
 
-func (r docxRenderer) plainChildren(ids []string, stack map[string]bool) ([]string, error) {
-	parts := make([]string, 0, len(ids))
+func (r docxRenderer) plainChildren(ids []string, stack map[string]bool) ([]markdownTableCell, error) {
+	parts := make([]markdownTableCell, 0, len(ids))
 	for _, id := range ids {
 		block, ok := r.blocks[id]
 		if !ok || stack[id] {
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 		}
 		stack[id] = true
-		var value string
+		var value markdownTableCell
 		switch {
 		case block.Text != nil:
-			value = docxPlainText(block.Text)
+			value.text = docxPlainText(block.Text)
 		case block.Heading1 != nil:
-			value = docxPlainText(block.Heading1)
+			value.text = docxPlainText(block.Heading1)
 		case block.Heading2 != nil:
-			value = docxPlainText(block.Heading2)
+			value.text = docxPlainText(block.Heading2)
 		case block.Heading3 != nil:
-			value = docxPlainText(block.Heading3)
+			value.text = docxPlainText(block.Heading3)
 		case block.Bullet != nil:
-			value = docxPlainText(block.Bullet)
+			value.text = docxPlainText(block.Bullet)
 		case block.Ordered != nil:
-			value = docxPlainText(block.Ordered)
+			value.text = docxPlainText(block.Ordered)
 		case block.Quote != nil:
-			value = docxPlainText(block.Quote)
+			value.text = docxPlainText(block.Quote)
 		case block.Code != nil:
-			value = docxPlainText(block.Code)
+			value.text = docxPlainText(block.Code)
 		case block.Image != nil:
-			value = "unsupported image"
+			value.safeMarkdown = r.normalizer.UnsupportedInlineImage("", r.sourceURL)
 		case block.BlockType != 32 && block.BlockType != 1:
 			delete(stack, id)
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
@@ -335,7 +335,7 @@ func (r docxRenderer) plainChildren(ids []string, stack map[string]bool) ([]stri
 		if err != nil {
 			return nil, err
 		}
-		if value != "" {
+		if value.text != "" || value.safeMarkdown != "" {
 			parts = append(parts, value)
 		}
 		parts = append(parts, children...)

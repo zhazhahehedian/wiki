@@ -88,6 +88,40 @@ func TestDocxCodeBlockAcceptsNumericProviderLanguageEnum(t *testing.T) {
 	}
 }
 
+func TestDocxTableCellImageRetainsSafeSourceLink(t *testing.T) {
+	table := docxBlock{BlockID: "table", BlockType: 31}
+	table.Table = &struct {
+		Property struct {
+			RowSize    int `json:"row_size"`
+			ColumnSize int `json:"column_size"`
+		} `json:"property"`
+		Cells []string `json:"cells"`
+	}{}
+	table.Table.Property.RowSize = 1
+	table.Table.Property.ColumnSize = 1
+	table.Table.Cells = []string{"cell"}
+	cell := docxBlock{BlockID: "cell", BlockType: 32, Children: []string{"image"}}
+	image := docxBlock{BlockID: "image", BlockType: 27, Image: &struct {
+		Token string `json:"token"`
+	}{Token: "private-image-token"}}
+	renderer := docxRenderer{
+		blocks:     map[string]docxBlock{"table": table, "cell": cell, "image": image},
+		normalizer: NewMarkdownNormalizer(), sourceURL: "https://acme.feishu.cn/docx/docA",
+	}
+
+	got, err := renderer.renderBlock("table", 0, map[string]bool{})
+	if err != nil {
+		t.Fatalf("renderBlock() error = %v", err)
+	}
+	want := "| [Image: unsupported image](https://acme.feishu.cn/docx/docA) |\n| --- |"
+	if got != want {
+		t.Fatalf("renderBlock() = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "private-image-token") {
+		t.Fatalf("renderBlock() leaked image token: %q", got)
+	}
+}
+
 func mustResourceRef(t *testing.T, resourceType domain.ResourceType, token, selector string) domain.ResourceRef {
 	t.Helper()
 	path := map[domain.ResourceType]string{domain.ResourceDocx: "docx", domain.ResourceSheet: "sheets", domain.ResourceBitable: "base", domain.ResourceWiki: "wiki"}[resourceType]

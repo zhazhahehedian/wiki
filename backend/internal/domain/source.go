@@ -23,20 +23,32 @@ const (
 	maxRemoteRevisionBytes   = 256
 	maxCanonicalTitleBytes   = 512
 	maxSourceRow             = 10_000_000
+	maxSourceLocations       = 1_000
 )
 
+type SourceLocation struct {
+	SectionPath string `json:"section_path,omitempty"`
+	SheetName   string `json:"sheet_name,omitempty"`
+	TableID     string `json:"table_id,omitempty"`
+	ViewID      string `json:"view_id,omitempty"`
+	SheetID     string `json:"sheet_id,omitempty"`
+	RowStart    int    `json:"row_start,omitempty"`
+	RowEnd      int    `json:"row_end,omitempty"`
+}
+
 type SourceMetadataInput struct {
-	SourceType     ResourceType `json:"source_type"`
-	SectionPath    string       `json:"section_path,omitempty"`
-	SheetName      string       `json:"sheet_name,omitempty"`
-	TableID        string       `json:"table_id,omitempty"`
-	ViewID         string       `json:"view_id,omitempty"`
-	SheetID        string       `json:"sheet_id,omitempty"`
-	RowStart       int          `json:"row_start,omitempty"`
-	RowEnd         int          `json:"row_end,omitempty"`
-	RemoteRevision string       `json:"remote_revision,omitempty"`
-	ImageURL       SafeURL      `json:"image_url"`
-	SourceLocator  SafeURL      `json:"source_locator"`
+	SourceType     ResourceType     `json:"source_type"`
+	SectionPath    string           `json:"section_path,omitempty"`
+	SheetName      string           `json:"sheet_name,omitempty"`
+	TableID        string           `json:"table_id,omitempty"`
+	ViewID         string           `json:"view_id,omitempty"`
+	SheetID        string           `json:"sheet_id,omitempty"`
+	RowStart       int              `json:"row_start,omitempty"`
+	RowEnd         int              `json:"row_end,omitempty"`
+	RemoteRevision string           `json:"remote_revision,omitempty"`
+	ImageURL       SafeURL          `json:"image_url"`
+	SourceLocator  SafeURL          `json:"source_locator"`
+	Locations      []SourceLocation `json:"locations,omitempty"`
 }
 
 type SourceMetadata struct {
@@ -66,10 +78,23 @@ func NewSourceMetadata(input SourceMetadataInput) (SourceMetadata, error) {
 	if (input.RowStart == 0) != (input.RowEnd == 0) || input.RowStart < 0 || input.RowEnd < 0 || input.RowStart > input.RowEnd || input.RowEnd > maxSourceRow {
 		return SourceMetadata{}, sourceMetadataError("invalid_row_range")
 	}
+	if len(input.Locations) > maxSourceLocations {
+		return SourceMetadata{}, sourceMetadataError("too_many_locations")
+	}
+	for _, location := range input.Locations {
+		if err := validateSourceLocation(location); err != nil {
+			return SourceMetadata{}, err
+		}
+	}
+	input.Locations = cloneSourceLocations(input.Locations)
 	return SourceMetadata{values: input}, nil
 }
 
-func (m SourceMetadata) Values() SourceMetadataInput { return m.values }
+func (m SourceMetadata) Values() SourceMetadataInput {
+	values := m.values
+	values.Locations = cloneSourceLocations(values.Locations)
+	return values
+}
 
 func (m SourceMetadata) MarshalJSON() ([]byte, error) {
 	validated, err := NewSourceMetadata(m.values)
@@ -102,6 +127,28 @@ func (m *SourceMetadata) UnmarshalJSON(data []byte) error {
 
 func sourceMetadataError(reason string) *SourceMetadataValidationError {
 	return &SourceMetadataValidationError{Reason: reason}
+}
+
+func validateSourceLocation(location SourceLocation) error {
+	if !validBoundedText(location.SectionPath, maxSectionPathBytes) || !validBoundedText(location.SheetName, maxSheetNameBytes) {
+		return sourceMetadataError("invalid_location_text")
+	}
+	for _, identifier := range []string{location.TableID, location.ViewID, location.SheetID} {
+		if identifier != "" && (len(identifier) > maxSourceIdentifierBytes || !sourceIdentifierPattern.MatchString(identifier)) {
+			return sourceMetadataError("invalid_location_identifier")
+		}
+	}
+	if (location.RowStart == 0) != (location.RowEnd == 0) || location.RowStart < 0 || location.RowEnd < 0 || location.RowStart > location.RowEnd || location.RowEnd > maxSourceRow {
+		return sourceMetadataError("invalid_location_row_range")
+	}
+	return nil
+}
+
+func cloneSourceLocations(locations []SourceLocation) []SourceLocation {
+	if locations == nil {
+		return nil
+	}
+	return append([]SourceLocation(nil), locations...)
 }
 
 func validResourceType(resourceType ResourceType) bool {

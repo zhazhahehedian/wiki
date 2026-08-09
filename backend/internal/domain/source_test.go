@@ -148,6 +148,58 @@ func TestSourceMetadataValidatesEnumsBoundsAndRows(t *testing.T) {
 	}
 }
 
+func TestSourceMetadataValidatesAndPersistsTypedSectionLocations(t *testing.T) {
+	input := domain.SourceMetadataInput{
+		SourceType: domain.ResourceSheet,
+		Locations: []domain.SourceLocation{
+			{SectionPath: "Workbook / First", SheetName: "First", SheetID: "sh1", RowStart: 1, RowEnd: 3},
+			{SectionPath: "Workbook / Empty", SheetName: "Empty", SheetID: "sh2"},
+		},
+	}
+	metadata, err := domain.NewSourceMetadata(input)
+	if err != nil {
+		t.Fatalf("NewSourceMetadata() error = %v", err)
+	}
+	input.Locations[0].SheetID = "mutated"
+	if got := metadata.Values().Locations[0].SheetID; got != "sh1" {
+		t.Fatalf("metadata changed through input alias: %q", got)
+	}
+	values := metadata.Values()
+	values.Locations[0].SheetID = "mutated-again"
+	if got := metadata.Values().Locations[0].SheetID; got != "sh1" {
+		t.Fatalf("metadata changed through Values alias: %q", got)
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	var decoded domain.SourceMetadata
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if got := decoded.Values().Locations; len(got) != 2 || got[0].SheetID != "sh1" || got[1].RowStart != 0 {
+		t.Fatalf("roundtrip locations = %+v", got)
+	}
+}
+
+func TestSourceMetadataRejectsInvalidOrSecretBearingSectionLocations(t *testing.T) {
+	invalid := []domain.SourceMetadataInput{
+		{SourceType: domain.ResourceSheet, Locations: []domain.SourceLocation{{SheetID: "bad/id"}}},
+		{SourceType: domain.ResourceSheet, Locations: []domain.SourceLocation{{SheetID: "sh1", RowStart: 2}}},
+		{SourceType: domain.ResourceSheet, Locations: []domain.SourceLocation{{SectionPath: strings.Repeat("x", 2049)}}},
+	}
+	for _, input := range invalid {
+		if _, err := domain.NewSourceMetadata(input); err == nil {
+			t.Fatalf("NewSourceMetadata(%+v) error = nil", input)
+		}
+	}
+	var metadata domain.SourceMetadata
+	err := json.Unmarshal([]byte(`{"source_type":"sheet","locations":[{"sheet_id":"sh1","access_token":"secret"}]}`), &metadata)
+	if err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("secret-bearing location error = %v", err)
+	}
+}
+
 func TestCanonicalDocumentUsesOpaqueSafeSourceURL(t *testing.T) {
 	metadata, err := domain.NewSourceMetadata(domain.SourceMetadataInput{SourceType: domain.ResourceDocx, SectionPath: "Overview"})
 	if err != nil {

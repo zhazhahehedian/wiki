@@ -8,7 +8,17 @@ import (
 
 type MarkdownNormalizer struct{}
 
-var headingLinePattern = regexp.MustCompile(`^(#+)\s+(.*)$`)
+type markdownTableCell struct {
+	text         string
+	safeMarkdown string
+}
+
+var (
+	headingLinePattern     = regexp.MustCompile(`^(#+)\s+(.*)$`)
+	orderedListLinePattern = regexp.MustCompile(`^(\s*\d+)([.)])(\s+)(.*)$`)
+	tildeFenceLinePattern  = regexp.MustCompile(`^(\s*)(~{3,})(.*)$`)
+	setextHeadingPattern   = regexp.MustCompile(`^(\s*)(=+)(\s*)$`)
+)
 
 func NewMarkdownNormalizer() MarkdownNormalizer { return MarkdownNormalizer{} }
 
@@ -66,10 +76,37 @@ func (n MarkdownNormalizer) Heading(level int, text string) string {
 }
 
 func (n MarkdownNormalizer) Paragraph(text string) string {
-	return n.EscapeText(strings.TrimSpace(text))
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(text, "\r\n", "\n")), "\n")
+	for i, line := range lines {
+		switch {
+		case orderedListLinePattern.MatchString(line):
+			match := orderedListLinePattern.FindStringSubmatch(line)
+			lines[i] = n.EscapeText(match[1]) + `\` + match[2] + n.EscapeText(match[3]+match[4])
+		case tildeFenceLinePattern.MatchString(line):
+			match := tildeFenceLinePattern.FindStringSubmatch(line)
+			lines[i] = n.EscapeText(match[1]) + strings.Repeat(`\~`, len(match[2])) + n.EscapeText(match[3])
+		case setextHeadingPattern.MatchString(line):
+			match := setextHeadingPattern.FindStringSubmatch(line)
+			lines[i] = n.EscapeText(match[1]) + strings.Repeat(`\=`, len(match[2])) + n.EscapeText(match[3])
+		default:
+			lines[i] = n.EscapeText(line)
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (n MarkdownNormalizer) Table(rows [][]string) string {
+	typedRows := make([][]markdownTableCell, len(rows))
+	for row := range rows {
+		typedRows[row] = make([]markdownTableCell, len(rows[row]))
+		for column, value := range rows[row] {
+			typedRows[row][column] = markdownTableCell{text: value}
+		}
+	}
+	return n.tableCells(typedRows)
+}
+
+func (n MarkdownNormalizer) tableCells(rows [][]markdownTableCell) string {
 	if len(rows) == 0 {
 		return ""
 	}
@@ -82,11 +119,15 @@ func (n MarkdownNormalizer) Table(rows [][]string) string {
 	if columns == 0 {
 		return ""
 	}
-	formatRow := func(row []string) string {
+	formatRow := func(row []markdownTableCell) string {
 		cells := make([]string, columns)
 		for i := range cells {
 			if i < len(row) {
-				cells[i] = n.EscapeText(strings.Join(strings.Fields(row[i]), " "))
+				if row[i].safeMarkdown != "" {
+					cells[i] = strings.Join(strings.Fields(row[i].safeMarkdown), " ")
+				} else {
+					cells[i] = n.EscapeText(strings.Join(strings.Fields(row[i].text), " "))
+				}
 			}
 		}
 		return "| " + strings.Join(cells, " | ") + " |"
@@ -103,12 +144,31 @@ func (n MarkdownNormalizer) Table(rows [][]string) string {
 	return strings.Join(lines, "\n")
 }
 
+func (n MarkdownNormalizer) combineTableCells(parts []markdownTableCell) markdownTableCell {
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.safeMarkdown != "" {
+			values = append(values, part.safeMarkdown)
+		} else if text := strings.Join(strings.Fields(part.text), " "); text != "" {
+			values = append(values, n.EscapeText(text))
+		}
+	}
+	return markdownTableCell{safeMarkdown: strings.Join(values, " ")}
+}
+
 func (n MarkdownNormalizer) UnsupportedImage(description, sourceURL string) string {
+	return "> " + n.UnsupportedInlineImage(description, sourceURL)
+}
+
+func (n MarkdownNormalizer) UnsupportedInlineImage(description, sourceURL string) string {
 	description = strings.TrimSpace(description)
 	if description == "" {
 		description = "unsupported image"
 	}
-	return fmt.Sprintf("> [Image: %s](%s)", n.EscapeText(description), sourceURL)
+	return fmt.Sprintf("[Image: %s](%s)", n.EscapeText(description), sourceURL)
 }
 
 func (MarkdownNormalizer) Finalize(parts []string) string {

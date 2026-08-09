@@ -39,3 +39,11 @@ func TestMarkdownNormalizerKeepsMultilineCellInsideTableRow(t *testing.T) {
 		t.Fatalf("Table() = %q, want %q", got, want)
 	}
 }
+
+func TestMarkdownNormalizerEscapesParagraphBlockOpeners(t *testing.T) {
+	got := NewMarkdownNormalizer().Paragraph("1. ordered\n2) ordered\n~~~go\ncode\n~~~\n===")
+	want := "1\\. ordered\n2\\) ordered\n\\~\\~\\~go\ncode\n\\~\\~\\~\n\\=\\=\\="
+	if got != want {
+		t.Fatalf("Paragraph() = %q, want %q", got, want)
+	}
+}

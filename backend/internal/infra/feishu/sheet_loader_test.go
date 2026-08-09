@@ -56,6 +56,39 @@ func TestSheetLoaderPaginatesSheetsAndRowsIntoCanonicalSections(t *testing.T) {
 	}
 }
 
+func TestSheetLoaderRetainsTypedLocationsForEverySheet(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/spreadsheets/sheetbook"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"spreadsheet":{"spreadsheet_token":"sheetbook","title":"Book","revision":1}}}`))
+		case strings.HasSuffix(r.URL.Path, "/sheets/query"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"sheets":[{"sheet_id":"sh1","title":"First"},{"sheet_id":"sh2","title":"Empty"}],"has_more":false}}`))
+		case strings.HasSuffix(r.URL.Path, "/values/sh1"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"valueRange":{"revision":1,"values":[["H"],["V"]]}}}`))
+		case strings.HasSuffix(r.URL.Path, "/values/sh2"):
+			_, _ = w.Write([]byte(`{"code":0,"data":{"valueRange":{"revision":1,"values":[]}}}`))
+		default:
+			t.Fatalf("unexpected request: %s", r.URL)
+		}
+	}))
+	defer server.Close()
+
+	document, err := NewSheetLoader(NewClient(ClientConfig{BaseURL: server.URL}, server.Client())).Load(context.Background(), mustResourceRef(t, domain.ResourceSheet, "sheetbook", ""), "token")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	locations := document.SourceMetadata.Values().Locations
+	if len(locations) != 2 {
+		t.Fatalf("locations = %+v, want 2 entries", locations)
+	}
+	if locations[0].SheetID != "sh1" || locations[0].SheetName != "First" || locations[0].RowStart != 1 || locations[0].RowEnd != 2 {
+		t.Fatalf("first location = %+v", locations[0])
+	}
+	if locations[1].SheetID != "sh2" || locations[1].SheetName != "Empty" || locations[1].RowStart != 0 || locations[1].RowEnd != 0 {
+		t.Fatalf("second location = %+v", locations[1])
+	}
+}
+
 func TestSheetLoaderRetainsSelectedSheetMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {

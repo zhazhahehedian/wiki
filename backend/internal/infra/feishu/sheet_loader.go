@@ -122,6 +122,14 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 	metadataInput := domain.SourceMetadataInput{
 		SourceType: domain.ResourceSheet, SectionPath: workbook.Spreadsheet.Title,
 		RemoteRevision: strconv.FormatInt(revision, 10), SourceLocator: ref.CanonicalURL,
+		Locations: make([]domain.SourceLocation, 0, len(loaded)),
+	}
+	for _, sheet := range loaded {
+		rowStart, rowEnd := rowBounds(len(sheet.rows))
+		metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{
+			SectionPath: workbook.Spreadsheet.Title + " / " + sheet.title,
+			SheetName:   sheet.title, SheetID: sheet.id, RowStart: rowStart, RowEnd: rowEnd,
+		})
 	}
 	if len(loaded) == 1 {
 		metadataInput.SheetID = loaded[0].id

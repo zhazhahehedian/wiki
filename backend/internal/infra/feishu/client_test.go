@@ -109,6 +109,41 @@ func TestSourceLoadErrorRedactsUntrustedCauseFromJSON(t *testing.T) {
 	}
 }
 
+func TestClientRedactsTransportErrorFromUnwrapChain(t *testing.T) {
+	const secret = "https://secret.example/path?access_token=transport-secret"
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New(secret)
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid", MaxRetries: -1}, httpClient)
+
+	err := client.Get(context.Background(), "transport-secret", "/resource", nil, &struct{}{})
+	assertRedactedErrorChain(t, err, secret, "transport-secret")
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+		t.Fatalf("Get() error = %#v", err)
+	}
+}
+
+func TestClientRedactsBodyReadErrorFromUnwrapChain(t *testing.T) {
+	const secret = "response-body-secret"
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       maliciousReadCloser{err: errors.New(secret)},
+			Request:    request,
+		}, nil
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid"}, httpClient)
+
+	err := client.Get(context.Background(), "token", "/resource", nil, &struct{}{})
+	assertRedactedErrorChain(t, err, secret)
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+		t.Fatalf("Get() error = %#v", err)
+	}
+}
+
 func TestClientRetriesServerErrorEvenWhenErrorBodyExceedsSuccessLimit(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -158,5 +193,27 @@ func TestClientHonorsHTTPDateRetryAfterAndPerRequestTimeout(t *testing.T) {
 type leakingError struct{ Secret string }
 
 func (e leakingError) Error() string { return e.Secret }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type maliciousReadCloser struct{ err error }
+
+func (r maliciousReadCloser) Read([]byte) (int, error) { return 0, r.err }
+func (maliciousReadCloser) Close() error               { return nil }
+
+func assertRedactedErrorChain(t *testing.T, err error, secrets ...string) {
+	t.Helper()
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		for _, secret := range secrets {
+			if strings.Contains(current.Error(), secret) {
+				t.Fatalf("error chain leaked %q through %T: %v", secret, current, current)
+			}
+		}
+	}
+}
 
 func noWait(context.Context, time.Duration) error { return nil }
