@@ -95,7 +95,8 @@ type docxBlock struct {
 type docxText struct {
 	Elements []docxTextElement `json:"elements"`
 	Style    struct {
-		Language any `json:"language"`
+		Language any  `json:"language"`
+		Done     bool `json:"done"`
 	} `json:"style"`
 }
 
@@ -136,6 +137,9 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 	if err != nil {
 		return domain.CanonicalDocument{}, err
 	}
+	if err := budget.RetainedBytes(len(info.Document.DocumentID) + len(info.Document.Title)); err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	tracker := newPageTokenTracker()
 	pageToken := ""
 	for {
@@ -157,8 +161,14 @@ func (l *DocxLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTok
 			return domain.CanonicalDocument{}, err
 		}
 		for _, block := range page.Items {
-			if block.BlockID == "" {
+			if !validAPIIdentifier(block.BlockID) || block.BlockType < 0 || block.BlockType > 255 {
 				return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			}
+			if !validDocxReferences(block) {
+				return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			}
+			if err := budget.RetainedBytes(docxRetainedBytes(block)); err != nil {
+				return domain.CanonicalDocument{}, err
 			}
 			if _, exists := blocks[block.BlockID]; exists {
 				return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
@@ -308,7 +318,11 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 		fence := codeFence(content)
 		rendered = fence + docxCodeLanguage(block.Code.Style.Language) + "\n" + content + "\n" + fence
 	case block.Todo != nil:
-		rendered = "- [ ] " + r.normalizer.Paragraph(text(block.Todo))
+		marker := " "
+		if block.Todo.Style.Done {
+			marker = "x"
+		}
+		rendered = "- [" + marker + "] " + r.normalizer.Paragraph(text(block.Todo))
 	case block.Equation != nil:
 		rendered = r.normalizer.Paragraph(docxEquationText(block.Equation.Content, block.Equation.Elements))
 	case block.File != nil:
@@ -318,7 +332,7 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 		}
 		rendered = r.normalizer.Paragraph("Unsupported file: " + name)
 	case block.Table != nil:
-		rows, err := r.renderTable(block, stack)
+		rows, err := r.renderTable(block, depth, stack)
 		if err != nil {
 			return "", err
 		}
@@ -336,7 +350,7 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 	case block.BlockType == 1 || block.BlockType == 32 || block.Callout != nil || block.Grid != nil || block.GridColumn != nil || block.QuoteContainer != nil:
 		// Containers only render their children.
 	default:
-		return "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		rendered = r.normalizer.Paragraph("Unsupported block type " + strconv.Itoa(block.BlockType))
 	}
 	if len(block.Children) > 0 {
 		children, err := r.renderChildren(block.Children, depth+1, stack)
@@ -359,9 +373,9 @@ func (r docxRenderer) renderBlock(id string, depth int, stack map[string]bool) (
 	return rendered, nil
 }
 
-func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]markdownTableCell, error) {
+func (r docxRenderer) renderTable(block docxBlock, depth int, stack map[string]bool) ([][]markdownTableCell, error) {
 	rows, columns := block.Table.Property.RowSize, block.Table.Property.ColumnSize
-	if rows <= 0 || columns <= 0 || len(block.Table.Cells) != rows*columns {
+	if rows <= 0 || columns <= 0 || rows > len(block.Table.Cells)/columns || len(block.Table.Cells) != rows*columns {
 		return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 	}
 	result := make([][]markdownTableCell, rows)
@@ -373,7 +387,12 @@ func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]m
 			if !ok || cell.BlockType != 32 {
 				return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
-			parts, err := r.plainChildren(cell.Children, 1, stack)
+			if r.budget != nil {
+				if err := r.budget.Depth(depth + 1); err != nil {
+					return nil, err
+				}
+			}
+			parts, err := r.plainChildren(cell.Children, depth+2, stack)
 			if err != nil {
 				return nil, err
 			}
@@ -381,6 +400,69 @@ func (r docxRenderer) renderTable(block docxBlock, stack map[string]bool) ([][]m
 		}
 	}
 	return result, nil
+}
+
+func docxRetainedBytes(block docxBlock) int {
+	total := len(block.BlockID)
+	for _, child := range block.Children {
+		total += len(child)
+	}
+	texts := []*docxText{block.Text, block.Page, block.Heading1, block.Heading2, block.Heading3, block.Heading4, block.Heading5, block.Heading6, block.Heading7, block.Heading8, block.Heading9, block.Bullet, block.Ordered, block.Quote, block.Code, block.Todo}
+	for _, text := range texts {
+		if text == nil {
+			continue
+		}
+		for _, element := range text.Elements {
+			switch {
+			case element.TextRun != nil:
+				total += len(element.TextRun.Content)
+			case element.MentionUser != nil:
+				total += len(element.MentionUser.UserID)
+			case element.MentionDoc != nil:
+				total += len(element.MentionDoc.Title)
+			case element.Equation != nil:
+				total += len(element.Equation.Content)
+			case element.File != nil:
+				total += len(element.File.Name)
+			}
+		}
+	}
+	if block.Equation != nil {
+		total += len(block.Equation.Content)
+		for _, element := range block.Equation.Elements {
+			if element.TextRun != nil {
+				total += len(element.TextRun.Content)
+			}
+		}
+	}
+	if block.File != nil {
+		total += len(block.File.Name)
+	}
+	if block.Image != nil {
+		total += len(block.Image.Token)
+	}
+	if block.Table != nil {
+		for _, cell := range block.Table.Cells {
+			total += len(cell)
+		}
+	}
+	return total
+}
+
+func validDocxReferences(block docxBlock) bool {
+	for _, id := range block.Children {
+		if !validAPIIdentifier(id) {
+			return false
+		}
+	}
+	if block.Table != nil {
+		for _, id := range block.Table.Cells {
+			if !validAPIIdentifier(id) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (r docxRenderer) plainChildren(ids []string, depth int, stack map[string]bool) ([]markdownTableCell, error) {

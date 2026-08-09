@@ -245,13 +245,16 @@ func TestResourceBudgetTighteningPreservesUsageAndNeverLoosens(t *testing.T) {
 	if err := budget.Bytes(10); err != nil {
 		t.Fatal(err)
 	}
+	if err := budget.RetainedBytes(10); err != nil {
+		t.Fatal(err)
+	}
 	ctx := contextWithResourceBudget(context.Background(), budget)
 
 	got, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 2, MaxBlocks: 1, MaxRows: 3, MaxOutputBytes: 20, MaxDepth: 2})
 	if err != nil || got != budget {
 		t.Fatalf("tighten = %p, %v; want existing %p", got, err, budget)
 	}
-	if budget.pages != 1 || budget.blocks != 1 || budget.rows != 2 || budget.bytes != 10 {
+	if budget.pages != 1 || budget.blocks != 1 || budget.rows != 2 || budget.bytes != 10 || budget.retainedBytes != 10 {
 		t.Fatalf("usage reset during tightening: %+v", budget)
 	}
 	if _, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 100, MaxBlocks: 100, MaxRows: 100, MaxOutputBytes: 1000, MaxDepth: 100}); err != nil {
@@ -272,6 +275,10 @@ func TestResourceBudgetTighteningPreservesUsageAndNeverLoosens(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertLoadCode(t, budget.Bytes(1), ports.SourceLoadTooLarge)
+	if err := budget.RetainedBytes(10); err != nil {
+		t.Fatal(err)
+	}
+	assertLoadCode(t, budget.RetainedBytes(1), ports.SourceLoadTooLarge)
 	assertLoadCode(t, budget.Depth(3), ports.SourceLoadTooLarge)
 
 	overused := newResourceBudget(ResourceLimits{MaxRows: 10})

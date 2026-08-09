@@ -127,6 +127,9 @@ type resourceBudget struct {
 	blocks int
 	rows   int
 	bytes  int
+	// Retained provider data and final output are separate monotonic dimensions
+	// governed by the same configured byte ceiling.
+	retainedBytes int
 }
 
 func newResourceBudget(limits ResourceLimits) *resourceBudget {
@@ -164,19 +167,38 @@ func (b *resourceBudget) tighten(limits ResourceLimits) error {
 	b.limits.MaxRows = min(b.limits.MaxRows, limits.MaxRows)
 	b.limits.MaxOutputBytes = min(b.limits.MaxOutputBytes, limits.MaxOutputBytes)
 	b.limits.MaxDepth = min(b.limits.MaxDepth, limits.MaxDepth)
-	if b.pages > b.limits.MaxPages || b.blocks > b.limits.MaxBlocks || b.rows > b.limits.MaxRows || b.bytes > b.limits.MaxOutputBytes {
+	if b.pages > b.limits.MaxPages || b.blocks > b.limits.MaxBlocks || b.rows > b.limits.MaxRows || b.bytes > b.limits.MaxOutputBytes || b.retainedBytes > b.limits.MaxOutputBytes {
 		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
 	}
 	return nil
 }
 
 func (b *resourceBudget) Page() error { return b.consume(&b.pages, 1, b.limits.MaxPages) }
+func (b *resourceBudget) CheckPages(count int) error {
+	return b.checkAdditional(b.pages, count, b.limits.MaxPages)
+}
 func (b *resourceBudget) Blocks(count int) error {
 	return b.consume(&b.blocks, count, b.limits.MaxBlocks)
 }
-func (b *resourceBudget) Rows(count int) error { return b.consume(&b.rows, count, b.limits.MaxRows) }
+func (b *resourceBudget) Entities(count int) error { return b.Blocks(count) }
+func (b *resourceBudget) Rows(count int) error     { return b.consume(&b.rows, count, b.limits.MaxRows) }
+func (b *resourceBudget) CheckRows(count int) error {
+	return b.checkAdditional(b.rows, count, b.limits.MaxRows)
+}
 func (b *resourceBudget) Bytes(count int) error {
 	return b.consume(&b.bytes, count, b.limits.MaxOutputBytes)
+}
+func (b *resourceBudget) RetainedBytes(count int) error {
+	return b.consume(&b.retainedBytes, count, b.limits.MaxOutputBytes)
+}
+func (b *resourceBudget) CheckAdditionalRetainedBytes(total int) error {
+	return b.checkAdditional(b.retainedBytes, total, b.limits.MaxOutputBytes)
+}
+func (b *resourceBudget) checkAdditional(current, amount, maximum int) error {
+	if amount < 0 || current > maximum-amount {
+		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	return nil
 }
 func (b *resourceBudget) CheckAdditionalOutputBytes(total int) error {
 	if total < 0 || b.bytes > b.limits.MaxOutputBytes-total {

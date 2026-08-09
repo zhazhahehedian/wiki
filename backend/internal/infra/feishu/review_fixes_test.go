@@ -117,7 +117,7 @@ func TestSheetLoaderUsesOfficialQueryShapeAndPhysicalSegments(t *testing.T) {
 		t.Fatalf("value paths = %v", valuePaths)
 	}
 	locations := doc.SourceMetadata.Values().Locations
-	if len(locations) != 2 || locations[0].RowStart != 1 || locations[0].RowEnd != 500 || locations[1].RowStart != 501 || locations[1].RowEnd != 501 {
+	if len(locations) != 2 || locations[0].RowStart != 1 || locations[0].RowEnd != 1 || locations[1].RowStart != 501 || locations[1].RowEnd != 501 {
 		t.Fatalf("locations = %+v", locations)
 	}
 }

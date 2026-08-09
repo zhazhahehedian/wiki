@@ -63,8 +63,9 @@ type bitableView struct {
 }
 
 type bitableRecord struct {
-	RecordID string         `json:"record_id"`
-	Fields   map[string]any `json:"fields"`
+	RecordID   string            `json:"record_id"`
+	Fields     map[string]any    `json:"fields"`
+	Normalized map[string]string `json:"-"`
 }
 
 type bitableTablePage struct {
@@ -108,6 +109,9 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 	limits.MaxOutputBytes = l.config.MaxOutputBytes
 	budget, err := resourceBudgetFromContext(ctx, limits)
 	if err != nil {
+		return domain.CanonicalDocument{}, err
+	}
+	if err := budget.RetainedBytes(len(app.App.AppToken) + len(app.App.Name)); err != nil {
 		return domain.CanonicalDocument{}, err
 	}
 	tables, err := l.listTables(ctx, basePath, accessToken, budget)
@@ -160,6 +164,10 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 			comment = fmt.Sprintf(`<!-- feishu-bitable table_id="%s" view_id="%s" rows="%d-%d" -->`, item.table.TableID, item.view.ViewID, rowStart, rowEnd)
 		}
 		section := []string{l.normalizer.Heading(2, heading), comment}
+		estimatedOutputBytes += len(heading) + len(comment) + 8
+		if err := budget.CheckAdditionalOutputBytes(estimatedOutputBytes); err != nil {
+			return domain.CanonicalDocument{}, err
+		}
 		table, err := l.recordsTable(ctx, item.records)
 		if err != nil {
 			return domain.CanonicalDocument{}, err
@@ -187,6 +195,9 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 		path := app.App.Name + " / " + item.table.Name
 		if item.view.ViewID != "" {
 			path += " / " + item.view.ViewName
+		}
+		if err := budget.RetainedBytes(len(path) + len(item.table.TableID) + len(item.view.ViewID)); err != nil {
+			return domain.CanonicalDocument{}, err
 		}
 		metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{
 			SectionPath: path, TableID: item.table.TableID, ViewID: item.view.ViewID, RowStart: rowStart, RowEnd: rowEnd,
@@ -218,12 +229,18 @@ func (l *BitableLoader) listTables(ctx context.Context, basePath, accessToken st
 		if err := l.client.Get(ctx, accessToken, basePath+"/tables", query, &page); err != nil {
 			return false, "", err
 		}
+		if err := budget.Entities(len(page.Items)); err != nil {
+			return false, "", err
+		}
 		for _, item := range page.Items {
 			if err := ctx.Err(); err != nil {
 				return false, "", err
 			}
 			if !validAPIIdentifier(item.TableID) || strings.TrimSpace(item.Name) == "" {
 				return false, "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			}
+			if err := budget.RetainedBytes(len(item.TableID) + len(item.Name)); err != nil {
+				return false, "", err
 			}
 		}
 		items = append(items, page.Items...)
@@ -240,9 +257,18 @@ func (l *BitableLoader) listViews(ctx context.Context, basePath, tableID, access
 		if err := l.client.Get(ctx, accessToken, path, query, &page); err != nil {
 			return false, "", err
 		}
+		if err := budget.Entities(len(page.Items)); err != nil {
+			return false, "", err
+		}
 		for _, item := range page.Items {
+			if err := ctx.Err(); err != nil {
+				return false, "", err
+			}
 			if !validAPIIdentifier(item.ViewID) || strings.TrimSpace(item.ViewName) == "" {
 				return false, "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			}
+			if err := budget.RetainedBytes(len(item.ViewID) + len(item.ViewName)); err != nil {
+				return false, "", err
 			}
 		}
 		items = append(items, page.Items...)
@@ -266,16 +292,33 @@ func (l *BitableLoader) listRecords(ctx context.Context, basePath, tableID, view
 		if err := budget.Rows(len(page.Items)); err != nil {
 			return false, "", err
 		}
-		for _, item := range page.Items {
+		for i := range page.Items {
+			item := &page.Items[i]
+			if err := ctx.Err(); err != nil {
+				return false, "", err
+			}
 			if item.RecordID == "" {
 				return false, "", ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 			}
+			if err := budget.RetainedBytes(len(item.RecordID)); err != nil {
+				return false, "", err
+			}
+			item.Normalized = make(map[string]string, len(item.Fields))
 			for field, value := range item.Fields {
-				*estimatedOutputBytes += len(field) + len(flattenBitableValue(value)) + 6
+				normalized, err := normalizeBitableValue(ctx, budget, value, 0)
+				if err != nil {
+					return false, "", err
+				}
+				if err := budget.RetainedBytes(len(field) + len(normalized)); err != nil {
+					return false, "", err
+				}
+				item.Normalized[field] = normalized
+				*estimatedOutputBytes += len(field) + len(normalized) + 6
 				if err := budget.CheckAdditionalOutputBytes(*estimatedOutputBytes); err != nil {
 					return false, "", err
 				}
 			}
+			item.Fields = nil
 		}
 		items = append(items, page.Items...)
 		return page.HasMore, page.PageToken, nil
@@ -324,7 +367,7 @@ func (l *BitableLoader) recordsTable(ctx context.Context, records []bitableRecor
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		for field := range record.Fields {
+		for field := range record.Normalized {
 			fieldSet[field] = struct{}{}
 		}
 	}
@@ -341,7 +384,7 @@ func (l *BitableLoader) recordsTable(ctx context.Context, records []bitableRecor
 		}
 		row := make([]string, 0, len(fields))
 		for _, field := range fields {
-			row = append(row, flattenBitableValue(record.Fields[field]))
+			row = append(row, record.Normalized[field])
 		}
 		rows = append(rows, row)
 	}
@@ -349,38 +392,87 @@ func (l *BitableLoader) recordsTable(ctx context.Context, records []bitableRecor
 }
 
 func flattenBitableValue(value any) string {
+	result, _ := normalizeBitableValue(context.Background(), newResourceBudget(ResourceLimits{}), value, 0)
+	return result
+}
+
+func normalizeBitableValue(ctx context.Context, budget *resourceBudget, value any, depth int) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := budget.Depth(depth); err != nil {
+		return "", err
+	}
 	switch value := value.(type) {
 	case nil:
-		return ""
+		return "", nil
 	case string:
-		return value
+		if err := budget.CheckAdditionalRetainedBytes(len(value)); err != nil {
+			return "", err
+		}
+		return value, nil
 	case bool:
-		return strconv.FormatBool(value)
+		return strconv.FormatBool(value), nil
 	case float64:
-		return strconv.FormatFloat(value, 'f', -1, 64)
+		return strconv.FormatFloat(value, 'f', -1, 64), nil
 	case []any:
 		parts := make([]string, 0, len(value))
 		for _, item := range value {
-			if part := flattenBitableValue(item); part != "" {
+			part, err := normalizeBitableValue(ctx, budget, item, depth+1)
+			if err != nil {
+				return "", err
+			}
+			if part != "" {
 				parts = append(parts, part)
 			}
 		}
-		return strings.Join(parts, "; ")
+		total := 0
+		for _, part := range parts {
+			total += len(part)
+		}
+		if len(parts) > 1 {
+			total += (len(parts) - 1) * 2
+		}
+		if err := budget.CheckAdditionalRetainedBytes(total); err != nil {
+			return "", err
+		}
+		return strings.Join(parts, "; "), nil
 	case map[string]any:
 		parts := make([]string, 0, 4)
 		for _, key := range []string{"text", "name", "display_name"} {
-			if part := flattenBitableValue(value[key]); part != "" {
+			nested, exists := value[key]
+			if !exists {
+				continue
+			}
+			part, err := normalizeBitableValue(ctx, budget, nested, depth+1)
+			if err != nil {
+				return "", err
+			}
+			if part != "" {
 				parts = append(parts, part)
 			}
 		}
 		for _, key := range []string{"url", "link"} {
 			if raw, ok := value[key].(string); ok && permanentBitableURL(raw) {
+				if err := budget.Depth(depth + 1); err != nil {
+					return "", err
+				}
 				parts = append(parts, raw)
 			}
 		}
-		return strings.Join(parts, "; ")
+		total := 0
+		for _, part := range parts {
+			total += len(part)
+		}
+		if len(parts) > 1 {
+			total += (len(parts) - 1) * 2
+		}
+		if err := budget.CheckAdditionalRetainedBytes(total); err != nil {
+			return "", err
+		}
+		return strings.Join(parts, "; "), nil
 	default:
-		return canonicalCell(value)
+		return canonicalCell(value), nil
 	}
 }
 

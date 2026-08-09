@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,7 @@ type sheetValuesData struct {
 
 type sheetValueRange struct {
 	Revision int64   `json:"revision"`
+	Range    string  `json:"range"`
 	Values   [][]any `json:"values"`
 }
 
@@ -83,6 +85,9 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 	if err != nil {
 		return domain.CanonicalDocument{}, err
 	}
+	if err := budget.RetainedBytes(len(workbook.Spreadsheet.Token) + len(workbook.Spreadsheet.Title)); err != nil {
+		return domain.CanonicalDocument{}, err
+	}
 	sheets, err := l.listSheets(ctx, ref, accessToken, budget)
 	if err != nil {
 		return domain.CanonicalDocument{}, err
@@ -110,10 +115,14 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 	parts := make([]string, 0, len(loaded))
 	for _, sheet := range loaded {
 		rows := flattenSheetSegments(sheet.segments)
-		rowStart, rowEnd := segmentBounds(sheet.segments)
+		rangeLabel := segmentRangeLabel(sheet.segments)
+		estimatedOutputBytes += len(sheet.title) + len(sheet.id) + len(rangeLabel) + 50
+		if err := budget.CheckAdditionalOutputBytes(estimatedOutputBytes); err != nil {
+			return domain.CanonicalDocument{}, err
+		}
 		section := []string{
 			l.normalizer.Heading(2, sheet.title),
-			fmt.Sprintf(`<!-- feishu-sheet sheet_id="%s" rows="%d-%d" -->`, sheet.id, rowStart, rowEnd),
+			fmt.Sprintf(`<!-- feishu-sheet sheet_id="%s" rows="%s" -->`, sheet.id, rangeLabel),
 		}
 		if table := l.normalizer.Table(rows); table != "" {
 			section = append(section, table)
@@ -133,12 +142,19 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		Locations: make([]domain.SourceLocation, 0, len(loaded)),
 	}
 	for _, sheet := range loaded {
+		sectionPath := workbook.Spreadsheet.Title + " / " + sheet.title
 		if len(sheet.segments) == 0 {
-			metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{SectionPath: workbook.Spreadsheet.Title + " / " + sheet.title, SheetName: sheet.title, SheetID: sheet.id})
+			if err := budget.RetainedBytes(len(sectionPath) + len(sheet.title) + len(sheet.id)); err != nil {
+				return domain.CanonicalDocument{}, err
+			}
+			metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{SectionPath: sectionPath, SheetName: sheet.title, SheetID: sheet.id})
 		}
 		for _, segment := range sheet.segments {
+			if err := budget.RetainedBytes(len(sectionPath) + len(sheet.title) + len(sheet.id)); err != nil {
+				return domain.CanonicalDocument{}, err
+			}
 			metadataInput.Locations = append(metadataInput.Locations, domain.SourceLocation{
-				SectionPath: workbook.Spreadsheet.Title + " / " + sheet.title,
+				SectionPath: sectionPath,
 				SheetName:   sheet.title, SheetID: sheet.id, RowStart: segment.start, RowEnd: segment.end,
 			})
 		}
@@ -146,7 +162,7 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 	if len(loaded) == 1 {
 		metadataInput.SheetID = loaded[0].id
 		metadataInput.SheetName = loaded[0].title
-		metadataInput.RowStart, metadataInput.RowEnd = segmentBounds(loaded[0].segments)
+		metadataInput.RowStart, metadataInput.RowEnd = contiguousSegmentBounds(loaded[0].segments)
 	}
 	metadata, err := domain.NewSourceMetadata(metadataInput)
 	if err != nil {
@@ -183,6 +199,15 @@ func (l *SheetLoader) listSheets(ctx context.Context, ref domain.ResourceRef, ac
 		if !validAPIIdentifier(sheet.SheetID) || strings.TrimSpace(sheet.Title) == "" {
 			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
 		}
+		if sheet.RowCount < 0 || sheet.GridProperties.RowCount < 0 {
+			return nil, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		}
+		if err := budget.RetainedBytes(len(sheet.SheetID) + len(sheet.Title)); err != nil {
+			return nil, err
+		}
+	}
+	if err := budget.Entities(len(data.Sheets)); err != nil {
+		return nil, err
 	}
 	return data.Sheets, nil
 }
@@ -190,31 +215,28 @@ func (l *SheetLoader) listSheets(ctx context.Context, ref domain.ResourceRef, ac
 func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID string, rowCount int, accessToken string, budget *resourceBudget, estimatedOutputBytes *int) ([]sheetRowSegment, int64, error) {
 	segments := make([]sheetRowSegment, 0)
 	revision := int64(0)
-	ranges := [][2]int{{0, 0}}
+	if _, err := validateSheetRowPlan(rowCount, budget); err != nil {
+		return nil, 0, err
+	}
 	if rowCount > 0 {
-		ranges = ranges[:0]
-		for start := 1; start <= rowCount; start += 500 {
-			end := start + 499
-			if end > rowCount {
-				end = rowCount
-			}
-			ranges = append(ranges, [2]int{start, end})
+		if err := budget.Rows(rowCount); err != nil {
+			return nil, 0, err
 		}
 	}
-	for _, rowRange := range ranges {
+	loadRange := func(start, end int) error {
 		if err := ctx.Err(); err != nil {
-			return nil, 0, err
+			return err
 		}
 		if err := budget.Page(); err != nil {
-			return nil, 0, err
+			return err
 		}
 		path := "/open-apis/sheets/v2/spreadsheets/" + workbookToken + "/values/" + sheetID
-		if rowRange[0] > 0 {
-			path += "!A" + strconv.Itoa(rowRange[0]) + ":ZZZ" + strconv.Itoa(rowRange[1])
+		if start > 0 {
+			path += "!A" + strconv.Itoa(start) + ":ZZZ" + strconv.Itoa(end)
 		}
 		var page sheetValuesData
 		if err := l.client.Get(ctx, accessToken, path, nil, &page); err != nil {
-			return nil, 0, err
+			return err
 		}
 		valueRange := page.ValueRange
 		if valueRange.Values == nil && page.ValueRangeCamel.Values != nil {
@@ -226,35 +248,120 @@ func (l *SheetLoader) loadRows(ctx context.Context, workbookToken, sheetID strin
 		if page.Revision > revision {
 			revision = page.Revision
 		}
-		if err := budget.Rows(len(valueRange.Values)); err != nil {
-			return nil, 0, err
+		if rowCount == 0 {
+			if err := budget.Rows(len(valueRange.Values)); err != nil {
+				return err
+			}
+		}
+		actualStart, actualEnd, hasRows, err := actualSheetSegment(valueRange.Range, start, end, len(valueRange.Values))
+		if err != nil {
+			return err
+		}
+		if !hasRows {
+			return nil
+		}
+		if err := budget.Entities(1); err != nil {
+			return err
+		}
+		if err := budget.RetainedBytes(len(valueRange.Range)); err != nil {
+			return err
 		}
 		rows := make([][]string, 0, len(valueRange.Values))
 		for _, values := range valueRange.Values {
 			if err := ctx.Err(); err != nil {
-				return nil, 0, err
+				return err
 			}
 			*estimatedOutputBytes += 4 + len(values)*3
 			if err := budget.CheckAdditionalOutputBytes(*estimatedOutputBytes); err != nil {
-				return nil, 0, err
+				return err
 			}
 			row := make([]string, len(values))
 			for i, value := range values {
 				row[i] = canonicalCell(value)
+				if err := budget.RetainedBytes(len(row[i])); err != nil {
+					return err
+				}
 				*estimatedOutputBytes += len(row[i])
 				if err := budget.CheckAdditionalOutputBytes(*estimatedOutputBytes); err != nil {
-					return nil, 0, err
+					return err
 				}
 			}
 			rows = append(rows, row)
 		}
-		if rowRange[0] > 0 {
-			segments = append(segments, sheetRowSegment{start: rowRange[0], end: rowRange[1], rows: rows})
-		} else if len(rows) > 0 {
-			segments = append(segments, sheetRowSegment{start: 1, end: len(rows), rows: rows})
+		segments = append(segments, sheetRowSegment{start: actualStart, end: actualEnd, rows: rows})
+		return nil
+	}
+	if rowCount == 0 {
+		if err := loadRange(0, 0); err != nil {
+			return nil, 0, err
 		}
+		return segments, revision, nil
+	}
+	for start := 1; ; {
+		end := start + min(499, rowCount-start)
+		if err := loadRange(start, end); err != nil {
+			return nil, 0, err
+		}
+		if end == rowCount {
+			break
+		}
+		start = end + 1
 	}
 	return segments, revision, nil
+}
+
+func validateSheetRowPlan(rowCount int, budget *resourceBudget) (int, error) {
+	if rowCount < 0 {
+		return 0, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+	}
+	pages := 1
+	if rowCount > 0 {
+		pages = (rowCount-1)/500 + 1
+	}
+	if err := budget.CheckRows(rowCount); err != nil {
+		return 0, err
+	}
+	if err := budget.CheckPages(pages); err != nil {
+		return 0, err
+	}
+	return pages, nil
+}
+
+func actualSheetSegment(responseRange string, requestedStart, requestedEnd, count int) (int, int, bool, error) {
+	if count == 0 {
+		return 0, 0, false, nil
+	}
+	start := requestedStart
+	if start == 0 {
+		start = 1
+	}
+	if responseRange != "" {
+		cellRange := responseRange
+		if bang := strings.LastIndex(cellRange, "!"); bang >= 0 {
+			cellRange = cellRange[bang+1:]
+		}
+		first := strings.SplitN(cellRange, ":", 2)[0]
+		digit := strings.IndexFunc(first, func(r rune) bool { return r >= '0' && r <= '9' })
+		if digit < 0 {
+			return 0, 0, false, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		}
+		parsed, err := strconv.ParseInt(first[digit:], 10, 64)
+		if err != nil || parsed <= 0 || parsed > int64(math.MaxInt) {
+			return 0, 0, false, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+		}
+		start = int(parsed)
+	}
+	if requestedStart > 0 && (start < requestedStart || start > requestedEnd) {
+		return 0, 0, false, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+	}
+	if count-1 > math.MaxInt-start {
+		return 0, 0, false, ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+	}
+	end := start + count - 1
+	if requestedEnd > 0 && end > requestedEnd {
+		return 0, 0, false, ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+	}
+	return start, end, true, nil
 }
 
 func flattenSheetSegments(segments []sheetRowSegment) [][]string {
@@ -265,11 +372,27 @@ func flattenSheetSegments(segments []sheetRowSegment) [][]string {
 	return rows
 }
 
-func segmentBounds(segments []sheetRowSegment) (int, int) {
+func contiguousSegmentBounds(segments []sheetRowSegment) (int, int) {
 	if len(segments) == 0 {
 		return 0, 0
 	}
+	for i := 1; i < len(segments); i++ {
+		if segments[i-1].end == math.MaxInt || segments[i].start != segments[i-1].end+1 {
+			return 0, 0
+		}
+	}
 	return segments[0].start, segments[len(segments)-1].end
+}
+
+func segmentRangeLabel(segments []sheetRowSegment) string {
+	if len(segments) == 0 {
+		return "0-0"
+	}
+	parts := make([]string, len(segments))
+	for i, segment := range segments {
+		parts[i] = strconv.Itoa(segment.start) + "-" + strconv.Itoa(segment.end)
+	}
+	return strings.Join(parts, ",")
 }
 
 func canonicalCell(value any) string {
