@@ -72,7 +72,11 @@ func (n MarkdownNormalizer) Heading(level int, text string) string {
 	if level > 6 {
 		level = 6
 	}
-	return strings.Repeat("#", level) + " " + n.EscapeText(strings.TrimSpace(text))
+	return strings.Repeat("#", level) + " " + n.headingText(text)
+}
+
+func (n MarkdownNormalizer) headingText(text string) string {
+	return n.EscapeText(strings.TrimSpace(text))
 }
 
 func (n MarkdownNormalizer) Paragraph(text string) string {

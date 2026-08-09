@@ -112,16 +112,26 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadNotFound, nil)
 	}
 
+	sectionLabels := make([]string, len(loaded))
+	sectionIDs := make([]string, len(loaded))
+	for i, sheet := range loaded {
+		sectionLabels[i], sectionIDs[i] = sheet.title, sheet.id
+	}
+	sectionHeadings := citationSectionPaths(sectionLabels, sectionIDs)
+	sectionPaths := make([]string, len(sectionHeadings))
+	for i, heading := range sectionHeadings {
+		sectionPaths[i] = l.normalizer.headingText(heading)
+	}
 	parts := make([]string, 0, len(loaded))
-	for _, sheet := range loaded {
+	for i, sheet := range loaded {
 		rows := flattenSheetSegments(sheet.segments)
 		rangeLabel := segmentRangeLabel(sheet.segments)
-		estimatedOutputBytes += len(sheet.title) + len(sheet.id) + len(rangeLabel) + 50
+		estimatedOutputBytes += len(sectionPaths[i]) + len(sheet.id) + len(rangeLabel) + 50
 		if err := budget.CheckAdditionalOutputBytes(estimatedOutputBytes); err != nil {
 			return domain.CanonicalDocument{}, err
 		}
 		section := []string{
-			l.normalizer.Heading(2, sheet.title),
+			l.normalizer.Heading(2, sectionHeadings[i]),
 			fmt.Sprintf(`<!-- feishu-sheet sheet_id="%s" rows="%s" -->`, sheet.id, rangeLabel),
 		}
 		if table := l.normalizer.Table(rows); table != "" {
@@ -141,8 +151,8 @@ func (l *SheetLoader) Load(ctx context.Context, ref domain.ResourceRef, accessTo
 		RemoteRevision: strconv.FormatInt(revision, 10), SourceLocator: ref.CanonicalURL,
 		Locations: make([]domain.SourceLocation, 0, len(loaded)),
 	}
-	for _, sheet := range loaded {
-		sectionPath := workbook.Spreadsheet.Title + " / " + sheet.title
+	for i, sheet := range loaded {
+		sectionPath := sectionPaths[i]
 		if len(sheet.segments) == 0 {
 			if err := budget.RetainedBytes(len(sectionPath) + len(sheet.title) + len(sheet.id)); err != nil {
 				return domain.CanonicalDocument{}, err

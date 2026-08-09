@@ -154,13 +154,27 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 		return domain.CanonicalDocument{}, ports.NewSourceLoadError(ports.SourceLoadNotFound, nil)
 	}
 
+	sectionLabels := make([]string, len(loaded))
+	sectionIDs := make([]string, len(loaded))
+	for i, item := range loaded {
+		sectionLabels[i] = item.table.Name
+		sectionIDs[i] = item.table.TableID
+		if item.view.ViewID != "" {
+			sectionLabels[i] += " / " + item.view.ViewName
+			sectionIDs[i] += "/" + item.view.ViewID
+		}
+	}
+	sectionHeadings := citationSectionPaths(sectionLabels, sectionIDs)
+	sectionPaths := make([]string, len(sectionHeadings))
+	for i, heading := range sectionHeadings {
+		sectionPaths[i] = l.normalizer.headingText(heading)
+	}
 	parts := make([]string, 0, len(loaded))
-	for _, item := range loaded {
+	for i, item := range loaded {
 		rowStart, rowEnd := rowBounds(len(item.records))
-		heading := item.table.Name
+		heading := sectionHeadings[i]
 		comment := fmt.Sprintf(`<!-- feishu-bitable table_id="%s" rows="%d-%d" -->`, item.table.TableID, rowStart, rowEnd)
 		if item.view.ViewID != "" {
-			heading += " / " + item.view.ViewName
 			comment = fmt.Sprintf(`<!-- feishu-bitable table_id="%s" view_id="%s" rows="%d-%d" -->`, item.table.TableID, item.view.ViewID, rowStart, rowEnd)
 		}
 		section := []string{l.normalizer.Heading(2, heading), comment}
@@ -190,12 +204,9 @@ func (l *BitableLoader) Load(ctx context.Context, ref domain.ResourceRef, access
 	if ref.TableID != "" {
 		metadataInput.TableID = ref.TableID
 	}
-	for _, item := range loaded {
+	for i, item := range loaded {
 		rowStart, rowEnd := rowBounds(len(item.records))
-		path := app.App.Name + " / " + item.table.Name
-		if item.view.ViewID != "" {
-			path += " / " + item.view.ViewName
-		}
+		path := sectionPaths[i]
 		if err := budget.RetainedBytes(len(path) + len(item.table.TableID) + len(item.view.ViewID)); err != nil {
 			return domain.CanonicalDocument{}, err
 		}

@@ -88,6 +88,11 @@ func TestSheetLoaderRetainsTypedLocationsForEverySheet(t *testing.T) {
 	if locations[1].SheetID != "sh2" || locations[1].SheetName != "Empty" || locations[1].RowStart != 0 || locations[1].RowEnd != 0 {
 		t.Fatalf("second location = %+v", locations[1])
 	}
+	for _, location := range locations {
+		if !strings.Contains(document.Markdown, "## "+location.SectionPath+"\n") {
+			t.Fatalf("location path %q has no exact Markdown heading:\n%s", location.SectionPath, document.Markdown)
+		}
+	}
 }
 
 func TestSheetLoaderRetainsSelectedSheetMetadata(t *testing.T) {

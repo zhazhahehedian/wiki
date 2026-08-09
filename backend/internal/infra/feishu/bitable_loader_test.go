@@ -35,6 +35,11 @@ func TestBitableLoaderPaginatesAndDeterministicallyFlattensRecords(t *testing.T)
 	if document.RemoteRevision != "7" || document.SourceMetadata.Values().TableID != "tb1" {
 		t.Fatalf("document metadata = %+v", document)
 	}
+	for _, location := range document.SourceMetadata.Values().Locations {
+		if !strings.Contains(document.Markdown, "## "+location.SectionPath+"\n") {
+			t.Fatalf("location path %q has no exact Markdown heading:\n%s", location.SectionPath, document.Markdown)
+		}
+	}
 }
 
 func TestBitableLoaderReturnsExplicitErrorsForRowAndOutputLimits(t *testing.T) {

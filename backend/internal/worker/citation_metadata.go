@@ -2,6 +2,7 @@ package worker
 
 import (
 	"encoding/json"
+	"sort"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 )
@@ -36,10 +37,19 @@ func remoteCitationMetadata(raw json.RawMessage, sectionPath string) map[string]
 		SectionPath: source.SectionPath, SheetName: source.SheetName, SheetID: source.SheetID,
 		TableID: source.TableID, ViewID: source.ViewID, RowStart: source.RowStart, RowEnd: source.RowEnd,
 	}
+	matches := make([]domain.SourceLocation, 0)
 	for _, candidate := range source.Locations {
 		if candidate.SectionPath == sectionPath {
-			location = candidate
-			break
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) > 0 {
+		location = matches[0]
+		if rowStart, rowEnd, contiguous := contiguousCitationBounds(matches); contiguous {
+			location.RowStart, location.RowEnd = rowStart, rowEnd
+		} else {
+			location.RowStart, location.RowEnd = 0, 0
+			metadata["locations"] = append([]domain.SourceLocation(nil), matches...)
 		}
 	}
 	putText(metadata, "sheet_name", location.SheetName)
@@ -51,6 +61,31 @@ func remoteCitationMetadata(raw json.RawMessage, sectionPath string) map[string]
 		metadata["row_end"] = location.RowEnd
 	}
 	return metadata
+}
+
+func contiguousCitationBounds(locations []domain.SourceLocation) (int, int, bool) {
+	if len(locations) == 0 {
+		return 0, 0, true
+	}
+	ranges := append([]domain.SourceLocation(nil), locations...)
+	for _, location := range ranges {
+		if location.RowStart == 0 || location.RowEnd < location.RowStart {
+			return 0, 0, len(ranges) == 1
+		}
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		return ranges[i].RowStart < ranges[j].RowStart
+	})
+	start, end := ranges[0].RowStart, ranges[0].RowEnd
+	for _, location := range ranges[1:] {
+		if location.RowStart > end+1 {
+			return 0, 0, false
+		}
+		if location.RowEnd > end {
+			end = location.RowEnd
+		}
+	}
+	return start, end, true
 }
 
 func putText(metadata map[string]any, key, value string) {
