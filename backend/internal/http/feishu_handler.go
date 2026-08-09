@@ -43,16 +43,53 @@ type feishuImportRequest struct {
 
 type feishuSyncRequest struct{}
 
+const feishuRequestBodyLimit int64 = 8 << 10
+
 var errInvalidFeishuRequest = errors.New("invalid Feishu request")
+
+type feishuLimitedBody struct {
+	io.ReadCloser
+	tooLarge *http.MaxBytesError
+}
+
+func (b *feishuLimitedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		b.tooLarge = tooLarge
+	}
+	return n, err
+}
+
+func (b *feishuLimitedBody) decodeError(err error) error {
+	if b.tooLarge != nil {
+		return b.tooLarge
+	}
+	return err
+}
+
+func limitFeishuRequestBody(w http.ResponseWriter, r *http.Request) (*feishuLimitedBody, error) {
+	body := &feishuLimitedBody{ReadCloser: http.MaxBytesReader(w, r.Body, feishuRequestBodyLimit)}
+	r.Body = body
+	if r.ContentLength > feishuRequestBodyLimit {
+		return body, &http.MaxBytesError{Limit: feishuRequestBodyLimit}
+	}
+	return body, nil
+}
 
 func (h *FeishuHandler) Import(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
+	body, err := limitFeishuRequestBody(w, r)
+	if err != nil {
+		WriteError(w, r, mapFeishuRequestError(err))
+		return
+	}
 	var req feishuImportRequest
-	if err := decodeFeishuImportRequest(r.Body, &req); err != nil {
-		WriteError(w, r, invalidFeishuRequestError())
+	if err := body.decodeError(decodeFeishuImportRequest(body, &req)); err != nil {
+		WriteError(w, r, mapFeishuRequestError(err))
 		return
 	}
 	account, err := h.accounts.Resolve(r.Context(), userID)
@@ -73,8 +110,13 @@ func (h *FeishuHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := decodeFeishuSyncRequest(r.Body); err != nil {
-		WriteError(w, r, invalidFeishuRequestError())
+	body, err := limitFeishuRequestBody(w, r)
+	if err != nil {
+		WriteError(w, r, mapFeishuRequestError(err))
+		return
+	}
+	if err := body.decodeError(decodeFeishuSyncRequest(body)); err != nil {
+		WriteError(w, r, mapFeishuRequestError(err))
 		return
 	}
 	account, err := h.accounts.Resolve(r.Context(), userID)
@@ -96,7 +138,10 @@ func decodeFeishuImportRequest(body io.Reader, req *feishuImportRequest) error {
 	}
 	decoder := json.NewDecoder(body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(req); err != nil || strings.TrimSpace(req.URL) == "" {
+	if err := decoder.Decode(req); err != nil {
+		return err
+	}
+	if strings.TrimSpace(req.URL) == "" {
 		return errInvalidFeishuRequest
 	}
 	if err := requireJSONEOF(decoder); err != nil {
@@ -117,7 +162,10 @@ func decodeFeishuSyncRequest(body io.Reader) error {
 	if errors.Is(err, io.EOF) {
 		return nil
 	}
-	if err != nil || req == nil {
+	if err != nil {
+		return err
+	}
+	if req == nil {
 		return errInvalidFeishuRequest
 	}
 	if err := requireJSONEOF(decoder); err != nil {
@@ -128,14 +176,25 @@ func decodeFeishuSyncRequest(body io.Reader) error {
 
 func requireJSONEOF(decoder *json.Decoder) error {
 	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errInvalidFeishuRequest
+	if err := decoder.Decode(&trailing); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
 	}
-	return nil
+	return errInvalidFeishuRequest
 }
 
 func invalidFeishuRequestError() *APIError {
 	return NewAPIError(http.StatusBadRequest, CodeInvalidRequest, "invalid request")
+}
+
+func mapFeishuRequestError(err error) *APIError {
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		return NewAPIError(http.StatusRequestEntityTooLarge, CodeRequestTooLarge, "request too large")
+	}
+	return invalidFeishuRequestError()
 }
 
 func mapFeishuHTTPError(err error) error {

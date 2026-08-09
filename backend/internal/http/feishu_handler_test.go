@@ -143,6 +143,53 @@ func TestFeishuSyncHandlerAcceptsOnlyEmptyOrEmptyObjectBody(t *testing.T) {
 	}
 }
 
+func TestFeishuHandlersRejectOversizedBodies(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T, string) *httptest.ResponseRecorder
+		body string
+	}{
+		{
+			name: "import",
+			run: func(t *testing.T, body string) *httptest.ResponseRecorder {
+				return serveFeishuImport(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuImport{}, body)
+			},
+			body: `{"url":"` + strings.Repeat("a", 1<<20) + `"}`,
+		},
+		{
+			name: "sync",
+			run: func(t *testing.T, body string) *httptest.ResponseRecorder {
+				return serveFeishuSync(t, fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuSync{}, body)
+			},
+			body: `{}` + strings.Repeat(" ", 1<<20),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rr := tt.run(t, tt.body)
+			if rr.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rr.Body.String(), `"code":"request_too_large"`) || !strings.Contains(rr.Body.String(), `"message":"request too large"`) {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestFeishuSyncRejectsOversizedChunkedBody(t *testing.T) {
+	userID := uuid.NewString()
+	h := NewFeishuHandler(fakeHTTPFeishuAccounts{account: domain.OAuthAccount{ID: uuid.NewString()}}, &fakeHTTPFeishuImport{}, &fakeHTTPFeishuSync{})
+	router := chi.NewRouter()
+	router.Post("/api/v1/docs/{docID}/sync", h.Sync)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/docs/"+uuid.NewString()+"/sync", strings.NewReader(`{}`+strings.Repeat(" ", 1<<20)))
+	req.ContentLength = -1
+	req = req.WithContext(WithCurrentUser(req.Context(), domain.User{ID: userID}))
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rr.Body.String(), `"code":"request_too_large"`) {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestFeishuHandlersHideUnexpectedErrorDetails(t *testing.T) {
 	secret := "postgres failed token=secret-token url=https://evil.example/private"
 	tests := []struct {
