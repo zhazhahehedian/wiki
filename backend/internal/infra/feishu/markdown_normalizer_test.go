@@ -47,3 +47,11 @@ func TestMarkdownNormalizerEscapesParagraphBlockOpeners(t *testing.T) {
 		t.Fatalf("Paragraph() = %q, want %q", got, want)
 	}
 }
+
+func TestMarkdownNormalizerNormalizeEscapesParagraphBlockOpeners(t *testing.T) {
+	got := NewMarkdownNormalizer().Normalize("####### Heading\n\n1. ordered\n2) ordered\n~~~go\ncode\n~~~\n===\nplain")
+	want := "###### Heading\n\n1\\. ordered\n2\\) ordered\n\\~\\~\\~go\ncode\n\\~\\~\\~\n\\=\\=\\=\nplain\n"
+	if got != want {
+		t.Fatalf("Normalize() = %q, want %q", got, want)
+	}
+}

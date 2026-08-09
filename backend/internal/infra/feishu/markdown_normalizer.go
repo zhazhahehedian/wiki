@@ -52,7 +52,7 @@ func (n MarkdownNormalizer) Normalize(value string) string {
 			}
 			line = strings.Repeat("#", level) + " " + n.EscapeText(match[2])
 		} else {
-			line = n.EscapeText(line)
+			line = n.Paragraph(line)
 		}
 		result = append(result, line)
 	}
