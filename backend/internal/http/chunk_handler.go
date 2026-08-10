@@ -22,9 +22,13 @@ func NewChunkHandler(vstore *vectorstore.Pgvector, docSvc *service.Document) *Ch
 }
 
 func (h *ChunkHandler) ListByDoc(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	docID := chi.URLParam(r, "id")
 
-	if _, err := h.docSvc.Get(r.Context(), docID); err != nil {
+	if _, err := h.docSvc.Get(r.Context(), userID, docID); err != nil {
 		var notFound *service.ErrDocNotFound
 		if errors.As(err, &notFound) {
 			WriteError(w, r, NewAPIError(http.StatusNotFound, CodeDocNotFound, err.Error()))
@@ -39,7 +43,7 @@ func (h *ChunkHandler) ListByDoc(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, err)
 		return
 	}
-	chunks, total, err := h.vstore.ListByDocument(r.Context(), docID, p.Limit, p.Offset)
+	chunks, total, err := h.vstore.ListByDocument(r.Context(), userID, docID, p.Limit, p.Offset)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -48,6 +52,10 @@ func (h *ChunkHandler) ListByDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *ChunkHandler) Neighbors(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	kbID := chi.URLParam(r, "kbID")
 	chunkID := chi.URLParam(r, "chunkID")
 
@@ -61,12 +69,12 @@ func (h *ChunkHandler) Neighbors(w http.ResponseWriter, r *http.Request) {
 		window = v
 	}
 
-	primary, err := h.vstore.GetChunk(r.Context(), kbID, chunkID)
+	primary, err := h.vstore.GetChunk(r.Context(), userID, kbID, chunkID)
 	if err != nil {
 		WriteError(w, r, NewAPIError(http.StatusNotFound, CodeChunkNotFound, "chunk not found"))
 		return
 	}
-	chunks, err := h.vstore.ListNeighbors(r.Context(), kbID, primary.DocumentID, primary.Seq, window)
+	chunks, err := h.vstore.ListNeighbors(r.Context(), userID, kbID, primary.DocumentID, primary.Seq, window)
 	if err != nil {
 		WriteError(w, r, err)
 		return

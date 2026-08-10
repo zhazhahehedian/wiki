@@ -1,38 +1,59 @@
 "use client";
 
-import { KBCard } from "@/components/kb/kb-card";
-import { KBCreateDialog } from "@/components/kb/kb-create-dialog";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
+
+import { AuthErrorState } from "@/components/auth/auth-error-state";
+import { useSessionExpired } from "@/components/auth/auth-session-boundary";
+import { APIError } from "@/lib/api/client";
+import { getAuthenticatedUser } from "@/lib/auth-state";
+import { useAuth } from "@/lib/hooks/use-auth";
 import { useKbs } from "@/lib/hooks/use-kbs";
+import { getLastKbId } from "@/lib/last-kb";
 
 export default function Home() {
-  const { data, isLoading, isError, error } = useKbs();
+  const router = useRouter();
+  const sessionExpired = useSessionExpired();
+  const auth = useAuth();
+  const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
+  const { data, isError, error } = useKbs(20, 0, authenticated);
+  const authUnauthenticated = auth.isError
+    && auth.error instanceof APIError
+    && auth.error.status === 401;
+  const unauthenticated = sessionExpired || authUnauthenticated;
+  const authFailed = auth.isError && !authUnauthenticated;
+  const kbUnauthenticated = isError
+    && error instanceof APIError
+    && error.status === 401;
+
+  useEffect(() => {
+    if (unauthenticated || kbUnauthenticated) {
+      router.replace("/login?next=%2F");
+    }
+  }, [kbUnauthenticated, router, unauthenticated]);
+
+  useEffect(() => {
+    if (!authenticated || isError || !data) return;
+    if (data.items.length === 0) {
+      router.replace("/kbs");
+      return;
+    }
+    const lastKbId = getLastKbId();
+    const target = data.items.find((kb) => kb.id === lastKbId) ?? data.items[0];
+    router.replace(`/kbs/${target.id}/chats`);
+  }, [authenticated, data, isError, router]);
+
+  useEffect(() => {
+    if (authenticated && isError && !kbUnauthenticated) router.replace("/kbs");
+  }, [authenticated, isError, kbUnauthenticated, router]);
+
+  if (authFailed) {
+    return <AuthErrorState onRetry={() => void auth.refetch()} retrying={auth.isFetching} />;
+  }
 
   return (
-    <main className="container mx-auto max-w-6xl p-8">
-      <header className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">it-wiki</h1>
-          <p className="text-muted-foreground text-sm">团队知识库 Agent</p>
-        </div>
-        <KBCreateDialog />
-      </header>
-
-      {isLoading && <p className="text-muted-foreground">加载中...</p>}
-      {isError && <p className="text-destructive">加载失败：{(error as Error).message}</p>}
-      {data && data.items.length === 0 && (
-        <div className="text-center py-16 text-muted-foreground">
-          <p className="mb-2">还没有知识库</p>
-          <p className="text-sm">点击右上角&quot;新建知识库&quot;开始</p>
-        </div>
-      )}
-      {data && data.items.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {data.items.map((kb) => <KBCard key={kb.id} kb={kb} />)}
-        </div>
-      )}
-      {data && (
-        <p className="mt-6 text-xs text-muted-foreground">共 {data.total} 个</p>
-      )}
+    <main className="flex min-h-screen items-center justify-center">
+      <p className="text-sm text-muted-foreground">正在进入…</p>
     </main>
   );
 }

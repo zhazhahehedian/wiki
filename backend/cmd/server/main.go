@@ -5,21 +5,28 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	stdhttp "net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
 
+	"github.com/zenith-wang/it-wiki/backend/internal/agent"
+	agenttools "github.com/zenith-wang/it-wiki/backend/internal/agent/tools"
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/embedder"
+	"github.com/zenith-wang/it-wiki/backend/internal/infra/feishu"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/llm"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/parser"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/splitter"
@@ -70,6 +77,9 @@ func run() error {
 	if err := checkEmbeddingDim(bootCtx, pool, cfg.EmbeddingDim); err != nil {
 		return fmt.Errorf("embedding dim check: %w", err)
 	}
+	if err := service.NewOwnershipBootstrap(repo.NewOwnershipBootstrapRepository(pool)).Run(bootCtx, cfg.BootstrapOwnerFeishuOpenID); err != nil {
+		return fmt.Errorf("ownership bootstrap: %w", err)
+	}
 
 	mc, err := storage.NewMinioClient(bootCtx, storage.MinioConfig{
 		Endpoint:     cfg.S3Endpoint,
@@ -92,6 +102,10 @@ func run() error {
 	}
 
 	queries := generated.New(pool)
+	authHandler, authService, err := buildAuthRuntime(cfg, pool, stdhttp.DefaultClient)
+	if err != nil {
+		return fmt.Errorf("build auth runtime: %w", err)
+	}
 	parserDispatcher := parser.NewDispatcher()
 	split := splitter.New()
 	embed := embedder.New(embedder.Config{
@@ -110,25 +124,115 @@ func run() error {
 	ingestionWorker := worker.NewIngestionWorker(worker.WorkerDeps{
 		Pool: pool, Queries: queries, Storage: mc,
 		Parser:   parserDispatcher,
-		Splitter: split, Embedder: embed, VStore: vstore,
+		Splitter: split, Embedder: embed, VStore: vstore, StagedVStore: vstore,
 		ChunkSize: cfg.ChunkSize, Overlap: cfg.ChunkOverlap, BatchSize: cfg.EmbedBatchSize,
+		JobTimeout: cfg.IngestionJobTimeout,
 	})
-	rclient, err := worker.NewClient(bootCtx, pool, ingestionWorker, cfg.RiverMaxWorkers)
+	var rclient *worker.Client
+	riverConfig := worker.RiverClientConfig{
+		IngestionWorker: ingestionWorker, MaxWorkers: cfg.RiverMaxWorkers,
+		RescueStuckJobsAfter: cfg.RiverRescueStuckJobsAfter,
+	}
+	if authService != nil {
+		apiClient := feishu.NewClient(feishu.ClientConfig{}, stdhttp.DefaultClient)
+		docxLoader := feishu.NewDocxLoader(apiClient)
+		sheetLoader := feishu.NewSheetLoader(apiClient)
+		bitableLoader := feishu.NewBitableLoader(apiClient, feishu.BitableConfig{})
+		wikiLoader := feishu.NewWikiLoader(apiClient, docxLoader, sheetLoader, bitableLoader)
+		syncRepository := worker.NewSQLFeishuSyncRepository(pool)
+		queueForwarder := worker.StagedIngestionEnqueuerFuncs{
+			EnqueueFunc: func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueStagedIngestion(ctx, snapshot)
+			},
+			EnqueueTxFunc: func(ctx context.Context, tx pgx.Tx, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueStagedIngestionTx(ctx, tx, snapshot)
+			},
+			EnqueueFeishuSyncFunc: func(ctx context.Context, documentID, revision string) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueFeishuSync(ctx, documentID, revision)
+			},
+			EnqueueMetadataOnlyFunc: func(ctx context.Context, snapshot worker.PendingFeishuSnapshot) error {
+				if rclient == nil {
+					return errors.New("River client unavailable")
+				}
+				return rclient.EnqueueMetadataOnlyIngestion(ctx, snapshot)
+			},
+		}
+		feishuSyncWorker := worker.NewFeishuSyncWorker(worker.FeishuSyncWorkerDeps{
+			Repository: syncRepository,
+			Resolver:   feishu.NewURLResolver(),
+			Loaders: map[domain.ResourceType]ports.SourceLoader{
+				domain.ResourceDocx: docxLoader, domain.ResourceSheet: sheetLoader,
+				domain.ResourceBitable: bitableLoader, domain.ResourceWiki: wikiLoader,
+			},
+			Tokens: authService, Storage: mc,
+			CitationStore: vstore,
+			Ingestion:     queueForwarder, JobTimeout: cfg.FeishuSyncJobTimeout, SyncLease: cfg.FeishuSyncLease,
+			Logger: slog.Default(),
+		})
+		reconcileWorker := worker.NewFeishuReconcileWorker(worker.FeishuReconcileWorkerDeps{
+			Repository: syncRepository, Queue: queueForwarder, SyncLease: cfg.FeishuSyncLease,
+			JobTimeout: cfg.FeishuReconcileJobTimeout, BatchSize: cfg.FeishuReconcileBatchSize,
+			MaxBatches: cfg.FeishuReconcileMaxBatches, Logger: slog.Default(),
+		})
+		riverConfig.FeishuSyncWorker = feishuSyncWorker
+		riverConfig.ReconcileWorker = reconcileWorker
+		riverConfig.ReconcileInterval = cfg.FeishuReconcileInterval
+	}
+	rclient, err = worker.NewConfiguredClient(bootCtx, pool, riverConfig)
 	if err != nil {
 		return fmt.Errorf("river client: %w", err)
 	}
 
 	kbSvc := service.NewKB(queries, cfg.EmbeddingModel, cfg.EmbeddingDim)
-	docSvc := service.NewDocument(queries)
+	docSvc := service.NewDocument(queries, mc)
 	ingestionSvc := service.NewIngestion(queries, mc, rclient)
 	retrievalSvc := service.NewRetrieval(embed, vstore, cfg.RAGTopK, cfg.RAGMinScore)
-	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages)
-
+	runnerFactory := agent.NewFactory()
+	if err := runnerFactory.Register(ports.DefaultAgentID, func() (ports.AgentRunner, error) {
+		return agent.New(llmClient, cfg.LLMModel, 5), nil
+	}); err != nil {
+		return fmt.Errorf("register knowledge-rag runner: %w", err)
+	}
+	agentRegistry, err := runnerFactory.BuildRegistry()
+	if err != nil {
+		return fmt.Errorf("build agent registry: %w", err)
+	}
+	toolRegistry := agent.NewToolRegistry()
+	if err := toolRegistry.Register("kb_retrieval", func(ctx context.Context, kbID string, callback ports.RetrievalCallback) (ports.Tool, error) {
+		return agenttools.NewKBRetrieval(retrievalSvc, service.OwnerIDFromContext(ctx), kbID, callback), nil
+	}); err != nil {
+		return fmt.Errorf("register kb_retrieval tool: %w", err)
+	}
+	if err := toolRegistry.Register("list_documents", func(ctx context.Context, kbID string, _ ports.RetrievalCallback) (ports.Tool, error) {
+		return agenttools.NewListDocuments(docSvc, service.OwnerIDFromContext(ctx), kbID), nil
+	}); err != nil {
+		return fmt.Errorf("register list_documents tool: %w", err)
+	}
+	if err := toolRegistry.RegisterAgent(ports.DefaultAgentID, "kb_retrieval", "list_documents"); err != nil {
+		return fmt.Errorf("register knowledge-rag tools: %w", err)
+	}
+	chatSvc := service.NewChat(queries, retrievalSvc, llmClient, cfg.LLMModel, cfg.RAGHistoryMessages, agentRegistry, toolRegistry)
+	feishuHandler := httpx.NewFeishuHandler(
+		service.NewFeishuAccounts(queries),
+		service.NewFeishuImport(feishu.NewURLResolver(), service.NewSQLFeishuImportRepository(pool), rclient),
+		service.NewFeishuSync(queries, rclient),
+	)
 	router := httpx.NewRouter(httpx.Handlers{
-		KB:    httpx.NewKBHandler(kbSvc),
-		Doc:   httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),
-		Chunk: httpx.NewChunkHandler(vstore, docSvc),
-		Chat:  httpx.NewChatHandler(chatSvc),
+		KB:     httpx.NewKBHandler(kbSvc),
+		Doc:    httpx.NewDocumentHandler(docSvc, ingestionSvc, cfg.UploadMaxBytes),
+		Chunk:  httpx.NewChunkHandler(vstore, docSvc),
+		Chat:   httpx.NewChatHandler(chatSvc),
+		Auth:   authHandler,
+		Feishu: feishuHandler,
 	})
 
 	runCtx, runCancel := context.WithCancel(context.Background())

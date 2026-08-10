@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countConversationsByKB = `-- name: CountConversationsByKB :one
@@ -28,10 +29,27 @@ func (q *Queries) CountConversationsByKB(ctx context.Context, arg CountConversat
 	return count, err
 }
 
+const countConversationsByKBForOwner = `-- name: CountConversationsByKBForOwner :one
+SELECT COUNT(*) FROM conversations
+WHERE kb_id = $1 AND owner_user_id = $2
+`
+
+type CountConversationsByKBForOwnerParams struct {
+	KbID        uuid.UUID   `json:"kb_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) CountConversationsByKBForOwner(ctx context.Context, arg CountConversationsByKBForOwnerParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countConversationsByKBForOwner, arg.KbID, arg.OwnerUserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createConversation = `-- name: CreateConversation :one
 INSERT INTO conversations (kb_id, title, mode, user_id)
 VALUES ($1, $2, $3, $4)
-RETURNING id, kb_id, title, mode, user_id, created_at, updated_at
+RETURNING id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id
 `
 
 type CreateConversationParams struct {
@@ -57,12 +75,55 @@ func (q *Queries) CreateConversation(ctx context.Context, arg CreateConversation
 		&i.UserID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
+	)
+	return i, err
+}
+
+const createConversationForOwner = `-- name: CreateConversationForOwner :one
+INSERT INTO conversations (kb_id, title, mode, user_id, owner_user_id, agent_id)
+SELECT kb.id, $1, $2,
+       $3::text, $3, $4
+FROM knowledge_bases AS kb
+WHERE kb.id = $5
+  AND kb.owner_user_id = $3
+RETURNING conversations.id, conversations.kb_id, conversations.title, conversations.mode, conversations.user_id, conversations.created_at, conversations.updated_at, conversations.owner_user_id, conversations.agent_id
+`
+
+type CreateConversationForOwnerParams struct {
+	Title       string      `json:"title"`
+	Mode        string      `json:"mode"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	AgentID     string      `json:"agent_id"`
+	KbID        uuid.UUID   `json:"kb_id"`
+}
+
+func (q *Queries) CreateConversationForOwner(ctx context.Context, arg CreateConversationForOwnerParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, createConversationForOwner,
+		arg.Title,
+		arg.Mode,
+		arg.OwnerUserID,
+		arg.AgentID,
+		arg.KbID,
+	)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.Title,
+		&i.Mode,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
 	)
 	return i, err
 }
 
 const getConversation = `-- name: GetConversation :one
-SELECT id, kb_id, title, mode, user_id, created_at, updated_at FROM conversations WHERE id = $1
+SELECT id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id FROM conversations WHERE id = $1
 `
 
 func (q *Queries) GetConversation(ctx context.Context, id uuid.UUID) (Conversation, error) {
@@ -76,12 +137,41 @@ func (q *Queries) GetConversation(ctx context.Context, id uuid.UUID) (Conversati
 		&i.UserID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
+	)
+	return i, err
+}
+
+const getConversationForOwner = `-- name: GetConversationForOwner :one
+SELECT id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id FROM conversations
+WHERE id = $1 AND owner_user_id = $2
+`
+
+type GetConversationForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) GetConversationForOwner(ctx context.Context, arg GetConversationForOwnerParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, getConversationForOwner, arg.ID, arg.OwnerUserID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.Title,
+		&i.Mode,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
 	)
 	return i, err
 }
 
 const getConversationForUser = `-- name: GetConversationForUser :one
-SELECT id, kb_id, title, mode, user_id, created_at, updated_at FROM conversations
+SELECT id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id FROM conversations
 WHERE id = $1 AND user_id = $2
 `
 
@@ -101,12 +191,14 @@ func (q *Queries) GetConversationForUser(ctx context.Context, arg GetConversatio
 		&i.UserID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
 	)
 	return i, err
 }
 
 const listConversationsByKB = `-- name: ListConversationsByKB :many
-SELECT id, kb_id, title, mode, user_id, created_at, updated_at FROM conversations
+SELECT id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id FROM conversations
 WHERE kb_id = $1 AND user_id = $2
 ORDER BY updated_at DESC, id DESC
 LIMIT $3 OFFSET $4
@@ -141,6 +233,57 @@ func (q *Queries) ListConversationsByKB(ctx context.Context, arg ListConversatio
 			&i.UserID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OwnerUserID,
+			&i.AgentID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConversationsByKBForOwner = `-- name: ListConversationsByKBForOwner :many
+SELECT id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id FROM conversations
+WHERE kb_id = $1 AND owner_user_id = $2
+ORDER BY updated_at DESC, id DESC
+LIMIT $3 OFFSET $4
+`
+
+type ListConversationsByKBForOwnerParams struct {
+	KbID        uuid.UUID   `json:"kb_id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	Limit       int32       `json:"limit"`
+	Offset      int32       `json:"offset"`
+}
+
+func (q *Queries) ListConversationsByKBForOwner(ctx context.Context, arg ListConversationsByKBForOwnerParams) ([]Conversation, error) {
+	rows, err := q.db.Query(ctx, listConversationsByKBForOwner,
+		arg.KbID,
+		arg.OwnerUserID,
+		arg.Limit,
+		arg.Offset,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Conversation{}
+	for rows.Next() {
+		var i Conversation
+		if err := rows.Scan(
+			&i.ID,
+			&i.KbID,
+			&i.Title,
+			&i.Mode,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OwnerUserID,
+			&i.AgentID,
 		); err != nil {
 			return nil, err
 		}
@@ -163,6 +306,22 @@ func (q *Queries) TouchConversation(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const touchConversationForOwner = `-- name: TouchConversationForOwner :exec
+UPDATE conversations
+SET updated_at = now()
+WHERE id = $1 AND owner_user_id = $2
+`
+
+type TouchConversationForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) TouchConversationForOwner(ctx context.Context, arg TouchConversationForOwnerParams) error {
+	_, err := q.db.Exec(ctx, touchConversationForOwner, arg.ID, arg.OwnerUserID)
+	return err
+}
+
 const touchConversationForUser = `-- name: TouchConversationForUser :exec
 UPDATE conversations
 SET updated_at = now()
@@ -177,4 +336,63 @@ type TouchConversationForUserParams struct {
 func (q *Queries) TouchConversationForUser(ctx context.Context, arg TouchConversationForUserParams) error {
 	_, err := q.db.Exec(ctx, touchConversationForUser, arg.ID, arg.UserID)
 	return err
+}
+
+const updateConversationMode = `-- name: UpdateConversationMode :one
+UPDATE conversations
+SET mode = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id
+`
+
+type UpdateConversationModeParams struct {
+	ID   uuid.UUID `json:"id"`
+	Mode string    `json:"mode"`
+}
+
+func (q *Queries) UpdateConversationMode(ctx context.Context, arg UpdateConversationModeParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, updateConversationMode, arg.ID, arg.Mode)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.Title,
+		&i.Mode,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
+	)
+	return i, err
+}
+
+const updateConversationModeForOwner = `-- name: UpdateConversationModeForOwner :one
+UPDATE conversations
+SET mode = $2, updated_at = now()
+WHERE id = $1 AND owner_user_id = $3
+RETURNING id, kb_id, title, mode, user_id, created_at, updated_at, owner_user_id, agent_id
+`
+
+type UpdateConversationModeForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	Mode        string      `json:"mode"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) UpdateConversationModeForOwner(ctx context.Context, arg UpdateConversationModeForOwnerParams) (Conversation, error) {
+	row := q.db.QueryRow(ctx, updateConversationModeForOwner, arg.ID, arg.Mode, arg.OwnerUserID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.KbID,
+		&i.Title,
+		&i.Mode,
+		&i.UserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.AgentID,
+	)
+	return i, err
 }

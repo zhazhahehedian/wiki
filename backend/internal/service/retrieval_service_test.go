@@ -40,7 +40,7 @@ func (f *fakeVectorStore) ReplaceChunks(context.Context, string, []domain.ChunkW
 
 func (f *fakeVectorStore) DeleteByDocument(context.Context, string) error { return nil }
 
-func (f *fakeVectorStore) Search(_ context.Context, kbID string, query []float32, opts ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
+func (f *fakeVectorStore) SearchForOwner(_ context.Context, _, kbID string, query []float32, opts ports.VectorSearchOptions) ([]ports.VectorSearchHit, error) {
 	f.kbID = kbID
 	f.query = query
 	f.opts = opts
@@ -55,7 +55,7 @@ func TestRetrievalFiltersCrossKBHits(t *testing.T) {
 	}}
 	svc := NewRetrieval(embed, vstore, 6, 0.5)
 
-	got, err := svc.Retrieve(context.Background(), " kb-1 ", " rotate? ")
+	got, err := svc.Retrieve(context.Background(), testOwnerID, " kb-1 ", " rotate? ")
 	if err != nil {
 		t.Fatalf("Retrieve() error = %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRetrievalFiltersCrossKBHits(t *testing.T) {
 func TestRetrievalEvidenceNoneWhenNoHits(t *testing.T) {
 	svc := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
 
-	got, err := svc.Retrieve(context.Background(), "kb-1", "question")
+	got, err := svc.Retrieve(context.Background(), testOwnerID, "kb-1", "question")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestRetrievalEvidenceWeakWhenTopScoreBelowMinScore(t *testing.T) {
 		0.5,
 	)
 
-	got, err := svc.Retrieve(context.Background(), "kb-1", "question")
+	got, err := svc.Retrieve(context.Background(), testOwnerID, "kb-1", "question")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestRetrievalEvidenceWeakWhenTopScoreBelowMinScore(t *testing.T) {
 func TestRetrievalRejectsEmbeddingDimMismatch(t *testing.T) {
 	svc := NewRetrieval(&fakeEmbedder{dim: 2, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
 
-	if _, err := svc.Retrieve(context.Background(), "kb-1", "question"); err == nil {
+	if _, err := svc.Retrieve(context.Background(), testOwnerID, "kb-1", "question"); err == nil {
 		t.Fatal("expected dim mismatch error")
 	}
 }
@@ -124,7 +124,7 @@ func TestRetrievalPropagatesVectorSearchError(t *testing.T) {
 	want := errors.New("search failed")
 	svc := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{err: want}, 8, 0)
 
-	if _, err := svc.Retrieve(context.Background(), "kb-1", "question"); !errors.Is(err, want) {
+	if _, err := svc.Retrieve(context.Background(), testOwnerID, "kb-1", "question"); !errors.Is(err, want) {
 		t.Fatalf("err = %v, want %v", err, want)
 	}
 }
@@ -132,10 +132,10 @@ func TestRetrievalPropagatesVectorSearchError(t *testing.T) {
 func TestRetrievalRejectsEmptyInputs(t *testing.T) {
 	svc := NewRetrieval(&fakeEmbedder{dim: 1, vectors: [][]float32{{1}}}, &fakeVectorStore{}, 8, 0)
 
-	if _, err := svc.Retrieve(context.Background(), "", "question"); err == nil {
+	if _, err := svc.Retrieve(context.Background(), testOwnerID, "", "question"); err == nil {
 		t.Fatal("expected empty kb id error")
 	}
-	if _, err := svc.Retrieve(context.Background(), "kb-1", " "); err == nil {
+	if _, err := svc.Retrieve(context.Background(), testOwnerID, "kb-1", " "); err == nil {
 		t.Fatal("expected empty question error")
 	}
 }

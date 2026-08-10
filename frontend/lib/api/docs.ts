@@ -29,4 +29,13 @@ export const docApi = {
   async reingest(id: string): Promise<Doc> {
     return apiFetch<Doc>(`/api/v1/docs/${id}/reingest`, { method: "POST" });
   },
+  async importFeishu(kbId: string, url: string): Promise<Doc> {
+    return apiFetch<Doc>(`/api/v1/kbs/${kbId}/feishu-imports`, {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+  },
+  async syncFeishu(id: string): Promise<Doc> {
+    return apiFetch<Doc>(`/api/v1/docs/${id}/sync`, { method: "POST" });
+  },
 };

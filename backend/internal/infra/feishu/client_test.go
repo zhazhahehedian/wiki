@@ -1,0 +1,318 @@
+package feishu
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
+)
+
+func TestClientRetriesRateLimitUsingRetryAfterWithoutLeakingToken(t *testing.T) {
+	const token = "secret-user-token"
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if got := r.Header.Get("Authorization"); got != "Bearer "+token {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "2")
+			http.Error(w, `{"token":"secret-user-token"}`, http.StatusTooManyRequests)
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"value":"ok"}}`))
+	}))
+	defer server.Close()
+
+	var waits []time.Duration
+	client := NewClient(ClientConfig{
+		BaseURL:    server.URL,
+		Timeout:    time.Second,
+		MaxRetries: 2,
+		Wait: func(_ context.Context, delay time.Duration) error {
+			waits = append(waits, delay)
+			return nil
+		},
+	}, server.Client())
+	var data struct {
+		Value string `json:"value"`
+	}
+	err := client.Get(context.Background(), token, "/resource", nil, &data)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if attempts != 2 || len(waits) != 1 || waits[0] != 2*time.Second || data.Value != "ok" {
+		t.Fatalf("attempts/waits/data = %d/%v/%+v", attempts, waits, data)
+	}
+}
+
+func TestClientReturnsStableRedactedErrorAfterBoundedRetries(t *testing.T) {
+	const token = "secret-user-token"
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		http.Error(w, token, http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, MaxRetries: 1, Wait: noWait}, server.Client())
+	err := client.Get(context.Background(), token, "/resource", nil, &struct{}{})
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+		t.Fatalf("Get() error = %#v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if strings.Contains(err.Error(), token) {
+		t.Fatalf("error leaked token: %q", err)
+	}
+}
+
+func TestClientRejectsMalformedEnvelopeAndPageTokenLoop(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{}} trailing`))
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL}, server.Client())
+	err := client.Get(context.Background(), "token", "/resource", nil, &struct{}{})
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadMalformed {
+		t.Fatalf("Get() error = %#v", err)
+	}
+
+	tracker := newPageTokenTracker()
+	if err := tracker.Advance("next"); err != nil {
+		t.Fatalf("first Advance() error = %v", err)
+	}
+	if err := tracker.Advance("next"); !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadMalformed {
+		t.Fatalf("repeated Advance() error = %#v", err)
+	}
+}
+
+func TestSourceLoadErrorRedactsUntrustedCauseFromJSON(t *testing.T) {
+	const secret = "provider-copied-secret-token"
+	err := ports.NewSourceLoadError(ports.SourceLoadAPIError, leakingError{Secret: secret})
+	encoded, marshalErr := json.Marshal(err)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(string(encoded), secret) {
+		t.Fatalf("typed error leaked cause: error=%q json=%s", err, encoded)
+	}
+}
+
+func TestClientRedactsTransportErrorFromUnwrapChain(t *testing.T) {
+	const secret = "https://secret.example/path?access_token=transport-secret"
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New(secret)
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid", MaxRetries: -1}, httpClient)
+
+	err := client.Get(context.Background(), "transport-secret", "/resource", nil, &struct{}{})
+	assertRedactedErrorChain(t, err, secret, "transport-secret")
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+		t.Fatalf("Get() error = %#v", err)
+	}
+}
+
+func TestClientRedactsBodyReadErrorFromUnwrapChain(t *testing.T) {
+	const secret = "response-body-secret"
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       maliciousReadCloser{err: errors.New(secret)},
+			Request:    request,
+		}, nil
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid"}, httpClient)
+
+	err := client.Get(context.Background(), "token", "/resource", nil, &struct{}{})
+	assertRedactedErrorChain(t, err, secret)
+	var loadErr *ports.SourceLoadError
+	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+		t.Fatalf("Get() error = %#v", err)
+	}
+}
+
+func TestClientRetriesBodyReadFailureWithoutLeakingCause(t *testing.T) {
+	const secret = "body-read-secret"
+	attempts := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		if attempts == 1 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Header: make(http.Header), Body: maliciousReadCloser{err: errors.New(secret)}, Request: request}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"code":0,"data":{"value":"ok"}}`)), Request: request}, nil
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid", MaxRetries: 1, Wait: noWait}, httpClient)
+	var data struct {
+		Value string `json:"value"`
+	}
+	err := client.Get(context.Background(), "token", "/resource", nil, &data)
+	if err != nil || attempts != 2 || data.Value != "ok" {
+		t.Fatalf("Get() = data=%+v err=%v attempts=%d", data, err, attempts)
+	}
+	assertRedactedErrorChain(t, err, secret)
+}
+
+func TestClientRetriesBodyReadFailureFromSuccessfulGET(t *testing.T) {
+	attempts := 0
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		attempts++
+		body := io.ReadCloser(maliciousReadCloser{err: errors.New("private read failure")})
+		if attempts == 2 {
+			body = io.NopCloser(strings.NewReader(`{"code":0,"data":{"value":"ok"}}`))
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body, Request: request}, nil
+	})}
+	client := NewClient(ClientConfig{BaseURL: "https://feishu.invalid", MaxRetries: 1, Wait: noWait}, httpClient)
+	var data struct {
+		Value string `json:"value"`
+	}
+	if err := client.Get(context.Background(), "token", "/resource", nil, &data); err != nil || attempts != 2 || data.Value != "ok" {
+		t.Fatalf("Get() = data=%+v err=%v attempts=%d", data, err, attempts)
+	}
+}
+
+func TestClientRetriesServerErrorEvenWhenErrorBodyExceedsSuccessLimit(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(strings.Repeat("x", maxAPIResponseBytes+1)))
+			return
+		}
+		_, _ = w.Write([]byte(`{"code":0,"data":{"value":"ok"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, MaxRetries: 1, Wait: noWait}, server.Client())
+	var data struct {
+		Value string `json:"value"`
+	}
+	if err := client.Get(context.Background(), "token", "/resource", nil, &data); err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if attempts != 2 || data.Value != "ok" {
+		t.Fatalf("attempts/data = %d/%+v", attempts, data)
+	}
+}
+
+func TestClientHonorsHTTPDateRetryAfterAndPerRequestTimeout(t *testing.T) {
+	now := time.Date(2026, time.August, 9, 12, 0, 0, 0, time.UTC)
+	client := NewClient(ClientConfig{Now: func() time.Time { return now }}, nil)
+	if got := client.retryDelay(0, now.Add(3*time.Second).Format(http.TimeFormat)); got != 3*time.Second {
+		t.Fatalf("retryDelay() = %v", got)
+	}
+	if got := client.retryDelay(0, "999999999999999999"); got != defaultMaxRetryDelay {
+		t.Fatalf("capped retryDelay() = %v", got)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client = NewClient(ClientConfig{BaseURL: server.URL, Timeout: 10 * time.Millisecond, MaxRetries: -1}, server.Client())
+	err := client.Get(context.Background(), "token", "/slow", nil, &struct{}{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Get() error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestResourceBudgetTighteningPreservesUsageAndNeverLoosens(t *testing.T) {
+	budget := newResourceBudget(ResourceLimits{MaxPages: 10, MaxBlocks: 10, MaxRows: 10, MaxOutputBytes: 100, MaxDepth: 10})
+	if err := budget.Page(); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Blocks(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Rows(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.Bytes(10); err != nil {
+		t.Fatal(err)
+	}
+	if err := budget.RetainedBytes(10); err != nil {
+		t.Fatal(err)
+	}
+	ctx := contextWithResourceBudget(context.Background(), budget)
+
+	got, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 2, MaxBlocks: 1, MaxRows: 3, MaxOutputBytes: 20, MaxDepth: 2})
+	if err != nil || got != budget {
+		t.Fatalf("tighten = %p, %v; want existing %p", got, err, budget)
+	}
+	if budget.pages != 1 || budget.blocks != 1 || budget.rows != 2 || budget.bytes != 10 || budget.retainedBytes != 10 {
+		t.Fatalf("usage reset during tightening: %+v", budget)
+	}
+	if _, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 100, MaxBlocks: 100, MaxRows: 100, MaxOutputBytes: 1000, MaxDepth: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if budget.limits.MaxPages != 2 || budget.limits.MaxRows != 3 || budget.limits.MaxOutputBytes != 20 || budget.limits.MaxDepth != 2 {
+		t.Fatalf("limits loosened: %+v", budget.limits)
+	}
+
+	if err := budget.Page(); err != nil {
+		t.Fatal(err)
+	}
+	assertLoadCode(t, budget.Page(), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.Blocks(1), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.Rows(2), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.CheckAdditionalOutputBytes(11), ports.SourceLoadTooLarge)
+	if err := budget.Bytes(10); err != nil {
+		t.Fatal(err)
+	}
+	assertLoadCode(t, budget.Bytes(1), ports.SourceLoadTooLarge)
+	if err := budget.RetainedBytes(10); err != nil {
+		t.Fatal(err)
+	}
+	assertLoadCode(t, budget.RetainedBytes(1), ports.SourceLoadTooLarge)
+	assertLoadCode(t, budget.Depth(3), ports.SourceLoadTooLarge)
+
+	overused := newResourceBudget(ResourceLimits{MaxRows: 10})
+	if err := overused.Rows(2); err != nil {
+		t.Fatal(err)
+	}
+	_, err = resourceBudgetFromContext(contextWithResourceBudget(context.Background(), overused), ResourceLimits{MaxRows: 1})
+	assertLoadCode(t, err, ports.SourceLoadTooLarge)
+}
+
+type leakingError struct{ Secret string }
+
+func (e leakingError) Error() string { return e.Secret }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type maliciousReadCloser struct{ err error }
+
+func (r maliciousReadCloser) Read([]byte) (int, error) { return 0, r.err }
+func (maliciousReadCloser) Close() error               { return nil }
+
+func assertRedactedErrorChain(t *testing.T, err error, secrets ...string) {
+	t.Helper()
+	for current := err; current != nil; current = errors.Unwrap(current) {
+		for _, secret := range secrets {
+			if strings.Contains(current.Error(), secret) {
+				t.Fatalf("error chain leaked %q through %T: %v", secret, current, current)
+			}
+		}
+	}
+}
+
+func noWait(context.Context, time.Duration) error { return nil }

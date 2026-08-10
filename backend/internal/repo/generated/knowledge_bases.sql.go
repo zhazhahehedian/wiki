@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countKnowledgeBases = `-- name: CountKnowledgeBases :one
@@ -23,10 +24,22 @@ func (q *Queries) CountKnowledgeBases(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countKnowledgeBasesForOwner = `-- name: CountKnowledgeBasesForOwner :one
+SELECT COUNT(*) FROM knowledge_bases
+WHERE owner_user_id = $1
+`
+
+func (q *Queries) CountKnowledgeBasesForOwner(ctx context.Context, ownerUserID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countKnowledgeBasesForOwner, ownerUserID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createKnowledgeBase = `-- name: CreateKnowledgeBase :one
 INSERT INTO knowledge_bases (name, description, embed_model, embed_dim, settings)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at
+RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id
 `
 
 type CreateKnowledgeBaseParams struct {
@@ -56,6 +69,47 @@ func (q *Queries) CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBa
 		&i.Settings,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerUserID,
+	)
+	return i, err
+}
+
+const createKnowledgeBaseForOwner = `-- name: CreateKnowledgeBaseForOwner :one
+INSERT INTO knowledge_bases (name, description, embed_model, embed_dim, settings, owner_user_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id
+`
+
+type CreateKnowledgeBaseForOwnerParams struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	EmbedModel  string          `json:"embed_model"`
+	EmbedDim    int32           `json:"embed_dim"`
+	Settings    json.RawMessage `json:"settings"`
+	OwnerUserID pgtype.UUID     `json:"owner_user_id"`
+}
+
+func (q *Queries) CreateKnowledgeBaseForOwner(ctx context.Context, arg CreateKnowledgeBaseForOwnerParams) (KnowledgeBase, error) {
+	row := q.db.QueryRow(ctx, createKnowledgeBaseForOwner,
+		arg.Name,
+		arg.Description,
+		arg.EmbedModel,
+		arg.EmbedDim,
+		arg.Settings,
+		arg.OwnerUserID,
+	)
+	var i KnowledgeBase
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.OwnerID,
+		&i.EmbedModel,
+		&i.EmbedDim,
+		&i.Settings,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
 	)
 	return i, err
 }
@@ -69,8 +123,23 @@ func (q *Queries) DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const deleteKnowledgeBaseForOwner = `-- name: DeleteKnowledgeBaseForOwner :exec
+DELETE FROM knowledge_bases
+WHERE id = $1 AND owner_user_id = $2
+`
+
+type DeleteKnowledgeBaseForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKnowledgeBaseForOwnerParams) error {
+	_, err := q.db.Exec(ctx, deleteKnowledgeBaseForOwner, arg.ID, arg.OwnerUserID)
+	return err
+}
+
 const getKnowledgeBase = `-- name: GetKnowledgeBase :one
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at FROM knowledge_bases WHERE id = $1
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases WHERE id = $1
 `
 
 func (q *Queries) GetKnowledgeBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
@@ -86,12 +155,41 @@ func (q *Queries) GetKnowledgeBase(ctx context.Context, id uuid.UUID) (Knowledge
 		&i.Settings,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OwnerUserID,
+	)
+	return i, err
+}
+
+const getKnowledgeBaseForOwner = `-- name: GetKnowledgeBaseForOwner :one
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases
+WHERE id = $1 AND owner_user_id = $2
+`
+
+type GetKnowledgeBaseForOwnerParams struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) GetKnowledgeBaseForOwner(ctx context.Context, arg GetKnowledgeBaseForOwnerParams) (KnowledgeBase, error) {
+	row := q.db.QueryRow(ctx, getKnowledgeBaseForOwner, arg.ID, arg.OwnerUserID)
+	var i KnowledgeBase
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.OwnerID,
+		&i.EmbedModel,
+		&i.EmbedDim,
+		&i.Settings,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
 	)
 	return i, err
 }
 
 const listKnowledgeBases = `-- name: ListKnowledgeBases :many
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at FROM knowledge_bases
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -120,6 +218,51 @@ func (q *Queries) ListKnowledgeBases(ctx context.Context, arg ListKnowledgeBases
 			&i.Settings,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OwnerUserID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKnowledgeBasesForOwner = `-- name: ListKnowledgeBasesForOwner :many
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases
+WHERE owner_user_id = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListKnowledgeBasesForOwnerParams struct {
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	Limit       int32       `json:"limit"`
+	Offset      int32       `json:"offset"`
+}
+
+func (q *Queries) ListKnowledgeBasesForOwner(ctx context.Context, arg ListKnowledgeBasesForOwnerParams) ([]KnowledgeBase, error) {
+	rows, err := q.db.Query(ctx, listKnowledgeBasesForOwner, arg.OwnerUserID, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []KnowledgeBase{}
+	for rows.Next() {
+		var i KnowledgeBase
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.OwnerID,
+			&i.EmbedModel,
+			&i.EmbedDim,
+			&i.Settings,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OwnerUserID,
 		); err != nil {
 			return nil, err
 		}

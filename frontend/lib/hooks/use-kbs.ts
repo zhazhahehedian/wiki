@@ -3,10 +3,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { kbApi } from "@/lib/api/kb";
 
-export function useKbs(limit = 20, offset = 0) {
+export function useKbs(limit = 20, offset = 0, enabled = true) {
   return useQuery({
     queryKey: ["kbs", { limit, offset }],
     queryFn: () => kbApi.list(limit, offset),
+    enabled,
   });
 }
 

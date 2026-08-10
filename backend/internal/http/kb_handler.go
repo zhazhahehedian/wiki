@@ -19,6 +19,10 @@ func NewKBHandler(svc *service.KB) *KBHandler {
 }
 
 func (h *KBHandler) Create(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	var in service.CreateKBInput
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "invalid json body"))
@@ -28,7 +32,7 @@ func (h *KBHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, NewAPIError(http.StatusBadRequest, CodeValidationFailed, "name is required"))
 		return
 	}
-	kb, err := h.svc.Create(r.Context(), in)
+	kb, err := h.svc.Create(r.Context(), userID, in)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -37,8 +41,12 @@ func (h *KBHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KBHandler) Get(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	id := chi.URLParam(r, "id")
-	kb, err := h.svc.Get(r.Context(), id)
+	kb, err := h.svc.Get(r.Context(), userID, id)
 	if err != nil {
 		var notFound *service.ErrKBNotFound
 		if errors.As(err, &notFound) {
@@ -52,12 +60,16 @@ func (h *KBHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KBHandler) List(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	p, err := ParsePagination(r)
 	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	kbs, total, err := h.svc.List(r.Context(), p.Limit, p.Offset)
+	kbs, total, err := h.svc.List(r.Context(), userID, p.Limit, p.Offset)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -66,8 +78,12 @@ func (h *KBHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *KBHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	id := chi.URLParam(r, "id")
-	if err := h.svc.Delete(r.Context(), id); err != nil {
+	if err := h.svc.Delete(r.Context(), userID, id); err != nil {
 		var notFound *service.ErrKBNotFound
 		if errors.As(err, &notFound) {
 			WriteError(w, r, NewAPIError(http.StatusNotFound, CodeKBNotFound, err.Error()))

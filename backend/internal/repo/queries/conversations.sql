@@ -3,6 +3,15 @@ INSERT INTO conversations (kb_id, title, mode, user_id)
 VALUES ($1, $2, $3, $4)
 RETURNING *;
 
+-- name: CreateConversationForOwner :one
+INSERT INTO conversations (kb_id, title, mode, user_id, owner_user_id, agent_id)
+SELECT kb.id, sqlc.arg('title'), sqlc.arg('mode'),
+       sqlc.arg('owner_user_id')::text, sqlc.arg('owner_user_id'), sqlc.arg('agent_id')
+FROM knowledge_bases AS kb
+WHERE kb.id = sqlc.arg('kb_id')
+  AND kb.owner_user_id = sqlc.arg('owner_user_id')
+RETURNING conversations.*;
+
 -- name: GetConversation :one
 SELECT * FROM conversations WHERE id = $1;
 
@@ -10,15 +19,29 @@ SELECT * FROM conversations WHERE id = $1;
 SELECT * FROM conversations
 WHERE id = $1 AND user_id = $2;
 
+-- name: GetConversationForOwner :one
+SELECT * FROM conversations
+WHERE id = $1 AND owner_user_id = $2;
+
 -- name: ListConversationsByKB :many
 SELECT * FROM conversations
 WHERE kb_id = $1 AND user_id = $2
 ORDER BY updated_at DESC, id DESC
 LIMIT $3 OFFSET $4;
 
+-- name: ListConversationsByKBForOwner :many
+SELECT * FROM conversations
+WHERE kb_id = $1 AND owner_user_id = $2
+ORDER BY updated_at DESC, id DESC
+LIMIT $3 OFFSET $4;
+
 -- name: CountConversationsByKB :one
 SELECT COUNT(*) FROM conversations
 WHERE kb_id = $1 AND user_id = $2;
+
+-- name: CountConversationsByKBForOwner :one
+SELECT COUNT(*) FROM conversations
+WHERE kb_id = $1 AND owner_user_id = $2;
 
 -- name: TouchConversation :exec
 UPDATE conversations
@@ -29,3 +52,20 @@ WHERE id = $1;
 UPDATE conversations
 SET updated_at = now()
 WHERE id = $1 AND user_id = $2;
+
+-- name: TouchConversationForOwner :exec
+UPDATE conversations
+SET updated_at = now()
+WHERE id = $1 AND owner_user_id = $2;
+
+-- name: UpdateConversationMode :one
+UPDATE conversations
+SET mode = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateConversationModeForOwner :one
+UPDATE conversations
+SET mode = $2, updated_at = now()
+WHERE id = $1 AND owner_user_id = $3
+RETURNING *;

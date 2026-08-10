@@ -2,12 +2,14 @@ package vectorstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -55,7 +57,7 @@ func TestSearchDefaultsTopKAndMapsHits(t *testing.T) {
 	if !strings.Contains(tx.execSQL, "SET LOCAL ivfflat.probes") {
 		t.Fatalf("Search must raise ivfflat.probes in the same tx, got exec: %q", tx.execSQL)
 	}
-	if !strings.Contains(tx.querySQL, "JOIN documents d ON d.id = c.document_id") {
+	if !strings.Contains(compactSQL(tx.querySQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") {
 		t.Fatalf("Search SQL missing documents join: %s", tx.querySQL)
 	}
 	if !strings.Contains(tx.querySQL, "d.status = 'ready'") {
@@ -87,6 +89,24 @@ func TestSearchReturnsIterationErrors(t *testing.T) {
 	}
 }
 
+func TestSearchForOwnerJoinsKnowledgeBaseOwnership(t *testing.T) {
+	tx := &fakeTx{rows: &fakeRows{}}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	ownerID := uuid.NewString()
+	if _, err := store.SearchForOwner(context.Background(), ownerID, "kb-1", []float32{0.1}, ports.VectorSearchOptions{TopK: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tx.querySQL, "JOIN knowledge_bases kb") || !strings.Contains(tx.querySQL, "kb.owner_user_id = $2") {
+		t.Fatalf("owner-filtered search SQL missing join: %s", tx.querySQL)
+	}
+	if !strings.Contains(compactSQL(tx.querySQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(compactSQL(tx.querySQL), "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+		t.Fatalf("owner-filtered search accepts mismatched document KB: %s", tx.querySQL)
+	}
+	if tx.queryArgs[1] != ownerID {
+		t.Fatalf("owner arg=%v want=%s", tx.queryArgs[1], ownerID)
+	}
+}
+
 func TestGetChunkMapsMetadata(t *testing.T) {
 	createdAt := time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
 	db := &fakeDB{
@@ -103,7 +123,8 @@ func TestGetChunkMapsMetadata(t *testing.T) {
 	}
 	store := &Pgvector{pool: db}
 
-	chunk, err := store.GetChunk(context.Background(), "kb-1", "chunk-1")
+	ownerID := uuid.NewString()
+	chunk, err := store.GetChunk(context.Background(), ownerID, "kb-1", "chunk-1")
 	if err != nil {
 		t.Fatalf("GetChunk() error = %v", err)
 	}
@@ -117,8 +138,11 @@ func TestGetChunkMapsMetadata(t *testing.T) {
 	if chunk.Metadata["heading"] != "Rotation" {
 		t.Fatalf("Metadata[heading] = %v, want Rotation", chunk.Metadata["heading"])
 	}
-	if db.rowArgs[0] != "kb-1" || db.rowArgs[1] != "chunk-1" {
+	if db.rowArgs[0] != "kb-1" || db.rowArgs[1] != "chunk-1" || db.rowArgs[2] != ownerID || !strings.Contains(db.rowSQL, "kb.owner_user_id = $3") {
 		t.Fatalf("GetChunk args = %v, want kb/chunk", db.rowArgs)
+	}
+	if !strings.Contains(compactSQL(db.rowSQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(compactSQL(db.rowSQL), "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+		t.Fatalf("GetChunk SQL accepts mismatched document KB: %s", db.rowSQL)
 	}
 }
 
@@ -138,7 +162,8 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	}
 	store := &Pgvector{pool: db}
 
-	chunks, err := store.ListNeighbors(context.Background(), "kb-1", "doc-1", 5, -3)
+	ownerID := uuid.NewString()
+	chunks, err := store.ListNeighbors(context.Background(), ownerID, "kb-1", "doc-1", 5, -3)
 	if err != nil {
 		t.Fatalf("ListNeighbors() error = %v", err)
 	}
@@ -149,9 +174,106 @@ func TestListNeighborsClampsNegativeWindow(t *testing.T) {
 	if chunks[0].ID != "chunk-5" || chunks[0].Seq != 5 {
 		t.Fatalf("ListNeighbors() chunk = %+v", chunks[0])
 	}
-	if db.queryArgs[2] != 5 || db.queryArgs[3] != 5 {
-		t.Fatalf("neighbor bounds = %v, want seq to seq for negative window", db.queryArgs[2:4])
+	if db.queryArgs[2] != ownerID || db.queryArgs[3] != 5 || db.queryArgs[4] != 5 {
+		t.Fatalf("neighbor args = %v, want owner and seq bounds", db.queryArgs)
 	}
+	if !strings.Contains(compactSQL(db.querySQL), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(compactSQL(db.querySQL), "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+		t.Fatalf("ListNeighbors SQL accepts mismatched document KB: %s", db.querySQL)
+	}
+}
+
+func TestListByDocumentRequiresMatchingDocumentKB(t *testing.T) {
+	db := &fakeDB{
+		row:  &fakeRow{values: []any{0}},
+		rows: &fakeRows{},
+	}
+	store := &Pgvector{pool: db}
+	ownerID := uuid.NewString()
+	chunks, total, err := store.ListByDocument(context.Background(), ownerID, uuid.NewString(), 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chunks) != 0 || total != 0 {
+		t.Fatalf("chunks=%#v total=%d, want mismatched row rejected", chunks, total)
+	}
+	for name, query := range map[string]string{"count": db.rowSQL, "list": db.querySQL} {
+		query = compactSQL(query)
+		if !strings.Contains(query, "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id") || !strings.Contains(query, "JOIN knowledge_bases kb ON kb.id = d.kb_id") {
+			t.Fatalf("%s SQL accepts mismatched document KB: %s", name, query)
+		}
+	}
+}
+
+func TestOwnerChunkReadsRejectMismatchedDocumentKB(t *testing.T) {
+	createdAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	chunkRow := []any{"chunk-foreign", "kb-owner", "doc-foreign", 2, "must not leak", 3, []byte(`{}`), createdAt}
+	db := &fakeDB{
+		rejectMismatchedChunk: true,
+		row:                   &fakeRow{values: chunkRow},
+		rows:                  &fakeRows{values: [][]any{chunkRow}},
+		tx: &fakeTx{
+			rejectMismatchedChunk: true,
+			rows: &fakeRows{values: [][]any{{
+				"chunk-foreign", "kb-owner", "doc-foreign", "Foreign", 2,
+				"must not leak", float32(0.99), []byte(`{}`),
+			}}},
+		},
+	}
+	store := &Pgvector{pool: db}
+	ownerID := uuid.NewString()
+
+	if chunk, err := store.GetChunk(context.Background(), ownerID, "kb-owner", "chunk-foreign"); err == nil || chunk != nil {
+		t.Fatalf("GetChunk() chunk=%#v err=%v, want mismatched row rejected", chunk, err)
+	}
+	if chunks, total, err := store.ListByDocument(context.Background(), ownerID, "doc-foreign", 20, 0); err != nil || len(chunks) != 0 || total != 0 {
+		t.Fatalf("ListByDocument() chunks=%#v total=%d err=%v", chunks, total, err)
+	}
+	if chunks, err := store.ListNeighbors(context.Background(), ownerID, "kb-owner", "doc-foreign", 2, 1); err != nil || len(chunks) != 0 {
+		t.Fatalf("ListNeighbors() chunks=%#v err=%v", chunks, err)
+	}
+	if hits, err := store.SearchForOwner(context.Background(), ownerID, "kb-owner", []float32{0.1}, ports.VectorSearchOptions{TopK: 5}); err != nil || len(hits) != 0 {
+		t.Fatalf("SearchForOwner() hits=%#v err=%v", hits, err)
+	}
+}
+
+func TestTwoOwnerChunkSearchAndNeighborBehavior(t *testing.T) {
+	ownerA, ownerB := uuid.NewString(), uuid.NewString()
+	createdAt := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	db := &twoOwnerChunkDB{
+		fakeDB:  &fakeDB{},
+		ownerID: ownerA,
+		chunkRow: []any{
+			"chunk-a", "kb-a", "doc-a", 4, "owner A content", 3, []byte(`{}`), createdAt,
+		},
+		searchRow: []any{
+			"chunk-a", "kb-a", "doc-a", "Owner A", 4, "owner A content", float32(0.95), []byte(`{}`),
+		},
+	}
+	store := &Pgvector{pool: db}
+
+	chunks, total, err := store.ListByDocument(context.Background(), ownerA, "doc-a", 20, 0)
+	if err != nil || total != 1 || len(chunks) != 1 || chunks[0].ID != "chunk-a" {
+		t.Fatalf("owner A ListByDocument chunks=%#v total=%d err=%v", chunks, total, err)
+	}
+	if chunks, total, err := store.ListByDocument(context.Background(), ownerB, "doc-a", 20, 0); err != nil || total != 0 || len(chunks) != 0 {
+		t.Fatalf("owner B ListByDocument chunks=%#v total=%d err=%v", chunks, total, err)
+	}
+	if chunk, err := store.GetChunk(context.Background(), ownerB, "kb-a", "chunk-a"); err == nil || chunk != nil {
+		t.Fatalf("owner B GetChunk chunk=%#v err=%v", chunk, err)
+	}
+	if neighbors, err := store.ListNeighbors(context.Background(), ownerB, "kb-a", "doc-a", 4, 2); err != nil || len(neighbors) != 0 {
+		t.Fatalf("owner B ListNeighbors neighbors=%#v err=%v", neighbors, err)
+	}
+	if hits, err := store.SearchForOwner(context.Background(), ownerB, "kb-a", []float32{0.1}, ports.VectorSearchOptions{TopK: 5}); err != nil || len(hits) != 0 {
+		t.Fatalf("owner B SearchForOwner hits=%#v err=%v", hits, err)
+	}
+	if hits, err := store.SearchForOwner(context.Background(), ownerA, "kb-a", []float32{0.1}, ports.VectorSearchOptions{TopK: 5}); err != nil || len(hits) != 1 || hits[0].ChunkID != "chunk-a" {
+		t.Fatalf("owner A SearchForOwner hits=%#v err=%v", hits, err)
+	}
+}
+
+func compactSQL(sql string) string {
+	return strings.Join(strings.Fields(sql), " ")
 }
 
 func TestReplaceChunksDeletesThenInsertsInOneTx(t *testing.T) {
@@ -204,6 +326,131 @@ func TestReplaceChunksRollsBackWhenDeleteFails(t *testing.T) {
 	}
 }
 
+func TestReplaceChunksAndPromoteUsesOneTransactionAndConditionalSQLCUpdate(t *testing.T) {
+	tx := &fakeTx{execTags: []pgconn.CommandTag{pgconn.NewCommandTag("DELETE 2"), pgconn.NewCommandTag("UPDATE 1")}}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{
+		DocumentID: uuid.MustParse("74ecb70f-b708-4a8e-ad85-40a9026f38ad"),
+		ContentRef: "feishu/74ec/snapshot.md", Checksum: "new-sum", RemoteRevision: "rev-2",
+	}
+	items := []domain.ChunkWithEmbedding{{Chunk: domain.Chunk{KBID: "kb-1", DocumentID: promotion.DocumentID.String(), Content: "new chunk"}, Embedding: []float32{0.1}}}
+
+	if err := store.ReplaceChunksAndPromote(context.Background(), promotion, items); err != nil {
+		t.Fatalf("ReplaceChunksAndPromote() error = %v", err)
+	}
+	if !tx.committed || tx.rolledBack {
+		t.Fatalf("transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+	if len(tx.ops) != 4 || !strings.Contains(tx.ops[0], "DELETE FROM chunks") || tx.ops[1] != "sendbatch" || !strings.Contains(tx.ops[2], "UPDATE documents") || tx.ops[3] != "commit" {
+		t.Fatalf("transaction operations = %#v", tx.ops)
+	}
+	if !strings.Contains(tx.execSQL, "pending_content_ref") || !strings.Contains(tx.execSQL, "sync_status = 'syncing'") {
+		t.Fatalf("promotion SQL is not conditional: %s", tx.execSQL)
+	}
+}
+
+func TestReplaceChunksAndPromoteRollsBackWhenSnapshotIsStale(t *testing.T) {
+	tx := &fakeTx{execTags: []pgconn.CommandTag{pgconn.NewCommandTag("DELETE 2"), pgconn.NewCommandTag("UPDATE 0")}}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{
+		DocumentID: uuid.New(), ContentRef: "snapshot.md", Checksum: "sum", RemoteRevision: "rev",
+	}
+
+	err := store.ReplaceChunksAndPromote(context.Background(), promotion, nil)
+	if !errors.Is(err, ports.ErrStaleDocumentPromotion) {
+		t.Fatalf("ReplaceChunksAndPromote() error = %v, want stale promotion", err)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Fatalf("stale transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestPatchChunkMetadataAndPromoteUsesOneTransaction(t *testing.T) {
+	chunkID := uuid.New()
+	tx := &fakeTx{
+		rows:     &fakeRows{values: [][]any{{chunkID, []byte(`{"section_path":"Budget","remote_revision":"old"}`)}}},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 1")},
+	}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{DocumentID: uuid.New(), ContentRef: "new.md", Checksum: "sum", RemoteRevision: "rev-2"}
+
+	err := store.PatchChunkMetadataAndPromote(context.Background(), promotion, func(existing map[string]any) map[string]any {
+		existing["remote_revision"] = "rev-2"
+		return existing
+	})
+	if err != nil {
+		t.Fatalf("PatchChunkMetadataAndPromote() error = %v", err)
+	}
+	if len(tx.ops) != 4 || tx.ops[0] != "query" || !strings.Contains(tx.ops[1], "UPDATE chunks SET metadata") || !strings.Contains(tx.ops[2], "UPDATE documents") || tx.ops[3] != "commit" {
+		t.Fatalf("transaction operations = %#v", tx.ops)
+	}
+	if !tx.committed || tx.rolledBack {
+		t.Fatalf("transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestPatchChunkMetadataAndPromotePatchesEachSectionWithoutReplacingChunkPayload(t *testing.T) {
+	firstID, secondID := uuid.New(), uuid.New()
+	tx := &fakeTx{
+		rows: &fakeRows{values: [][]any{
+			{firstID, []byte(`{"section_path":"Budget","custom":"keep-a"}`)},
+			{secondID, []byte(`{"section_path":"Forecast","custom":"keep-b"}`)},
+		}},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 1")},
+	}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+
+	err := store.PatchChunkMetadataAndPromote(context.Background(), ports.PendingDocumentPromotion{
+		DocumentID: uuid.New(), ContentRef: "new.md", Checksum: "sum", RemoteRevision: "rev-2",
+	}, func(existing map[string]any) map[string]any {
+		existing["citation"] = existing["section_path"]
+		return existing
+	})
+	if err != nil {
+		t.Fatalf("PatchChunkMetadataAndPromote() error = %v", err)
+	}
+	if len(tx.execHistory) != 3 {
+		t.Fatalf("exec history length = %d, want two metadata patches and promotion", len(tx.execHistory))
+	}
+	for i, want := range []struct {
+		id      uuid.UUID
+		section string
+		custom  string
+	}{{firstID, "Budget", "keep-a"}, {secondID, "Forecast", "keep-b"}} {
+		call := tx.execHistory[i]
+		if !strings.Contains(call.sql, "UPDATE chunks SET metadata") || strings.Contains(call.sql, "content") || strings.Contains(call.sql, "embedding") {
+			t.Fatalf("chunk patch SQL replaces payload: %s", call.sql)
+		}
+		if call.args[0] != want.id {
+			t.Fatalf("chunk patch id = %v, want %v", call.args[0], want.id)
+		}
+		var metadata map[string]any
+		if err := json.Unmarshal(call.args[1].([]byte), &metadata); err != nil {
+			t.Fatal(err)
+		}
+		if metadata["citation"] != want.section || metadata["custom"] != want.custom {
+			t.Fatalf("patched metadata = %+v, want section %q custom %q", metadata, want.section, want.custom)
+		}
+	}
+}
+
+func TestPatchChunkMetadataAndPromoteRollsBackOnStaleAttempt(t *testing.T) {
+	tx := &fakeTx{
+		rows:     &fakeRows{values: [][]any{{uuid.New(), []byte(`{}`)}}},
+		execTags: []pgconn.CommandTag{pgconn.NewCommandTag("UPDATE 1"), pgconn.NewCommandTag("UPDATE 0")},
+	}
+	store := &Pgvector{pool: &fakeDB{tx: tx}}
+	promotion := ports.PendingDocumentPromotion{DocumentID: uuid.New(), ContentRef: "new.md", Checksum: "sum", RemoteRevision: "rev-2"}
+
+	err := store.PatchChunkMetadataAndPromote(context.Background(), promotion, func(existing map[string]any) map[string]any { return existing })
+	if !errors.Is(err, ports.ErrStaleDocumentPromotion) {
+		t.Fatalf("PatchChunkMetadataAndPromote() error = %v, want stale", err)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Fatalf("stale transaction committed/rolledBack = %v/%v", tx.committed, tx.rolledBack)
+	}
+}
+
 func TestDeleteByDocumentIssuesDelete(t *testing.T) {
 	db := &fakeDB{}
 	store := &Pgvector{pool: db}
@@ -244,6 +491,64 @@ type fakeDB struct {
 	execErr  error
 
 	tx pgx.Tx
+
+	rejectMismatchedChunk bool
+}
+
+type twoOwnerChunkDB struct {
+	*fakeDB
+	ownerID   string
+	chunkRow  []any
+	searchRow []any
+}
+
+func (d *twoOwnerChunkDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
+	return &twoOwnerChunkTx{fakeTx: &fakeTx{}, ownerID: d.ownerID, searchRow: d.searchRow}, nil
+}
+
+func (d *twoOwnerChunkDB) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	d.querySQL, d.queryArgs = sql, args
+	ownerArg := 1
+	if strings.Contains(sql, "c.seq BETWEEN") {
+		ownerArg = 2
+	}
+	if len(args) <= ownerArg || args[ownerArg] != d.ownerID {
+		return &fakeRows{}, nil
+	}
+	return &fakeRows{values: [][]any{d.chunkRow}}, nil
+}
+
+func (d *twoOwnerChunkDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
+	d.rowSQL, d.rowArgs = sql, args
+	ownerArg := 1
+	if !strings.Contains(sql, "COUNT(*)") {
+		ownerArg = 2
+	}
+	if len(args) <= ownerArg || args[ownerArg] != d.ownerID {
+		if strings.Contains(sql, "COUNT(*)") {
+			return &fakeRow{values: []any{0}}
+		}
+		return &fakeRow{err: pgx.ErrNoRows}
+	}
+	if strings.Contains(sql, "COUNT(*)") {
+		return &fakeRow{values: []any{1}}
+	}
+	return &fakeRow{values: d.chunkRow}
+}
+
+type twoOwnerChunkTx struct {
+	*fakeTx
+	ownerID   string
+	searchRow []any
+}
+
+func (t *twoOwnerChunkTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
+	t.ops = append(t.ops, "query")
+	t.querySQL, t.queryArgs = sql, args
+	if len(args) <= 1 || args[1] != t.ownerID {
+		return &fakeRows{}, nil
+	}
+	return &fakeRows{values: [][]any{t.searchRow}}, nil
 }
 
 func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
@@ -256,12 +561,21 @@ func (f *fakeDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) {
 func (f *fakeDB) Query(_ context.Context, sql string, args ...any) (pgx.Rows, error) {
 	f.querySQL = sql
 	f.queryArgs = args
+	if f.rejectMismatchedChunk && hasCompositeDocumentKBJoin(sql) {
+		return &fakeRows{}, f.queryErr
+	}
 	return f.rows, f.queryErr
 }
 
 func (f *fakeDB) QueryRow(_ context.Context, sql string, args ...any) pgx.Row {
 	f.rowSQL = sql
 	f.rowArgs = args
+	if f.rejectMismatchedChunk && hasCompositeDocumentKBJoin(sql) {
+		if strings.Contains(sql, "COUNT(*)") {
+			return &fakeRow{values: []any{0}}
+		}
+		return &fakeRow{err: pgx.ErrNoRows}
+	}
 	return f.row
 }
 
@@ -274,18 +588,27 @@ func (f *fakeDB) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 // fakeTx records the order of operations issued inside a transaction so tests
 // can assert delete-then-insert atomicity.
 type fakeTx struct {
-	ops        []string
-	execSQL    string
-	execArgs   []any
-	execErr    error
-	batch      *pgx.Batch
-	committed  bool
-	rolledBack bool
+	ops         []string
+	execSQL     string
+	execArgs    []any
+	execErr     error
+	execTags    []pgconn.CommandTag
+	batch       *pgx.Batch
+	committed   bool
+	rolledBack  bool
+	execHistory []fakeExecCall
 
 	querySQL  string
 	queryArgs []any
 	rows      pgx.Rows
 	queryErr  error
+
+	rejectMismatchedChunk bool
+}
+
+type fakeExecCall struct {
+	sql  string
+	args []any
 }
 
 func (t *fakeTx) Begin(context.Context) (pgx.Tx, error) {
@@ -299,7 +622,9 @@ func (t *fakeTx) Commit(context.Context) error {
 }
 
 func (t *fakeTx) Rollback(context.Context) error {
-	t.rolledBack = true
+	if !t.committed {
+		t.rolledBack = true
+	}
 	return nil
 }
 
@@ -323,6 +648,12 @@ func (t *fakeTx) Exec(_ context.Context, sql string, args ...any) (pgconn.Comman
 	t.ops = append(t.ops, "exec:"+sql)
 	t.execSQL = sql
 	t.execArgs = args
+	t.execHistory = append(t.execHistory, fakeExecCall{sql: sql, args: append([]any(nil), args...)})
+	if len(t.execTags) > 0 {
+		tag := t.execTags[0]
+		t.execTags = t.execTags[1:]
+		return tag, t.execErr
+	}
 	return pgconn.CommandTag{}, t.execErr
 }
 
@@ -330,7 +661,14 @@ func (t *fakeTx) Query(_ context.Context, sql string, args ...any) (pgx.Rows, er
 	t.ops = append(t.ops, "query")
 	t.querySQL = sql
 	t.queryArgs = args
+	if t.rejectMismatchedChunk && hasCompositeDocumentKBJoin(sql) {
+		return &fakeRows{}, t.queryErr
+	}
 	return t.rows, t.queryErr
+}
+
+func hasCompositeDocumentKBJoin(sql string) bool {
+	return strings.Contains(compactSQL(sql), "JOIN documents d ON d.id = c.document_id AND d.kb_id = c.kb_id")
 }
 
 func (t *fakeTx) QueryRow(context.Context, string, ...any) pgx.Row { return nil }

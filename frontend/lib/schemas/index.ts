@@ -18,6 +18,9 @@ export const docStatusEnum = z.enum([
 ]);
 export type DocStatus = z.infer<typeof docStatusEnum>;
 
+export const docSyncStatusEnum = z.enum(["idle", "syncing", "failed"]);
+export type DocSyncStatus = z.infer<typeof docSyncStatusEnum>;
+
 export const docSchema = z.object({
   id: z.string(),
   kb_id: z.string(),
@@ -29,6 +32,11 @@ export const docSchema = z.object({
   checksum: z.string(),
   status: docStatusEnum,
   error_message: z.string().nullable().optional(),
+  source_url: z.string().nullable().optional(),
+  remote_revision: z.string().nullable().optional(),
+  sync_status: docSyncStatusEnum.optional(),
+  last_sync_error: z.string().nullable().optional(),
+  last_synced_at: z.string().nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string(),
   updated_at: z.string(),
@@ -71,12 +79,24 @@ export const conversationSchema = z.object({
   id: z.string(),
   kb_id: z.string(),
   title: z.string(),
-  mode: z.literal("rag"),
+  mode: z.enum(["rag", "react"]),
   user_id: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
 });
 export type Conversation = z.infer<typeof conversationSchema>;
+
+export const toolCallStepSchema = z.object({
+  step: z.number(),
+  id: z.string(),
+  name: z.string(),
+  thought: z.string().optional(),
+  arguments: z.unknown().optional(),
+  result: z.string().optional(),
+  duration_ms: z.number().optional(),
+  error: z.string().optional(),
+});
+export type ToolCallStep = z.infer<typeof toolCallStepSchema>;
 
 export const chatMessageSchema = z.object({
   id: z.string(),
@@ -84,7 +104,7 @@ export const chatMessageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string(),
   citations: z.array(citationSchema).default([]),
-  tool_calls: z.array(z.unknown()).default([]),
+  tool_calls: z.array(toolCallStepSchema).default([]),
   token_usage: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string(),
 });

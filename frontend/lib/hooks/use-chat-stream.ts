@@ -3,13 +3,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { streamConversationMessage, type ChatStreamEvent } from "@/lib/api/chat";
-import type { ChatMessage, Citation } from "@/lib/schemas";
+import type { ChatMessage, Citation, ToolCallStep } from "@/lib/schemas";
 
-export interface LocalChatMessage extends Omit<ChatMessage, "id" | "created_at"> {
+export interface LocalToolStep extends ToolCallStep {
+  running?: boolean;
+}
+
+export interface LocalChatMessage extends Omit<ChatMessage, "id" | "created_at" | "tool_calls"> {
   id: string;
   created_at: string;
+  tool_calls: LocalToolStep[];
   pending?: boolean;
   error?: string;
+  /**
+   * 稳定的前端本地 key，创建时即固定，"done" 事件把草稿 id 换成服务端 message_id
+   * 时也不会变化。React 列表渲染按它 key，避免 AgentTimeline 等子组件因 id 切换
+   * 而 remount 丢失本地展开状态（阶段 3.5 Task 6 code review 遗留项 A）。
+   */
+  client_key: string;
 }
 
 export interface ChatStreamState {
@@ -20,14 +31,14 @@ export interface ChatStreamState {
 
 export function useChatStream(initialMessages: ChatMessage[] = []) {
   const [state, setState] = useState<ChatStreamState>({
-    messages: initialMessages,
+    messages: toLocalMessages(initialMessages),
     isStreaming: false,
     error: null,
   });
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setState((current) => ({ ...current, messages: initialMessages }));
+    setState((current) => ({ ...current, messages: toLocalMessages(initialMessages) }));
   }, [initialMessages]);
 
   const stop = useCallback(() => {
@@ -81,6 +92,10 @@ export function useChatStream(initialMessages: ChatMessage[] = []) {
   return { ...state, send, stop };
 }
 
+function toLocalMessages(messages: ChatMessage[]): LocalChatMessage[] {
+  return messages.map((message) => ({ ...message, client_key: message.id, tool_calls: message.tool_calls as LocalToolStep[] }));
+}
+
 function localMessage(
   id: string,
   conversationId: string,
@@ -90,6 +105,7 @@ function localMessage(
 ): LocalChatMessage {
   return {
     id,
+    client_key: id,
     conversation_id: conversationId,
     role,
     content,
@@ -110,6 +126,47 @@ export function applyStreamEvent(state: ChatStreamState, draftId: string, event:
       messages: state.messages.map((message) =>
         message.id === draftId ? { ...message, content: message.content + event.data.text } : message,
       ),
+    };
+  }
+  if (event.event === "tool_call") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.id !== draftId) return message;
+        const thought = message.content.trim();
+        const step: LocalToolStep = {
+          step: message.tool_calls.length + 1,
+          id: event.data.id,
+          name: event.data.name,
+          arguments: safeParseJson(event.data.arguments),
+          ...(thought ? { thought } : {}),
+          running: true,
+        };
+        // 思考文本已流式展示过，收进轨迹后清空气泡（spec §4.2）
+        return { ...message, content: "", tool_calls: [...message.tool_calls, step] };
+      }),
+    };
+  }
+  if (event.event === "tool_result") {
+    return {
+      ...state,
+      messages: state.messages.map((message) => {
+        if (message.id !== draftId) return message;
+        return {
+          ...message,
+          tool_calls: message.tool_calls.map((step) =>
+            step.id === event.data.id
+              ? {
+                  ...step,
+                  result: event.data.result,
+                  duration_ms: event.data.duration_ms,
+                  error: event.data.error,
+                  running: false,
+                }
+              : step,
+          ),
+        };
+      }),
     };
   }
   if (event.event === "done") {
@@ -133,4 +190,12 @@ function updateDraft(state: ChatStreamState, draftId: string, patch: Partial<Loc
     ...state,
     messages: state.messages.map((message) => (message.id === draftId ? { ...message, ...patch } : message)),
   };
+}
+
+function safeParseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }

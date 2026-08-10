@@ -38,7 +38,7 @@
 |---|---|---|
 | 语言/运行时 | Go 1.22+ | 性能、并发模型适配 LLM 流式场景 |
 | HTTP 框架 | chi | 标准库 `net/http` 兼容，中间件干净 |
-| LLM 编排 | Eino（字节开源） | 国产生态主流，ReAct/Workflow 模板可用 |
+| LLM 编排 | Eino（字节开源） | 国产生态主流，ReAct/Workflow 模板可用（阶段 3 决策：MVP 手写 ReAct 循环未引入 Eino，推迟到 V1.5 再评估，见阶段 3 spec D1） |
 | LLM 适配 | OpenAI 兼容协议 | 可对接 DeepSeek/Qwen/百炼/vLLM 等 |
 | DB 访问 | sqlc | 类型安全、AI 编码友好（错就编译挂） |
 | 迁移工具 | goose | 简单、SQL-first |
@@ -199,6 +199,8 @@ type DataSource interface {
 ```
 
 ### Eino 的定位
+
+> 阶段 3 实施注记（2026-07）：未引入 Eino。react_agent 为手写循环（internal/agent/），tools 实现 ports.Tool 接口。本节保留原设想供 V1.5 评估。
 
 - `internal/agent/` 是 Eino 的薄封装
 - `rag_agent` 直接调 `retrieval_service` + `LLMClient.ChatStream`
@@ -406,11 +408,14 @@ frontend/
 │   └── api/
 ├── components/
 │   ├── ui/                  # shadcn/ui
+│   ├── layout/              # app-shell, rail, kb-panel, chat-panel,
+│   │                          theme-toggle（rail + 二级面板布局）
+│   ├── common/              # empty-state 等通用组件
 │   ├── chat/                # chat-input, message-list, message-bubble,
-│   │                          citation-card, citation-drawer,
-│   │                          tool-call-trace, mode-switch
+│   │                          citation-chip, citation-drawer,
+│   │                          agent-timeline, chat-header
 │   ├── docs/                # doc-uploader, doc-table, ingest-status-badge
-│   └── kb/                  # kb-card
+│   └── kb/                  # kb-create-dialog
 ├── lib/
 │   ├── api/{client, kb, docs, chat, chunks}.ts
 │   ├── hooks/{use-chat-stream, use-kbs, use-docs}.ts
@@ -526,7 +531,7 @@ function useChatStream(convId: string) {
 后端：
 
 - Eino ReAct 模板
-- tools 注册：kb_retrieval、calculator
+- tools 注册：kb_retrieval、list_documents（阶段 3 spec D5：calculator 无业务价值，换为可回答"知识库里有哪些文档"的 list_documents）
 - SSE 增加 tool_call / tool_result
 - conversations.mode 字段使能
 
@@ -535,7 +540,7 @@ function useChatStream(convId: string) {
 - ChatHeader mode switch
 - tool-call-trace 组件（可折叠）
 
-**验收**：ReAct 模式下能看到 LLM 调用 kb_retrieval + calculator 的完整轨迹。
+**验收**：ReAct 模式下能看到 LLM 调用 kb_retrieval + list_documents 的完整轨迹。
 
 ### 阶段 4 · 打磨 + Demo 友好（~ 1~2 天）
 

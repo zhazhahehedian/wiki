@@ -1,0 +1,78 @@
+"use client";
+
+import { useEffect } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import type { ReactNode } from "react";
+
+import { AuthErrorState } from "@/components/auth/auth-error-state";
+import { useSessionExpired } from "@/components/auth/auth-session-boundary";
+import { ChatPanel } from "@/components/layout/chat-panel";
+import { KbPanel } from "@/components/layout/kb-panel";
+import { Rail } from "@/components/layout/rail";
+import { Sidebar, SidebarContent, SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { APIError } from "@/lib/api/client";
+import { getAuthenticatedUser } from "@/lib/auth-state";
+import { useAuth } from "@/lib/hooks/use-auth";
+import { setLastKbId } from "@/lib/last-kb";
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const params = useParams<{ kbId?: string }>();
+  const router = useRouter();
+  const sessionExpired = useSessionExpired();
+  const auth = useAuth();
+  const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
+  const isChats = pathname.includes("/chats");
+
+  useEffect(() => {
+    if (params.kbId) setLastKbId(params.kbId);
+  }, [params.kbId]);
+
+  const authUnauthenticated = auth.isError
+    && auth.error instanceof APIError
+    && auth.error.status === 401;
+  const unauthenticated = sessionExpired || authUnauthenticated;
+  const authFailed = auth.isError && !authUnauthenticated;
+  useEffect(() => {
+    if (unauthenticated) router.replace("/login");
+  }, [router, unauthenticated]);
+
+  if (unauthenticated) {
+    return <AuthState message="正在跳转登录…" />;
+  }
+
+  if (authFailed) {
+    return <AuthErrorState onRetry={() => void auth.refetch()} retrying={auth.isFetching} />;
+  }
+
+  if (auth.isLoading || auth.isFetching) {
+    return <AuthState message="正在验证登录状态…" />;
+  }
+
+  if (!authenticated) {
+    return null;
+  }
+
+  return (
+    <div className="flex h-screen overflow-hidden">
+      <Rail />
+      {/* translate-x-0 让 SidebarProvider 成为内部 fixed 定位 Sidebar 的 containing block，避免面板锚定视口盖住 Rail；
+          overflow-x-clip 裁掉收起态滑出 provider 左缘的面板残留，防止其压在 Rail 上拦截点击 */}
+      <SidebarProvider className="min-h-0 min-w-0 flex-1 translate-x-0 overflow-x-clip">
+        <Sidebar collapsible="offcanvas" className="border-r">
+          <SidebarContent>{isChats ? <ChatPanel /> : <KbPanel />}</SidebarContent>
+        </Sidebar>
+        <SidebarInset className="flex min-w-0 flex-col overflow-hidden">{children}</SidebarInset>
+      </SidebarProvider>
+    </div>
+  );
+}
+
+function AuthState({ children, message }: { children?: ReactNode; message: string }) {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-3 px-4 text-center">
+      <p className="text-sm text-muted-foreground" role="status">{message}</p>
+      {children}
+    </main>
+  );
+}

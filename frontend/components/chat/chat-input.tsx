@@ -1,9 +1,11 @@
 "use client";
 
-import { FormEvent, KeyboardEvent, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import { Send, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 export function ChatInput({
   disabled,
@@ -15,12 +17,30 @@ export function ChatInput({
   onStop: () => void;
 }) {
   const [value, setValue] = useState("");
+  const boxRef = useRef<HTMLTextAreaElement | null>(null);
+  const prevDisabledRef = useRef(disabled);
+
+  useEffect(() => {
+    // 流式生成结束（disabled true→false）时把焦点还给输入框
+    if (prevDisabledRef.current && !disabled) {
+      boxRef.current?.focus();
+    }
+    prevDisabledRef.current = disabled;
+  }, [disabled]);
+
+  function autoResize() {
+    const box = boxRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    box.style.height = `${Math.min(box.scrollHeight, 160)}px`; // 上限约 6 行
+  }
 
   function submit() {
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
     onSend(trimmed);
     setValue("");
+    requestAnimationFrame(autoResize);
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
@@ -29,7 +49,7 @@ export function ChatInput({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       submit();
     }
@@ -37,22 +57,26 @@ export function ChatInput({
 
   return (
     <form onSubmit={onSubmit} className="border-t bg-background p-3">
-      <div className="flex items-end gap-2">
-        <textarea
+      <div className="mx-auto flex max-w-3xl items-end gap-2">
+        <Textarea
+          ref={boxRef}
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => {
+            setValue(event.target.value);
+            autoResize();
+          }}
           onKeyDown={onKeyDown}
           rows={2}
           disabled={disabled}
-          placeholder="Ask a question about this KB"
-          className="min-h-16 flex-1 resize-none rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+          placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+          className={cn("max-h-40 min-h-16 flex-1 resize-none")}
         />
         <div className="flex shrink-0 gap-2">
-          <Button type="submit" size="icon" disabled={disabled || value.trim() === ""}>
+          <Button type="submit" size="icon" aria-label="发送" disabled={disabled || value.trim() === ""}>
             <Send className="size-4" />
           </Button>
           {disabled && (
-            <Button type="button" size="icon" variant="outline" onClick={onStop}>
+            <Button type="button" size="icon" variant="outline" aria-label="停止生成" onClick={onStop}>
               <Square className="size-4" />
             </Button>
           )}

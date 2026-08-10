@@ -6,37 +6,85 @@ package generated
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	AssignOrphanConversations(ctx context.Context, ownerUserID pgtype.UUID) error
+	AssignOrphanKnowledgeBases(ctx context.Context, ownerUserID pgtype.UUID) error
+	ClaimFeishuSync(ctx context.Context, arg ClaimFeishuSyncParams) (Document, error)
+	CompleteUnchangedFeishuSync(ctx context.Context, arg CompleteUnchangedFeishuSyncParams) (int64, error)
 	CountConversationsByKB(ctx context.Context, arg CountConversationsByKBParams) (int64, error)
+	CountConversationsByKBForOwner(ctx context.Context, arg CountConversationsByKBForOwnerParams) (int64, error)
 	CountDocumentsByKB(ctx context.Context, arg CountDocumentsByKBParams) (int64, error)
+	CountDocumentsByKBForOwner(ctx context.Context, arg CountDocumentsByKBForOwnerParams) (int64, error)
 	CountKnowledgeBases(ctx context.Context) (int64, error)
+	CountKnowledgeBasesForOwner(ctx context.Context, ownerUserID pgtype.UUID) (int64, error)
 	CountMessagesByConversation(ctx context.Context, conversationID uuid.UUID) (int64, error)
+	CountMessagesByConversationForOwner(ctx context.Context, arg CountMessagesByConversationForOwnerParams) (int64, error)
 	CountMessagesByConversationForUser(ctx context.Context, arg CountMessagesByConversationForUserParams) (int64, error)
+	CountOrphanOwnership(ctx context.Context) (int32, error)
 	CreateConversation(ctx context.Context, arg CreateConversationParams) (Conversation, error)
+	CreateConversationForOwner(ctx context.Context, arg CreateConversationForOwnerParams) (Conversation, error)
 	CreateDocument(ctx context.Context, arg CreateDocumentParams) (Document, error)
+	CreateDocumentForOwner(ctx context.Context, arg CreateDocumentForOwnerParams) (Document, error)
+	CreateFeishuDocumentForOwner(ctx context.Context, arg CreateFeishuDocumentForOwnerParams) (Document, error)
 	CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBaseParams) (KnowledgeBase, error)
+	CreateKnowledgeBaseForOwner(ctx context.Context, arg CreateKnowledgeBaseForOwnerParams) (KnowledgeBase, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
+	CreateMessageForOwner(ctx context.Context, arg CreateMessageForOwnerParams) (Message, error)
+	CreateUserSession(ctx context.Context, arg CreateUserSessionParams) (UserSession, error)
 	DeleteDocument(ctx context.Context, id uuid.UUID) error
+	DeleteDocumentForOwner(ctx context.Context, arg DeleteDocumentForOwnerParams) (DeleteDocumentForOwnerRow, error)
+	DeleteExpiredUserSessions(ctx context.Context, expiresAt time.Time) (int64, error)
 	DeleteKnowledgeBase(ctx context.Context, id uuid.UUID) error
+	DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKnowledgeBaseForOwnerParams) error
+	DeleteUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
+	FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) (int64, error)
 	FindDocumentByChecksum(ctx context.Context, arg FindDocumentByChecksumParams) (Document, error)
+	FindDocumentByChecksumForOwner(ctx context.Context, arg FindDocumentByChecksumForOwnerParams) (Document, error)
+	GetAuthUser(ctx context.Context, id uuid.UUID) (User, error)
 	GetConversation(ctx context.Context, id uuid.UUID) (Conversation, error)
+	GetConversationForOwner(ctx context.Context, arg GetConversationForOwnerParams) (Conversation, error)
 	GetConversationForUser(ctx context.Context, arg GetConversationForUserParams) (Conversation, error)
 	GetDocument(ctx context.Context, id uuid.UUID) (Document, error)
+	GetDocumentForOwner(ctx context.Context, arg GetDocumentForOwnerParams) (Document, error)
+	GetFeishuDocumentForOwnerAndAccount(ctx context.Context, arg GetFeishuDocumentForOwnerAndAccountParams) (Document, error)
 	GetKnowledgeBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
+	GetKnowledgeBaseForOwner(ctx context.Context, arg GetKnowledgeBaseForOwnerParams) (KnowledgeBase, error)
+	GetOAuthAccount(ctx context.Context, id uuid.UUID) (OauthAccount, error)
+	GetOAuthAccountForUser(ctx context.Context, userID uuid.UUID) (OauthAccount, error)
+	GetOAuthUserIDByProviderIdentity(ctx context.Context, arg GetOAuthUserIDByProviderIdentityParams) (uuid.UUID, error)
+	GetUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (UserSession, error)
 	ListConversationsByKB(ctx context.Context, arg ListConversationsByKBParams) ([]Conversation, error)
+	ListConversationsByKBForOwner(ctx context.Context, arg ListConversationsByKBForOwnerParams) ([]Conversation, error)
 	ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBParams) ([]Document, error)
+	ListDocumentsByKBForOwner(ctx context.Context, arg ListDocumentsByKBForOwnerParams) ([]Document, error)
 	ListKnowledgeBases(ctx context.Context, arg ListKnowledgeBasesParams) ([]KnowledgeBase, error)
+	ListKnowledgeBasesForOwner(ctx context.Context, arg ListKnowledgeBasesForOwnerParams) ([]KnowledgeBase, error)
 	ListMessagesByConversation(ctx context.Context, arg ListMessagesByConversationParams) ([]Message, error)
+	ListMessagesByConversationForOwner(ctx context.Context, arg ListMessagesByConversationForOwnerParams) ([]Message, error)
 	ListMessagesByConversationForUser(ctx context.Context, arg ListMessagesByConversationForUserParams) ([]Message, error)
 	ListRecentMessagesByConversation(ctx context.Context, arg ListRecentMessagesByConversationParams) ([]Message, error)
+	ListRecentMessagesByConversationForOwner(ctx context.Context, arg ListRecentMessagesByConversationForOwnerParams) ([]Message, error)
 	ListRecentMessagesByConversationForUser(ctx context.Context, arg ListRecentMessagesByConversationForUserParams) ([]Message, error)
+	ListStaleFeishuSyncs(ctx context.Context, arg ListStaleFeishuSyncsParams) ([]Document, error)
+	MarkOAuthAccountReauthRequired(ctx context.Context, id uuid.UUID) error
+	PromoteFeishuSnapshot(ctx context.Context, arg PromoteFeishuSnapshotParams) (int64, error)
+	StageFeishuSnapshot(ctx context.Context, arg StageFeishuSnapshotParams) (int64, error)
 	TouchConversation(ctx context.Context, id uuid.UUID) error
+	TouchConversationForOwner(ctx context.Context, arg TouchConversationForOwnerParams) error
 	TouchConversationForUser(ctx context.Context, arg TouchConversationForUserParams) error
+	UpdateConversationMode(ctx context.Context, arg UpdateConversationModeParams) (Conversation, error)
+	UpdateConversationModeForOwner(ctx context.Context, arg UpdateConversationModeForOwnerParams) (Conversation, error)
 	UpdateDocumentStatus(ctx context.Context, arg UpdateDocumentStatusParams) error
+	UpdateDocumentStatusForOwner(ctx context.Context, arg UpdateDocumentStatusForOwnerParams) error
+	UpdateOAuthAccountTokens(ctx context.Context, arg UpdateOAuthAccountTokensParams) error
+	UpsertBootstrapUser(ctx context.Context, arg UpsertBootstrapUserParams) error
+	UpsertOAuthIdentity(ctx context.Context, arg UpsertOAuthIdentityParams) (UpsertOAuthIdentityRow, error)
 }
 
 var _ Querier = (*Queries)(nil)

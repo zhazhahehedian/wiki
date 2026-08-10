@@ -36,7 +36,7 @@ export function KBCreateDialog() {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) reset(); }}>
-      <DialogTrigger render={<Button />}>
+      <DialogTrigger render={<Button className="w-full" />}>
         新建知识库
       </DialogTrigger>
       <DialogContent>
