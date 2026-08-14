@@ -165,6 +165,24 @@ func TestLoadFeishuAndSessionConfig(t *testing.T) {
 	}
 }
 
+func TestLoadFeishuConfigAllowsOptionalTenantKey(t *testing.T) {
+	setRequiredEnv(t)
+	setCompleteFeishuEnv(t)
+	t.Setenv("FEISHU_TENANT_KEY", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if !cfg.FeishuEnabled {
+		t.Fatal("FeishuEnabled = false, want true")
+	}
+	if cfg.FeishuTenantKey != "" {
+		t.Fatalf("FeishuTenantKey = %q, want empty", cfg.FeishuTenantKey)
+	}
+}
+
 func TestLoadSessionDefaultsWhenFeishuDisabled(t *testing.T) {
 	setRequiredEnv(t)
 	clearFeishuEnv(t)
@@ -190,7 +208,6 @@ func TestLoadRejectsIncompleteFeishuConfig(t *testing.T) {
 		"FEISHU_APP_ID",
 		"FEISHU_APP_SECRET",
 		"FEISHU_REDIRECT_URL",
-		"FEISHU_TENANT_KEY",
 		"OAUTH_ENCRYPTION_KEY",
 		"FRONTEND_ORIGIN",
 	}

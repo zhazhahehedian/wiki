@@ -200,6 +200,31 @@ func TestAuthCompleteOAuthEncryptsTokensAndIssuesLocalSession(t *testing.T) {
 	}
 }
 
+func TestAuthCompleteOAuthAllowsProviderTenantWhenNoTenantRestrictionConfigured(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	stateStore := authstore.NewMemoryOAuthStateStore(func() time.Time { return now })
+	sessions := authstore.NewMemorySessionStore(func() time.Time { return now })
+	protector, _ := authstore.NewAESGCMProtector([]byte("0123456789abcdef0123456789abcdef"))
+	repo := newFakeAuthRepository()
+	client := &fakeOAuthClient{
+		token:    domain.OAuthToken{AccessToken: "access-secret", RefreshToken: "refresh-secret", AccessTokenExpiresAt: now.Add(time.Hour), Scopes: []string{"docs:document:readonly"}},
+		identity: domain.FeishuIdentity{OpenID: "ou_1", TenantKey: "tenant-from-feishu", DisplayName: "User"},
+	}
+	svc := service.NewAuth(service.AuthConfig{RequiredScopes: []string{"docs:document:readonly"}, SessionTTL: time.Hour, Now: func() time.Time { return now }}, client, protector, sessions, stateStore, repo)
+	rawState, _ := svc.BeginOAuth(context.Background())
+
+	result, err := svc.CompleteOAuth(context.Background(), rawState, "code")
+	if err != nil {
+		t.Fatalf("CompleteOAuth() error = %v", err)
+	}
+	if result.SessionToken == "" {
+		t.Fatal("CompleteOAuth() returned empty session token")
+	}
+	if repo.account.TenantKey != "tenant-from-feishu" {
+		t.Fatalf("stored tenant key = %q, want provider tenant", repo.account.TenantKey)
+	}
+}
+
 func TestAuthAccessTokenSerializesConcurrentRefreshAndPreservesRotatedToken(t *testing.T) {
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	protector, _ := authstore.NewAESGCMProtector([]byte("0123456789abcdef0123456789abcdef"))

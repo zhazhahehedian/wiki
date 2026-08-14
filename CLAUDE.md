@@ -21,7 +21,7 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 4 的飞书知识源集成已实现（2026-08-10）。当前包含单租户飞书 OAuth、加密 token、本地 session + CSRF/Origin、owner 隔离、docx/sheet/bitable/wiki 导入、River 手动同步、MinIO pending snapshot、原子 promotion、失败保留旧 snapshot/chunks、stuck-sync reconciler，以及前端手动同步后先 60s 高频、再低频持续到观察到完成或离页的本地状态 watch。`POST /api/v1/kbs/{kbID}/feishu-imports` 和 `POST /api/v1/docs/{docID}/sync` 均由服务端从 session 解析 owner/account；跨 owner 请求返回 404 且不入队。部署前必须按 [飞书集成部署与排错](docs/deploy-debug-feishu.md) 配置 scope、redirect URL、tenant、cookie 和 bootstrap owner。阶段 4 的其余打磨与真实 Docker/PostgreSQL/MinIO 运行态验收仍在推进。
+> **当前进度**：阶段 4 的飞书知识源集成已实现（2026-08-10）。当前包含可选单租户限制的飞书 OAuth、加密 token、本地 session + CSRF/Origin、owner 隔离、docx/sheet/bitable/wiki 导入、River 手动同步、MinIO pending snapshot、原子 promotion、失败保留旧 snapshot/chunks、stuck-sync reconciler，以及前端手动同步后先 60s 高频、再低频持续到观察到完成或离页的本地状态 watch。`POST /api/v1/kbs/{kbID}/feishu-imports` 和 `POST /api/v1/docs/{docID}/sync` 均由服务端从 session 解析 owner/account；跨 owner 请求返回 404 且不入队。部署前必须按 [飞书集成部署与排错](docs/deploy-debug-feishu.md) 配置 scope、redirect URL、cookie 和 bootstrap owner，按需配置 tenant 限制。阶段 4 的其余打磨与真实 Docker/PostgreSQL/MinIO 运行态验收仍在推进。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 
@@ -208,11 +208,11 @@ EMBEDDING_DIM=1024           # 必须与 chunks.embedding 列维度一致
 PORT=8080
 LOG_LEVEL=info
 
-# Feishu OAuth / session（启用时成组配置）
+# Feishu OAuth / session（启用时必填项成组配置，tenant 可选）
 FEISHU_APP_ID=[REPLACE_ME]
 FEISHU_APP_SECRET=[REPLACE_ME]
 FEISHU_REDIRECT_URL=http://localhost:8080/api/v1/auth/feishu/callback
-FEISHU_TENANT_KEY=[REPLACE_ME]
+FEISHU_TENANT_KEY=             # 可选：填写后限制单一飞书租户
 OAUTH_ENCRYPTION_KEY=                  # 必须生成私有随机 key，不可使用公开模板值
 SESSION_COOKIE_SECURE=false       # 生产 HTTPS 必须 true
 SESSION_TTL=24h

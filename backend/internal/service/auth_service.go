@@ -125,7 +125,7 @@ func (s *Auth) CompleteOAuth(ctx context.Context, rawState, code string) (AuthRe
 	if err != nil {
 		return AuthResult{}, fmt.Errorf("get oauth user info: %w", err)
 	}
-	if identity.TenantKey != state.TenantKey {
+	if state.TenantKey != "" && identity.TenantKey != state.TenantKey {
 		return AuthResult{}, &AuthError{Code: AuthErrorTenantNotAllowed}
 	}
 	accessTokenEncrypted, err := s.protector.Encrypt(token.AccessToken)

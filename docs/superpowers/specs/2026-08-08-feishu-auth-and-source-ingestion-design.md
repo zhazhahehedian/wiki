@@ -2,7 +2,7 @@
 
 - 日期：2026-08-08
 - 状态：设计已确认，待实施计划
-- 范围：单租户内部使用
+- 范围：公司内部使用；默认按登录用户隔离，可选配置单租户限制
 
 ## 1. 目标与范围
 
@@ -50,7 +50,7 @@ Browser
 
 ### 4.1 OAuth 与 Session
 
-配置项：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URL`、`FEISHU_TENANT_KEY`、`OAUTH_ENCRYPTION_KEY`、`SESSION_COOKIE_SECURE`、`SESSION_TTL`、`FRONTEND_ORIGIN`。
+配置项：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URL`、`OAUTH_ENCRYPTION_KEY`、`SESSION_COOKIE_SECURE`、`SESSION_TTL`、`FRONTEND_ORIGIN`，以及可选的 `FEISHU_TENANT_KEY`。
 
 公开接口：
 
@@ -61,13 +61,13 @@ GET  /api/v1/auth/me
 POST /api/v1/auth/logout
 ```
 
-回调流程：生成一次性、短时有效的 OAuth state；回调交换用户 Token，读取用户信息并校验 `tenant_key`；检查所需只读 scopes；upsert 本地用户和 OAuth Account；签发本地 opaque Session。浏览器只保存 `HttpOnly + Secure + SameSite=Lax` Cookie，数据库只保存 Session Token 哈希。
+回调流程：生成一次性、短时有效的 OAuth state；回调交换用户 Token，读取用户信息；若配置了 `FEISHU_TENANT_KEY`，校验 user info 返回的 `tenant_key`；检查所需只读 scopes；upsert 本地用户和 OAuth Account；签发本地 opaque Session。浏览器只保存 `HttpOnly + Secure + SameSite=Lax` Cookie，数据库只保存 Session Token 哈希。
 
 OAuth access/refresh token 使用环境变量提供的 AES-GCM 主密钥加密存储。Token 不返回浏览器、不写日志、不放进 Document metadata。刷新使用锁或 singleflight，避免并发刷新造成 refresh token 竞态。`invalid_grant` 等不可恢复错误标记为 `reauth_required`，不删除已经导入的本地文档。
 
-### 4.2 单租户和用户隔离
+### 4.2 可选租户限制和用户隔离
 
-首版只允许 `FEISHU_TENANT_KEY` 对应的公司租户。新增 `users`、`oauth_accounts`、`user_sessions` 表；`knowledge_bases` 和 `conversations` 增加 `owner_user_id`。Document 和 Chunk 通过 KB 归属完成隔离。所有 KB、Document、Chunk、Conversation、Chat 查询都必须带当前用户过滤。
+默认不预先限制飞书租户；OAuth account 会保存飞书 user info 返回的 `tenant_key`。当配置 `FEISHU_TENANT_KEY` 时，只允许对应公司租户登录。新增 `users`、`oauth_accounts`、`user_sessions` 表；`knowledge_bases` 和 `conversations` 增加 `owner_user_id`。Document 和 Chunk 通过 KB 归属完成隔离。所有 KB、Document、Chunk、Conversation、Chat 查询都必须带当前用户过滤。
 
 除健康检查和 OAuth 入口外，所有 `/api/v1` 接口必须登录。CORS 只允许配置的 `FRONTEND_ORIGIN` 并启用 credentials；状态变更校验 Origin 并携带 Session 绑定的 CSRF Token。日志可以记录 user/document/resource type，但不得记录 Token、正文或完整授权 URL 参数。
 

@@ -1,6 +1,6 @@
 # 飞书集成部署与排错
 
-本文只描述当前代码已经实现的行为。飞书登录、导入和手动同步都要求同一租户、同一登录用户的资源所有权；服务不会自动轮询飞书内容，也没有事件订阅。
+本文只描述当前代码已经实现的行为。飞书登录默认不预先限制租户；导入和手动同步要求同一登录用户的资源所有权。需要单租户部署时可配置 `FEISHU_TENANT_KEY` 启用租户限制。服务不会自动轮询飞书内容，也没有事件订阅。
 
 ## 1. 飞书应用配置
 
@@ -26,18 +26,18 @@ http://localhost:8080/api/v1/auth/feishu/callback
 
 登录入口是 `GET /api/v1/auth/feishu/start`。服务端生成一次性 state，并写入只在 callback path 可用的 state cookie；callback 是 `GET /api/v1/auth/feishu/callback`。不要从浏览器或日志复制完整授权 URL，因为 query 含一次性 state，callback query 还含授权 code。
 
-`FEISHU_TENANT_KEY` 是唯一允许的 tenant key。callback 从飞书 user info 取得的 tenant key 必须与 OAuth state 绑定的值一致，否则返回 `tenant_not_allowed`。这是一套单租户限制，不是租户 allowlist；多租户尚未实现。
+`FEISHU_TENANT_KEY` 是可选的单租户限制。留空时，callback 接受飞书 user info 返回的 tenant key，并把它保存到 OAuth account；配置后，callback 取得的 tenant key 必须与该值一致，否则返回 `tenant_not_allowed`。这不是租户 allowlist；多租户尚未实现。
 
 ## 2. 环境变量
 
-启用飞书时，下列变量必须成组配置；只配置其中一部分会导致启动失败：
+启用飞书时，下列必填变量必须成组配置；只配置其中一部分会导致启动失败。`FEISHU_TENANT_KEY` 可选，只在需要限制单一租户时填写：
 
 | 变量 | 说明 |
 |---|---|
 | `FEISHU_APP_ID` | 飞书应用 ID |
 | `FEISHU_APP_SECRET` | 飞书应用 secret，只放在运行环境 |
 | `FEISHU_REDIRECT_URL` | 与飞书控制台完全一致的 callback URL |
-| `FEISHU_TENANT_KEY` | 允许登录的单一租户 key |
+| `FEISHU_TENANT_KEY` | 可选；填写后只允许该 tenant key 登录 |
 | `OAUTH_ENCRYPTION_KEY` | 加密落库 access/refresh token 的 AES key，必须为 16、24 或 32 bytes |
 | `FRONTEND_ORIGIN` | 前端精确 origin，例如 `https://wiki.example.com`；不能带 path、query 或尾随斜杠 |
 | `SESSION_COOKIE_SECURE` | 生产 HTTPS 必须为 `true`；本地纯 HTTP 才使用 `false` |
@@ -59,7 +59,7 @@ http://localhost:8080/api/v1/auth/feishu/callback
 
 飞书 API base、HTTP timeout、重试和资源大小目前没有环境变量。当前代码固定使用 `https://open.feishu.cn`、每请求 15s timeout、最多 3 次重试（429、5xx、网络或读取错误，遵循 `Retry-After`，退避上限 30s）、单响应 8 MiB、默认最多 10,000 行和 10 MiB canonical output。不要配置未实现的 `FEISHU_API_*` 或 row-size 变量；需要改变这些限制时先增加 `config.go` 支持和测试。
 
-`.env.example` 故意把 `OAUTH_ENCRYPTION_KEY` 留空；复制模板后，任何其他飞书配置为非空而 key 仍为空都会让 `config.Load` fail fast。运行 `openssl rand -hex 16` 生成恰好 32 个随机 ASCII 字符并填入该变量。不可使用模板值，也不要提交真实 app secret、OAuth 加密 key、用户 token 或飞书文档正文。
+`.env.example` 故意把 `OAUTH_ENCRYPTION_KEY` 留空；复制模板后，任一必填飞书 OAuth 配置为非空而 key 仍为空都会让 `config.Load` fail fast。运行 `openssl rand -hex 16` 生成恰好 32 个随机 ASCII 字符并填入该变量。不可使用模板值，也不要提交真实 app secret、OAuth 加密 key、用户 token 或飞书文档正文。
 
 ## 3. Cookie、CORS 与 CSRF
 
@@ -111,7 +111,7 @@ callback 永远重定向到已配置的前端，不接受 query 提供的任意�
 |---|---|
 | `oauth_cancelled` | 用户在飞书取消授权 |
 | `oauth_state_invalid` | state cookie 缺失/不匹配/过期/已消费，或 callback 缺少 code |
-| `tenant_not_allowed` | 登录身份不属于 `FEISHU_TENANT_KEY` |
+| `tenant_not_allowed` | 已配置 `FEISHU_TENANT_KEY`，但登录身份不属于该租户 |
 | `feishu_reauth_required` | scope 不足或 OAuth account 要求重新授权 |
 | `auth_service_unavailable` | token/user info/持久化/session 创建等非公开内部错误 |
 
@@ -132,7 +132,7 @@ callback 永远重定向到已配置的前端，不接受 query 提供的任意�
 
 ### Tenant 或 scope
 
-先查看前端 login error code，不要记录 callback query。确认应用已发布到目标租户、当前用户可用，并核对 scope 的精确字符串。`tenant_not_allowed` 不是 CORS 问题；`feishu_reauth_required` 需要在控制台增加缺失只读 scope 后重新授权。
+先查看前端 login error code，不要记录 callback query。确认应用已发布到目标租户、当前用户可用，并核对 scope 的精确字符串。只有配置了 `FEISHU_TENANT_KEY` 时才会做单租户限制；此时 `tenant_not_allowed` 表示登录身份的 tenant key 与配置不一致，不是 CORS 问题。`feishu_reauth_required` 需要在控制台增加缺失只读 scope 后重新授权。
 
 ### Rate limit 或飞书 5xx
 

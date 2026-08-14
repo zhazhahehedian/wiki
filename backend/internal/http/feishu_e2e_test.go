@@ -153,7 +153,7 @@ func TestFeishuOperatorDocumentationMatchesRuntimeContracts(t *testing.T) {
 	}
 	quickStartBeforeMakeUp := readme[:firstMakeUp]
 	for _, prerequisite := range []string{
-		"FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_TENANT_KEY", "FEISHU_REDIRECT_URL",
+		"FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_REDIRECT_URL",
 		"OAUTH_ENCRYPTION_KEY", "FRONTEND_ORIGIN", "openssl rand -hex 16",
 	} {
 		if !strings.Contains(quickStartBeforeMakeUp, prerequisite) {

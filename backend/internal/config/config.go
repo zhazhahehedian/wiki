@@ -137,7 +137,6 @@ func Load() (*Config, error) {
 		"FEISHU_APP_ID",
 		"FEISHU_APP_SECRET",
 		"FEISHU_REDIRECT_URL",
-		"FEISHU_TENANT_KEY",
 		"OAUTH_ENCRYPTION_KEY",
 	} {
 		feishuEnabled = feishuEnabled || feishuValues[key] != ""
@@ -147,7 +146,6 @@ func Load() (*Config, error) {
 			"FEISHU_APP_ID",
 			"FEISHU_APP_SECRET",
 			"FEISHU_REDIRECT_URL",
-			"FEISHU_TENANT_KEY",
 			"OAUTH_ENCRYPTION_KEY",
 			"FRONTEND_ORIGIN",
 		} {
