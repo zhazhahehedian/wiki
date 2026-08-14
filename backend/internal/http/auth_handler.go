@@ -40,6 +40,7 @@ type AuthHandlerConfig struct {
 	AuthorizeURL   string
 	AppID          string
 	RedirectURL    string
+	Scopes         []string
 	FrontendOrigin string
 	FrontendPath   string
 	CookieSecure   bool
@@ -118,7 +119,12 @@ func (h *AuthHandler) Start(w http.ResponseWriter, r *http.Request) {
 	destination := *h.authorizeURL
 	query := destination.Query()
 	query.Set("app_id", h.config.AppID)
+	query.Set("client_id", h.config.AppID)
+	query.Set("response_type", "code")
 	query.Set("redirect_uri", h.config.RedirectURL)
+	if len(h.config.Scopes) > 0 {
+		query.Set("scope", strings.Join(h.config.Scopes, " "))
+	}
 	query.Set("state", state)
 	destination.RawQuery = query.Encode()
 	http.Redirect(w, r, destination.String(), http.StatusFound)

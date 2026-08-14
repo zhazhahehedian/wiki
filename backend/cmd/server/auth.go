@@ -65,6 +65,7 @@ func buildAuthRuntime(cfg *config.Config, db generated.DBTX, httpClient *stdhttp
 
 	handler, err := httpx.NewAuthHandler(httpx.AuthHandlerConfig{
 		AppID: cfg.FeishuAppID, RedirectURL: cfg.FeishuRedirectURL,
+		Scopes:         requiredFeishuScopes(),
 		FrontendOrigin: cfg.FrontendOrigin, FrontendPath: "/",
 		CookieSecure: cfg.SessionCookieSecure, SessionTTL: cfg.SessionTTL,
 	}, authService, sessions, repository)

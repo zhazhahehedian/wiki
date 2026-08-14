@@ -48,6 +48,17 @@ func TestBuildAuthHandlerConstructsProductionRouter(t *testing.T) {
 	if start.Code != http.StatusFound {
 		t.Fatalf("OAuth start status = %d, want 302", start.Code)
 	}
+	location, err := url.Parse(start.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse OAuth start location: %v", err)
+	}
+	query := location.Query()
+	if query.Get("client_id") != "app-id" || query.Get("response_type") != "code" {
+		t.Fatalf("OAuth start query = %v", query)
+	}
+	if got, want := query.Get("scope"), strings.Join(requiredFeishuScopes(), " "); got != want {
+		t.Fatalf("OAuth start scope = %q, want %q", got, want)
+	}
 }
 
 func TestBuildAuthHandlerFailsClosedWhenFeishuDisabled(t *testing.T) {

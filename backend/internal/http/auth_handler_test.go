@@ -59,6 +59,7 @@ func newTestAuthHandler(t *testing.T, flow *fakeAuthFlow, sessions *fakeSessionS
 		AuthorizeURL:   "https://accounts.feishu.cn/open-apis/authen/v1/authorize",
 		AppID:          "app-id",
 		RedirectURL:    "https://api.example.test/api/v1/auth/feishu/callback",
+		Scopes:         []string{"offline_access", "contact:user.base:readonly"},
 		FrontendOrigin: "https://app.example.test",
 		FrontendPath:   "/auth/callback",
 		CookieSecure:   true,
@@ -87,7 +88,9 @@ func TestAuthStartRedirectsToFeishuWithServerState(t *testing.T) {
 	if location.Host != "accounts.feishu.cn" || location.Query().Get("state") != "opaque-state" {
 		t.Fatalf("Location = %q", location.String())
 	}
-	if location.Query().Get("app_id") != "app-id" || location.Query().Get("redirect_uri") == "" {
+	if location.Query().Get("app_id") != "app-id" || location.Query().Get("client_id") != "app-id" ||
+		location.Query().Get("response_type") != "code" || location.Query().Get("redirect_uri") == "" ||
+		location.Query().Get("scope") != "offline_access contact:user.base:readonly" {
 		t.Fatalf("Location query = %v", location.Query())
 	}
 	if strings.Contains(location.String(), "evil") {

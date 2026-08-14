@@ -271,6 +271,7 @@ func newFeishuE2EHarness(t *testing.T) *feishuE2EHarness {
 	authHandler, err := NewAuthHandler(AuthHandlerConfig{
 		AuthorizeURL: h.oauthServer.URL + "/open-apis/authen/v1/authorize",
 		AppID:        "cli_e2e", RedirectURL: "https://backend.example.test/api/v1/auth/feishu/callback",
+		Scopes:         feishuE2ERequiredScopes(),
 		FrontendOrigin: "https://app.example.test", FrontendPath: "/", CookieSecure: true, SessionTTL: time.Hour,
 	}, authService, sessions, store)
 	if err != nil {
@@ -426,7 +427,10 @@ func (h *feishuE2EHarness) serveFakeOAuth(t *testing.T, w http.ResponseWriter, r
 		h.oauthAuthorizeCalls++
 		identity := h.pendingIdentity
 		state := r.URL.Query().Get("state")
-		if identity == "" || state == "" || r.URL.Query().Get("app_id") != "cli_e2e" || r.URL.Query().Get("redirect_uri") != "https://backend.example.test/api/v1/auth/feishu/callback" {
+		if identity == "" || state == "" || r.URL.Query().Get("app_id") != "cli_e2e" ||
+			r.URL.Query().Get("client_id") != "cli_e2e" || r.URL.Query().Get("response_type") != "code" ||
+			r.URL.Query().Get("redirect_uri") != "https://backend.example.test/api/v1/auth/feishu/callback" ||
+			r.URL.Query().Get("scope") != strings.Join(feishuE2ERequiredScopes(), " ") {
 			t.Errorf("unexpected authorize request")
 			http.Error(w, "invalid authorize request", http.StatusBadRequest)
 			return
