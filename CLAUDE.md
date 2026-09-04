@@ -1,16 +1,21 @@
-# CLAUDE.md · it-wiki
+# CLAUDE.md · it-wiki → 能力中心(Capability Hub)
 
 本文件为后续每次 Claude Code session 提供项目锚点。**第一件事就是读完它**，再读设计文档：
 
-- 设计 spec（权威需求来源）：[docs/superpowers/specs/2026-05-19-it-wiki-agent-design.md](docs/superpowers/specs/2026-05-19-it-wiki-agent-design.md)
+- **当前方向 spec（权威需求来源）**：[docs/superpowers/specs/2026-09-04-capability-hub-design.md](docs/superpowers/specs/2026-09-04-capability-hub-design.md) — 项目已从「知识库 Agent」转向「内部 MCP / Skill 能力注册与分发平台」（见 §2）
+- 历史 spec（it-wiki 知识库方向，代码仍在仓库中，正按新 spec §12 退役）：[docs/superpowers/specs/2026-05-19-it-wiki-agent-design.md](docs/superpowers/specs/2026-05-19-it-wiki-agent-design.md)
 
-如果 spec 与本文件冲突，**spec 为准**；同时请把本文件同步更新。
+如果 spec 与本文件冲突，**新方向 spec 为准**；同时请把本文件同步更新。
+
+> ⚠️ **方向已转向**：下方 §3–§8 描述的是**待退役的 it-wiki 遗留实现**（当前代码仍是它）；新平台架构以 2026-09-04 spec 为准，实施尚未开始（见 §2、阶段 A）。
 
 ---
 
 ## 1. 这是什么项目
 
-面向团队/企业内部的知识库 Agent，采用 **vibe coding** 方式从零搭建。MVP 阶段单用户、单机 Docker Compose 部署，分 5 个阶段推进（阶段 0~4，详见 spec §7）。
+**（2026-09-04 方向转变）** 项目定位从「知识库 Agent」转为 **公司内部 MCP / Skill 能力的注册中心 + 治理 + 分发平台（能力中心 / Capability Hub）**，采用 **vibe coding** 方式搭建。它长在两块既有基础设施旁：上游接飞书（身份 + 文档），下游接公司 LLM 分发平台 **Token Hub**（模型 key + 计费，供游乐场使用）；平台自己**不做知识库、不做运行时网关**。详见 [2026-09-04 能力中心设计 spec](docs/superpowers/specs/2026-09-04-capability-hub-design.md)。
+
+原「知识库 Agent（it-wiki）」的 KB/RAG 对话产品层退役，复用其骨架（飞书 OAuth、MinIO、river、Go/chi/sqlc、Next.js/shadcn）。下方技术栈条目多数仍适用（Eino 未引入、v1 不再需要 embedding/pgvector）。
 
 - 后端：Go 1.22+ · chi · Eino · sqlc · goose · river · PostgreSQL 16 + pgvector
 - 前端：Next.js 15 · Tailwind v4 · Radix + shadcn/ui · Zustand · TanStack Query
@@ -21,7 +26,9 @@
 
 ## 2. 当前阶段
 
-> **当前进度**：阶段 4 的飞书知识源集成已实现（2026-08-10）。当前包含可选单租户限制的飞书 OAuth、加密 token、本地 session + CSRF/Origin、owner 隔离、docx/sheet/bitable/wiki 导入、River 手动同步、MinIO pending snapshot、原子 promotion、失败保留旧 snapshot/chunks、stuck-sync reconciler，以及前端手动同步后先 60s 高频、再低频持续到观察到完成或离页的本地状态 watch。`POST /api/v1/kbs/{kbID}/feishu-imports` 和 `POST /api/v1/docs/{docID}/sync` 均由服务端从 session 解析 owner/account；跨 owner 请求返回 404 且不入队。部署前必须按 [飞书集成部署与排错](docs/deploy-debug-feishu.md) 配置 scope、redirect URL、cookie 和 bootstrap owner，按需配置 tenant 限制。阶段 4 的其余打磨与真实 Docker/PostgreSQL/MinIO 运行态验收仍在推进。
+> **当前进度（2026-09-04）**：项目方向转向 **能力中心（Capability Hub）**，设计 spec 已完成并 review 通过：[2026-09-04-capability-hub-design.md](docs/superpowers/specs/2026-09-04-capability-hub-design.md)。**实施尚未开始**，下一步进入 writing-plans 拆阶段 A–F。当前仓库代码仍是 it-wiki 遗留实现（飞书 OAuth / KB 导入 / RAG 对话），将按新 spec §12 保留骨架、退役 KB/RAG 产品层。
+>
+> **遗留 it-wiki 既有能力**（退役前状态，阶段 4）：可选单租户飞书 OAuth、加密 token、session + CSRF/Origin、owner 隔离、docx/sheet/bitable/wiki 导入、River 手动同步、MinIO pending snapshot、原子 promotion、stuck-sync reconciler、前端同步状态 watch。其中 auth/加密/river/minio/Go·Next 骨架会被新平台复用。
 
 每完成一个阶段，更新这一节，把当前阶段往后推一格。
 
@@ -236,7 +243,7 @@ FEISHU_RECONCILE_MAX_BATCHES=10
 
 ## 9. 决策来源索引
 
-遇到设计层面的疑问，先查这里：
+遇到设计层面的疑问，先查这里。**新方向（能力中心）的一切设计以 [2026-09-04 spec](docs/superpowers/specs/2026-09-04-capability-hub-design.md) 为准**（架构 §3、数据模型 §6、治理 §7、接入凭证 §8、发现 §9、阶段 §13、决策记录 §15）。下表是**遗留 it-wiki** spec 的索引：
 
 | 问题 | spec 章节 |
 |---|---|

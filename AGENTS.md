@@ -1,5 +1,7 @@
 # Repository Guidelines
 
+> ⚠️ **方向转变（2026-09-04）**：项目已从「知识库 Agent（it-wiki）」转向「内部 MCP / Skill 能力注册与分发平台（能力中心 / Capability Hub）」。权威设计见 [docs/superpowers/specs/2026-09-04-capability-hub-design.md](docs/superpowers/specs/2026-09-04-capability-hub-design.md) 与 `CLAUDE.md` §2。下面描述的目录结构（`components/kb`、`components/docs`、`components/chunks` 等）属于**待退役的 it-wiki 遗留实现**，当前代码仍是它；新平台复用其骨架（飞书 OAuth、MinIO、river、Go/chi/sqlc、Next.js/shadcn），KB/RAG 产品层将退役。命令、代码风格、测试、提交规范等指引仍然有效。
+
 ## Project Structure & Module Organization
 
 `backend/` contains the Go service. Entrypoints live in `cmd/server` and `cmd/migrate`; domain types and ports are in `internal/domain`; services, HTTP handlers, repositories, adapters, and workers live under `internal/service`, `internal/http`, `internal/repo`, `internal/infra`, and `internal/worker`. `internal/repo/generated` is sqlc output; do not hand-edit it.
