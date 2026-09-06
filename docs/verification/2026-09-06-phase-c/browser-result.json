@@ -1,0 +1,23 @@
+{
+  "checks": [
+    "Owner creates MCP, admin rejects, owner revises, admin approves, consumer sees published content",
+    "Old snapshot remains visible during review; approved department scope blocks users without trusted department",
+    "Admin assigns trusted department with audit and consumer gains matching access; mobile view has no overflow",
+    "Owner offline blocks consumers; resubmission restores after approval; audit filters and role gate work",
+    "Published Skill file contents render and authorized consumer downloads MinIO bundle",
+    "Final production build: governance search buttons remain horizontal; department admin page also fits 390px"
+  ],
+  "pageErrors": [],
+  "screenshots": [
+    "review-queue.png",
+    "review-detail.png",
+    "owner-rejected.png",
+    "consumer-published.png",
+    "version-comparison.png",
+    "trusted-department.png",
+    "mobile-consumer.png",
+    "audit-filtered.png",
+    "skill-file-review.png",
+    "mobile-department.png"
+  ]
+}

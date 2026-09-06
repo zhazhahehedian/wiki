@@ -2,9 +2,6 @@
 # Run from backend/: make <target>
 .PHONY: help build run test tidy sqlc-gen migrate-up migrate-down migrate-status migrate-reset tools
 
-DB_URL ?= $(DATABASE_URL)
-MIGRATIONS_DIR := internal/repo/migrations
-
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*?##/ { printf "  %-20s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 

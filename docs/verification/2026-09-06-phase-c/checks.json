@@ -1,0 +1,26 @@
+{
+  "date": "2026-09-06",
+  "backend_tests": "go test ./... passed; opt-in cloud tests run separately",
+  "backend_build": "go build ./cmd/server passed with temporary output path",
+  "frontend_tests": {
+    "files": 36,
+    "tests": 152,
+    "result": "passed"
+  },
+  "frontend_typecheck": "passed",
+  "frontend_production_build": "passed",
+  "cloud_registry_integration": {
+    "result": "passed",
+    "seconds": 771.477,
+    "includes": "B regression, C main flow, builder mock protocols, browser fixture and cleanup"
+  },
+  "cloud_governance_integration": {
+    "result": "passed",
+    "seconds": 303.977,
+    "includes": "migration rollback preservation, bootstrap, state/permission/CAS matrix, create/edit/publish audit failure rollback, snapshots/ACL and audit pagination"
+  },
+  "browser": "browser-result.json",
+  "real_account_admin_provisioning": "not performed",
+  "existing_development_database_and_services": "not changed",
+  "company_model_acceptance": "deferred by user"
+}

@@ -1,6 +1,8 @@
 # 阶段 3.5 · UI 视觉升级实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **适用范围（2026-09-05 规则整理）：** 本文属于转向前的 it-wiki 历史计划，保留阶段实施步骤与验收记录，不是能力中心实施计划或所有任务的常驻规则。仅执行本阶段相关工作时读取对应任务和依赖；旧分支、提交限制、环境结论、逐步 commit、全仓清扫与截图要求仅属于原阶段上下文，当前执行遵循 [AGENTS.md](../../../AGENTS.md) 和本次授权。未完成验收不自动视为通过。
+
+> **执行方式：** 可使用适用且可用的 Skill 或等效流程；Superpowers 执行 Skills 不是前置依赖。不因 Skill 缺失停止工作，也不因阅读此计划自动启动子代理、提交或合并。
 
 **Goal:** 按 [阶段 3.5 spec](../specs/2026-07-09-phase-3-5-ui-upgrade-design.md) 完成全站 UI 视觉升级：紫罗兰 OKLCH 主题 + 明暗切换、rail+二级面板全局布局、文档流式聊天界面、agent-timeline 工具轨迹、组件与状态设计补齐、文案中文化。**后端零改动。**
 
@@ -2762,13 +2764,11 @@ Expected: lint/typecheck/test 全绿；build 在有代理时成功。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add -A
-git commit -m "docs: sync phase 3.5 completion into CLAUDE.md and main spec
-
-Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+git add -- CLAUDE.md docs/superpowers/specs/2026-05-19-it-wiki-agent-design.md
+git commit -m "docs: sync phase 3.5 completion into CLAUDE.md and main spec"
 ```
 
-完成后走 superpowers:finishing-a-development-branch 决定合并方式（注意：本分支基于未合并的 phase-3-react-agent，需先合并阶段 3 或一并处理）。
+提交示例仅在本次任务已授权提交时使用，暂存前确认当前工作目录为仓库根目录并审查目标差异；其他本次相关文件逐项添加。完成后按当前授权执行后续步骤，先核对实际分支依赖；无需强制调用分支收尾 Skill，已有合并方式不重复确认。
 
 ---
 
@@ -2788,4 +2788,3 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 | §8 动效（光标/spinner/transition/reduced-motion，无 motion） | Task 2、4、6 |
 | §9 测试与验收 | 各 Task 测试步骤 + Task 13 |
 | §10 文档同步 | Task 13 |
-
