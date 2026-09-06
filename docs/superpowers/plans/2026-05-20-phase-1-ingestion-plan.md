@@ -1,6 +1,8 @@
 # 阶段 1 · 文档摄入闭环 · 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **适用范围（2026-09-05 规则整理）：** 本文属于转向前的 it-wiki 历史计划，保留阶段实施步骤与验收记录，不是能力中心实施计划或所有任务的常驻规则。仅执行本阶段相关工作时读取对应任务和依赖；旧分支、提交限制、环境结论、逐步 commit、全仓清扫与截图要求仅属于原阶段上下文，当前执行遵循 [AGENTS.md](../../../AGENTS.md) 和本次授权。未完成验收不自动视为通过。
+
+> **执行方式：** 可使用适用且可用的 Skill 或等效流程；Superpowers 执行 Skills 不是前置依赖。不因 Skill 缺失停止工作，也不因阅读此计划自动启动子代理、提交或合并。
 
 **Goal:** 实现"上传文档 → 异步解析切片向量化 → 状态变 ready → 前端能看到 chunks"的完整闭环。验收：在前端新建 KB，上传一份 Markdown，30 秒内文档状态变 `ready`，能在文档详情页看到切片内容。
 
@@ -4820,6 +4822,3 @@ docker compose -f deploy/docker-compose.yml logs backend --tail 60
 ---
 
 _本计划完成后请回到 brainstorming/writing-plans 触发阶段 2 计划编写。_
-
-
-

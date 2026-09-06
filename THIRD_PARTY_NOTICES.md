@@ -36,3 +36,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Nuwa Skill methodology adaptation
+
+The Skill builder's expert perspective template adapts the requirements diagnosis and thinking-framework extraction approach from [alchaincyf/nuwa-skill](https://github.com/alchaincyf/nuwa-skill), Copyright (c) 2026 Huashu (花叔), MIT licensed. The upstream Skill is not executed by the platform. Pinned revision and adaptation notes: [ATTRIBUTION.md](backend/internal/skillbuilder/prompts/ATTRIBUTION.md). Full license: [NUWA_LICENSE](backend/internal/skillbuilder/prompts/NUWA_LICENSE).

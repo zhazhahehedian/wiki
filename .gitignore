@@ -44,6 +44,7 @@ frontend/.turbo/
 frontend/.pnpm-store/
 frontend/coverage/
 frontend/.env*.local
+frontend/next-env.d.ts
 
 # ─── Docker / data volumes (do NOT commit local data) ──────
 data/

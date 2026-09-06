@@ -118,16 +118,20 @@ func TestFeishuOperatorDocumentationMatchesRuntimeContracts(t *testing.T) {
 	runtimeEnv := runtimeFeishuEnvironment(t, configSource)
 	runtimeScopes := runtimeRequiredFeishuScopes(t, authSource)
 
-	environmentVariables := []string{
+	platformVariables := []string{
 		"FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_REDIRECT_URL", "FEISHU_TENANT_KEY",
 		"OAUTH_ENCRYPTION_KEY", "SESSION_COOKIE_SECURE", "SESSION_TTL", "FRONTEND_ORIGIN",
+		"BOOTSTRAP_ADMIN_FEISHU_OPEN_ID",
+	}
+	legacyVariables := []string{
 		"BOOTSTRAP_OWNER_FEISHU_OPEN_ID", "FEISHU_SYNC_JOB_TIMEOUT", "INGESTION_JOB_TIMEOUT",
 		"FEISHU_RECONCILE_JOB_TIMEOUT", "FEISHU_RECONCILE_INTERVAL", "FEISHU_SYNC_LEASE",
 		"RIVER_RESCUE_STUCK_JOBS_AFTER", "FEISHU_RECONCILE_BATCH_SIZE", "FEISHU_RECONCILE_MAX_BATCHES",
 	}
+	environmentVariables := append(append([]string{}, platformVariables...), legacyVariables...)
 	expectedEnv := stringSet(environmentVariables)
 	assertFeishuE2ESetEqual(t, "runtime env", runtimeEnv, expectedEnv)
-	assertFeishuE2ESetEqual(t, ".env.example env", documentedFeishuEnvFromTemplate(envExample), expectedEnv)
+	assertFeishuE2ESetEqual(t, ".env.example env", documentedFeishuEnvFromTemplate(envExample), stringSet(platformVariables))
 	assertFeishuE2ESetEqual(t, "deployment guide env", documentedFeishuEnvFromGuide(t, guide), expectedEnv)
 	for _, name := range environmentVariables {
 		if !strings.Contains(guide, "`"+name+"`") {
@@ -139,32 +143,33 @@ func TestFeishuOperatorDocumentationMatchesRuntimeContracts(t *testing.T) {
 		t.Fatalf(".env.example provides a runtime-acceptable public OAuth encryption key of %d bytes", len([]byte(publicKey)))
 	}
 	applyEnvironmentTemplate(t, envExample)
-	if _, err := configstore.Load(); err == nil || !strings.Contains(err.Error(), "missing required env var: OAUTH_ENCRYPTION_KEY") {
-		t.Fatalf("config.Load with unchanged template error = %v, want missing OAUTH_ENCRYPTION_KEY", err)
+	if _, err := configstore.LoadPlatform(); err == nil || !strings.Contains(err.Error(), "missing required env var: OAUTH_ENCRYPTION_KEY") {
+		t.Fatalf("config.LoadPlatform with unchanged template error = %v, want missing OAUTH_ENCRYPTION_KEY", err)
 	}
 	for _, readmeContract := range []string{"openssl rand -hex 16", "不可使用模板值"} {
 		if !strings.Contains(readme, readmeContract) {
 			t.Errorf("README is missing OAuth key contract %q", readmeContract)
 		}
 	}
-	firstMakeUp := strings.Index(readme, "make up")
-	if firstMakeUp < 0 {
-		t.Fatal("README does not contain the Quick Start make up command")
+	firstStart := strings.Index(readme, "go run ./cmd/server")
+	if firstStart < 0 {
+		t.Fatal("README does not contain the local server startup command")
 	}
-	quickStartBeforeMakeUp := readme[:firstMakeUp]
+	quickStartBeforeServer := readme[:firstStart]
 	for _, prerequisite := range []string{
 		"FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_REDIRECT_URL",
 		"OAUTH_ENCRYPTION_KEY", "FRONTEND_ORIGIN", "openssl rand -hex 16",
 	} {
-		if !strings.Contains(quickStartBeforeMakeUp, prerequisite) {
-			t.Errorf("README must require %q before the first make up", prerequisite)
+		if !strings.Contains(quickStartBeforeServer, prerequisite) {
+			t.Errorf("README must require %q before server startup", prerequisite)
 		}
 	}
 	if strings.Contains(readme, "阶段 0 还用不上") {
 		t.Error("README still says required startup keys are unnecessary in phase 0")
 	}
-	if !slices.Equal(runtimeScopes, feishuE2ERequiredScopes()) {
-		t.Fatalf("runtime requiredFeishuScopes = %#v, E2E contract = %#v", runtimeScopes, feishuE2ERequiredScopes())
+	identityScopes := []string{"offline_access", "contact:user.base:readonly", "contact:user.email:readonly"}
+	if !slices.Equal(runtimeScopes, identityScopes) {
+		t.Fatalf("runtime requiredFeishuScopes = %#v, E2E contract = %#v", runtimeScopes, identityScopes)
 	}
 	for _, scope := range runtimeScopes {
 		if !strings.Contains(guide, "`"+scope+"`") {
@@ -203,7 +208,7 @@ func TestFeishuOperatorDocumentationMatchesRuntimeContracts(t *testing.T) {
 	if !strings.Contains(readme, "docs/deploy-debug-feishu.md") {
 		t.Error("README does not link the Feishu deployment/debugging guide")
 	}
-	for _, contract := range []string{"BOOTSTRAP_OWNER_FEISHU_OPEN_ID", "FEISHU_REDIRECT_URL", "feishu-imports", "docs/deploy-debug-feishu.md"} {
+	for _, contract := range []string{"docs/deploy-debug-feishu.md", "能力中心", "阶段"} {
 		if !strings.Contains(claude, contract) {
 			t.Errorf("CLAUDE.md is missing Feishu workflow contract %q", contract)
 		}
@@ -630,7 +635,7 @@ func runtimeFeishuEnvironment(t *testing.T, source string) map[string]bool {
 func isFeishuRuntimeEnvironment(name string) bool {
 	return strings.HasPrefix(name, "FEISHU_") || strings.HasPrefix(name, "SESSION_") ||
 		name == "OAUTH_ENCRYPTION_KEY" || name == "FRONTEND_ORIGIN" ||
-		name == "BOOTSTRAP_OWNER_FEISHU_OPEN_ID" || name == "INGESTION_JOB_TIMEOUT" ||
+		name == "BOOTSTRAP_ADMIN_FEISHU_OPEN_ID" || name == "BOOTSTRAP_OWNER_FEISHU_OPEN_ID" || name == "INGESTION_JOB_TIMEOUT" ||
 		name == "RIVER_RESCUE_STUCK_JOBS_AFTER"
 }
 

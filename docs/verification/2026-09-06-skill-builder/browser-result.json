@@ -1,0 +1,20 @@
+{
+  "desktop": "1440x1100",
+  "mobile": "390x844",
+  "checks": [
+    "clarification",
+    "material paste and file import",
+    "generation",
+    "editable draft and attachments",
+    "invalid output retains edits",
+    "file preview",
+    "save and redirect",
+    "bundle download",
+    "registry Skill filter",
+    "Nuwa perspective",
+    "mobile save and no horizontal overflow"
+  ],
+  "pageErrors": [],
+  "model": "local deterministic OpenAI-compatible fixture; company provider not called",
+  "storage": "disposable cloud PostgreSQL and MinIO"
+}

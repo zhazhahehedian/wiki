@@ -41,7 +41,7 @@ func TestBuildAuthHandlerConstructsProductionRouter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAuthHandler() error = %v", err)
 	}
-	router := httpx.NewRouter(httpx.Handlers{Auth: authHandler})
+	router := httpx.NewPlatformRouter(authHandler)
 
 	start := httptest.NewRecorder()
 	router.ServeHTTP(start, httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/start", nil))
@@ -66,7 +66,7 @@ func TestBuildAuthHandlerFailsClosedWhenFeishuDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAuthHandler() error = %v", err)
 	}
-	router := httpx.NewRouter(httpx.Handlers{Auth: authHandler})
+	router := httpx.NewPlatformRouter(authHandler)
 
 	health := httptest.NewRecorder()
 	router.ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -74,7 +74,7 @@ func TestBuildAuthHandlerFailsClosedWhenFeishuDisabled(t *testing.T) {
 		t.Fatalf("health status = %d", health.Code)
 	}
 	business := httptest.NewRecorder()
-	router.ServeHTTP(business, httptest.NewRequest(http.MethodGet, "/api/v1/kbs", nil))
+	router.ServeHTTP(business, httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil))
 	if business.Code != http.StatusUnauthorized {
 		t.Fatalf("business status = %d, want 401", business.Code)
 	}
@@ -86,15 +86,11 @@ func (f authRoundTripperFunc) RoundTrip(req *http.Request) (*http.Response, erro
 	return f(req)
 }
 
-func TestRequiredFeishuScopesCoverSupportedImports(t *testing.T) {
+func TestRequiredFeishuScopesOnlyRequireIdentity(t *testing.T) {
 	want := []string{
 		"offline_access",
 		"contact:user.base:readonly",
 		"contact:user.email:readonly",
-		"docx:document:readonly",
-		"sheets:spreadsheet:readonly",
-		"bitable:app:readonly",
-		"wiki:wiki:readonly",
 	}
 	if !slices.Equal(requiredFeishuScopes(), want) {
 		t.Fatalf("requiredFeishuScopes() = %#v, want %#v", requiredFeishuScopes(), want)

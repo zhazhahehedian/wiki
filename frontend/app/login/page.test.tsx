@@ -35,7 +35,7 @@ describe("LoginPage", () => {
     });
     render(<LoginPage />);
 
-    expect(screen.getByRole("heading", { name: "登录 it-wiki" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "登录能力中心" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "使用飞书登录" })).toBeInTheDocument();
   });
 

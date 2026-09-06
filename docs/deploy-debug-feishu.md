@@ -1,6 +1,6 @@
 # 飞书集成部署与排错
 
-本文只描述当前代码已经实现的行为。飞书登录默认不预先限制租户；导入和手动同步要求同一登录用户的资源所有权。需要单租户部署时可配置 `FEISHU_TENANT_KEY` 启用租户限制。服务不会自动轮询飞书内容，也没有事件订阅。
+能力中心阶段 A 已复用登录/session/CSRF，生产路由不再挂载 KB/文档导入/同步。本文第 1 节说明当前登录配置；下方摄入、同步、owner bootstrap 与其超时变量仅供遗留实现维护参考，不是能力中心运行前提。飞书登录默认不预先限制租户；导入和手动同步要求同一登录用户的资源所有权。需要单租户部署时可配置 `FEISHU_TENANT_KEY` 启用租户限制。服务不会自动轮询飞书内容，也没有事件订阅。
 
 ## 1. 飞书应用配置
 
@@ -11,12 +11,17 @@
 | `offline_access` | 获取 refresh token，在用户不重新登录时刷新访问令牌 |
 | `contact:user.base:readonly` | 读取登录用户的 open ID、tenant key 和显示名 |
 | `contact:user.email:readonly` | 读取登录用户邮箱 |
+
+以下四项仅用于历史文档导入，不是当前平台登录权限：
+
+| 历史 Scope | 用途 |
+|---|---|
 | `docx:document:readonly` | 读取新版文档（docx） |
 | `sheets:spreadsheet:readonly` | 读取电子表格 |
 | `bitable:app:readonly` | 读取多维表格 |
 | `wiki:wiki:readonly` | 解析知识库节点并读取其底层资源 |
 
-当前 `requiredFeishuScopes()` 会逐项检查上述字符串，缺少任意一项都会把 callback 重定向为 `feishu_reauth_required`，且不会创建本地 session。不需要写入、管理、聊天消息或全量通讯录权限；不要为了排错扩大权限范围。
+当前 `requiredFeishuScopes()` 仅检查基础身份、邮箱和 offline_access 三项，缺少其中任意一项都会把 callback 重定向为 `feishu_reauth_required`，且不会创建本地 session。不需要写入、管理、聊天消息或全量通讯录权限；不要为了排错扩大权限范围。
 
 飞书控制台登记的 redirect URL 必须与 `FEISHU_REDIRECT_URL` 逐字符一致，包括 scheme、host、port、path 和尾部斜杠。默认本地值是：
 
@@ -42,9 +47,15 @@ http://localhost:8080/api/v1/auth/feishu/callback
 | `FRONTEND_ORIGIN` | 前端精确 origin，例如 `https://wiki.example.com`；不能带 path、query 或尾随斜杠 |
 | `SESSION_COOKIE_SECURE` | 生产 HTTPS 必须为 `true`；本地纯 HTTP 才使用 `false` |
 | `SESSION_TTL` | 本地 session 有效期，Go duration，例如 `24h` |
+| `BOOTSTRAP_ADMIN_FEISHU_OPEN_ID` | 当前能力中心首次管理员的飞书 open ID；仅补全未初始化安装，修改或移除变量不会转移或撤销角色 |
+
+默认 `.env.example` 只列当前平台配置。以下变量只供遗留实现维护，不再要求放入平台环境：
+
+| 历史变量 | 说明 |
+|---|---|
 | `BOOTSTRAP_OWNER_FEISHU_OPEN_ID` | 仅用于给遗留 NULL owner 数据绑定初始 owner，见第 4 节 |
 
-同步与存活性变量：
+遗留同步与存活性变量：
 
 | 变量 | 默认值 | 说明 |
 |---|---:|---|

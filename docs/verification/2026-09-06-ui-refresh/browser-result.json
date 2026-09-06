@@ -1,0 +1,25 @@
+{
+  "fixture": "mock HTTP responses; not runtime acceptance",
+  "checks": [
+    "model discovery, selection and save; enabled parameters; streamed response; Escape closes popover",
+    "catalog grid and table",
+    "390x844: parameter popover inside viewport; connection dialog; drawer navigation; registry; no horizontal overflow"
+  ],
+  "screenshots": [
+    "dashboard.png",
+    "connection-settings.png",
+    "playground-parameters.png",
+    "playground-chat.png",
+    "registry.png",
+    "publications-statuses.png",
+    "review-queue.png",
+    "review-detail.png",
+    "create-form.png",
+    "skill-builder.png",
+    "mobile-parameters.png",
+    "mobile-connection.png",
+    "mobile-navigation.png",
+    "mobile-registry.png"
+  ],
+  "pageErrors": []
+}

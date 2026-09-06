@@ -11,7 +11,8 @@ type Config struct {
 	Port     string
 	LogLevel string
 
-	DatabaseURL string
+	DatabaseURL      string
+	DatabaseProxyURL string
 
 	S3Endpoint     string
 	S3AccessKey    string
@@ -60,13 +61,24 @@ type Config struct {
 	SessionTTL          time.Duration
 	FrontendOrigin      string
 
+	BootstrapAdminFeishuOpenID string
 	BootstrapOwnerFeishuOpenID string
 }
 
-func Load() (*Config, error) {
-	dim, err := strconv.Atoi(getEnv("EMBEDDING_DIM", "1024"))
-	if err != nil {
-		return nil, fmt.Errorf("invalid EMBEDDING_DIM: %w", err)
+// Load is retained for legacy tools and migration regression coverage.
+func Load() (*Config, error) { return load(true) }
+
+// LoadPlatform ignores retired KB/RAG runtime settings.
+func LoadPlatform() (*Config, error) { return load(false) }
+
+func load(legacy bool) (*Config, error) {
+	dim := 0
+	var err error
+	if legacy {
+		dim, err = strconv.Atoi(getEnv("EMBEDDING_DIM", "1024"))
+		if err != nil {
+			return nil, fmt.Errorf("invalid EMBEDDING_DIM: %w", err)
+		}
 	}
 	usePathStyle, _ := strconv.ParseBool(getEnv("S3_USE_PATH_STYLE", "true"))
 
@@ -81,47 +93,53 @@ func Load() (*Config, error) {
 	if sessionTTL <= 0 {
 		return nil, fmt.Errorf("invalid SESSION_TTL: must be positive")
 	}
-	feishuSyncJobTimeout, err := positiveDurationEnv("FEISHU_SYNC_JOB_TIMEOUT", "10m")
-	if err != nil {
-		return nil, err
-	}
-	ingestionJobTimeout, err := positiveDurationEnv("INGESTION_JOB_TIMEOUT", "20m")
-	if err != nil {
-		return nil, err
-	}
-	feishuReconcileJobTimeout, err := positiveDurationEnv("FEISHU_RECONCILE_JOB_TIMEOUT", "2m")
-	if err != nil {
-		return nil, err
-	}
-	feishuReconcileInterval, err := positiveDurationEnv("FEISHU_RECONCILE_INTERVAL", "5m")
-	if err != nil {
-		return nil, err
-	}
-	feishuSyncLease, err := positiveDurationEnv("FEISHU_SYNC_LEASE", "45m")
-	if err != nil {
-		return nil, err
-	}
-	riverRescueStuckJobsAfter, err := positiveDurationEnv("RIVER_RESCUE_STUCK_JOBS_AFTER", "30m")
-	if err != nil {
-		return nil, err
-	}
-	feishuReconcileBatchSize, err := boundedPositiveIntEnv("FEISHU_RECONCILE_BATCH_SIZE", "100", 500)
-	if err != nil {
-		return nil, err
-	}
-	feishuReconcileMaxBatches, err := boundedPositiveIntEnv("FEISHU_RECONCILE_MAX_BATCHES", "10", 20)
-	if err != nil {
-		return nil, err
-	}
-	if feishuReconcileInterval >= feishuSyncLease {
-		return nil, fmt.Errorf("invalid FEISHU_RECONCILE_INTERVAL: must be less than FEISHU_SYNC_LEASE")
-	}
-	if feishuSyncLease <= feishuSyncJobTimeout+ingestionJobTimeout {
-		return nil, fmt.Errorf("invalid FEISHU_SYNC_LEASE: must exceed FEISHU_SYNC_JOB_TIMEOUT plus INGESTION_JOB_TIMEOUT")
-	}
-	maxWorkerTimeout := max(feishuSyncJobTimeout, ingestionJobTimeout, feishuReconcileJobTimeout)
-	if riverRescueStuckJobsAfter <= maxWorkerTimeout {
-		return nil, fmt.Errorf("invalid RIVER_RESCUE_STUCK_JOBS_AFTER: must exceed every worker timeout")
+	var feishuSyncJobTimeout, ingestionJobTimeout, feishuReconcileJobTimeout time.Duration
+	var feishuReconcileInterval, feishuSyncLease, riverRescueStuckJobsAfter time.Duration
+	var feishuReconcileBatchSize, feishuReconcileMaxBatches int
+	if legacy {
+		feishuSyncJobTimeout, err = positiveDurationEnv("FEISHU_SYNC_JOB_TIMEOUT", "10m")
+		if err != nil {
+			return nil, err
+		}
+		ingestionJobTimeout, err = positiveDurationEnv("INGESTION_JOB_TIMEOUT", "20m")
+		if err != nil {
+			return nil, err
+		}
+		feishuReconcileJobTimeout, err = positiveDurationEnv("FEISHU_RECONCILE_JOB_TIMEOUT", "2m")
+		if err != nil {
+			return nil, err
+		}
+		feishuReconcileInterval, err = positiveDurationEnv("FEISHU_RECONCILE_INTERVAL", "5m")
+		if err != nil {
+			return nil, err
+		}
+		feishuSyncLease, err = positiveDurationEnv("FEISHU_SYNC_LEASE", "45m")
+		if err != nil {
+			return nil, err
+		}
+		riverRescueStuckJobsAfter, err = positiveDurationEnv("RIVER_RESCUE_STUCK_JOBS_AFTER", "30m")
+		if err != nil {
+			return nil, err
+		}
+		feishuReconcileBatchSize, err = boundedPositiveIntEnv("FEISHU_RECONCILE_BATCH_SIZE", "100", 500)
+		if err != nil {
+			return nil, err
+		}
+		feishuReconcileMaxBatches, err = boundedPositiveIntEnv("FEISHU_RECONCILE_MAX_BATCHES", "10", 20)
+		if err != nil {
+			return nil, err
+		}
+		if feishuReconcileInterval >= feishuSyncLease {
+			return nil, fmt.Errorf("invalid FEISHU_RECONCILE_INTERVAL: must be less than FEISHU_SYNC_LEASE")
+		}
+		if feishuSyncLease <= feishuSyncJobTimeout+ingestionJobTimeout {
+			return nil, fmt.Errorf("invalid FEISHU_SYNC_LEASE: must exceed FEISHU_SYNC_JOB_TIMEOUT plus INGESTION_JOB_TIMEOUT")
+		}
+		maxWorkerTimeout := max(feishuSyncJobTimeout, ingestionJobTimeout, feishuReconcileJobTimeout)
+		if riverRescueStuckJobsAfter <= maxWorkerTimeout {
+			return nil, fmt.Errorf("invalid RIVER_RESCUE_STUCK_JOBS_AFTER: must exceed every worker timeout")
+		}
+
 	}
 
 	feishuValues := map[string]string{
@@ -155,10 +173,16 @@ func Load() (*Config, error) {
 		}
 	}
 
+	for _, key := range []string{"DATABASE_URL", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET"} {
+		if os.Getenv(key) == "" {
+			return nil, fmt.Errorf("missing required env var: %s", key)
+		}
+	}
 	cfg := &Config{
 		Port:             getEnv("PORT", "8080"),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:      mustEnv("DATABASE_URL"),
+		DatabaseProxyURL: os.Getenv("DATABASE_PROXY_URL"),
 		S3Endpoint:       mustEnv("S3_ENDPOINT"),
 		S3AccessKey:      mustEnv("S3_ACCESS_KEY"),
 		S3SecretKey:      mustEnv("S3_SECRET_KEY"),
@@ -193,27 +217,30 @@ func Load() (*Config, error) {
 		SessionTTL:          sessionTTL,
 		FrontendOrigin:      feishuValues["FRONTEND_ORIGIN"],
 
+		BootstrapAdminFeishuOpenID: getEnv("BOOTSTRAP_ADMIN_FEISHU_OPEN_ID", ""),
 		BootstrapOwnerFeishuOpenID: getEnv("BOOTSTRAP_OWNER_FEISHU_OPEN_ID", ""),
 	}
 
-	cfg.TokenizerEncoding = getEnv("TOKENIZER_ENCODING", "cl100k_base")
-	cfg.ChunkSize, _ = strconv.Atoi(getEnv("CHUNK_SIZE", "400"))
-	cfg.ChunkOverlap, _ = strconv.Atoi(getEnv("CHUNK_OVERLAP", "60"))
-	cfg.EmbedBatchSize, _ = strconv.Atoi(getEnv("EMBED_BATCH_SIZE", "64"))
-	maxMB, _ := strconv.ParseInt(getEnv("UPLOAD_MAX_MB", "50"), 10, 64)
-	cfg.UploadMaxBytes = maxMB * 1024 * 1024
-	cfg.RiverMaxWorkers, _ = strconv.Atoi(getEnv("RIVER_MAX_WORKERS", "4"))
-	cfg.RAGTopK, _ = strconv.Atoi(getEnv("RAG_TOP_K", "8"))
-	minScore, _ := strconv.ParseFloat(getEnv("RAG_MIN_SCORE", "0.0"), 32)
-	cfg.RAGMinScore = float32(minScore)
-	cfg.RAGHistoryMessages, _ = strconv.Atoi(getEnv("RAG_HISTORY_MESSAGES", "10"))
-	if cfg.RAGTopK < 1 {
-		cfg.RAGTopK = 8
-	}
-	if cfg.RAGHistoryMessages < 0 {
-		cfg.RAGHistoryMessages = 10
-	}
+	if legacy {
+		cfg.TokenizerEncoding = getEnv("TOKENIZER_ENCODING", "cl100k_base")
+		cfg.ChunkSize, _ = strconv.Atoi(getEnv("CHUNK_SIZE", "400"))
+		cfg.ChunkOverlap, _ = strconv.Atoi(getEnv("CHUNK_OVERLAP", "60"))
+		cfg.EmbedBatchSize, _ = strconv.Atoi(getEnv("EMBED_BATCH_SIZE", "64"))
+		maxMB, _ := strconv.ParseInt(getEnv("UPLOAD_MAX_MB", "50"), 10, 64)
+		cfg.UploadMaxBytes = maxMB * 1024 * 1024
+		cfg.RiverMaxWorkers, _ = strconv.Atoi(getEnv("RIVER_MAX_WORKERS", "4"))
+		cfg.RAGTopK, _ = strconv.Atoi(getEnv("RAG_TOP_K", "8"))
+		minScore, _ := strconv.ParseFloat(getEnv("RAG_MIN_SCORE", "0.0"), 32)
+		cfg.RAGMinScore = float32(minScore)
+		cfg.RAGHistoryMessages, _ = strconv.Atoi(getEnv("RAG_HISTORY_MESSAGES", "10"))
+		if cfg.RAGTopK < 1 {
+			cfg.RAGTopK = 8
+		}
+		if cfg.RAGHistoryMessages < 0 {
+			cfg.RAGHistoryMessages = 10
+		}
 
+	}
 	return cfg, nil
 }
 

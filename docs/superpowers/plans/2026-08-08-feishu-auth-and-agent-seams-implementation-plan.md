@@ -1,6 +1,8 @@
 # 飞书身份与 Agent 扩展实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **适用范围（2026-09-05 规则整理）：** 本文属于转向前的 it-wiki 历史计划，保留阶段实施步骤与验收记录，不是能力中心实施计划或所有任务的常驻规则。仅执行本阶段相关工作时读取对应任务和依赖；旧分支、提交限制、环境结论、逐步 commit、全仓清扫与截图要求仅属于原阶段上下文，当前执行遵循 [AGENTS.md](../../../AGENTS.md) 和本次授权。未完成验收不自动视为通过。
+
+> **执行方式：** 可使用适用且可用的 Skill 或等效流程；Superpowers 执行 Skills 不是前置依赖。不因 Skill 缺失停止工作，也不因阅读此计划自动启动子代理、提交或合并。
 
 **Goal:** 为单租户 wiki 增加飞书 OAuth、用户级云文档导入与手动同步，并预留多 Agent 和 LiveAgent UI 复用边界。
 
@@ -12,7 +14,7 @@
 
 ## Scope and order
 
-数据库和 sqlc 先行；认证与所有权随后；Feishu URL/Loader 独立测试；同步 worker 接入现有摄入链；Agent seams 和前端最后接入。每个任务都应独立可测试并单独提交。
+数据库和 sqlc 先行；认证与所有权随后；Feishu URL/Loader 独立测试；同步 worker 接入现有摄入链；Agent seams 和前端最后接入。每个任务应能独立验证；提交按当前授权和逻辑变更组织，不要求每个任务单独提交。
 
 ### Task 1: Identity, ownership, and staged-document schema
 
@@ -209,11 +211,11 @@
 - [ ] Add fake OAuth and fake Feishu API e2e coverage for login, import, sync, and ownership rejection.
 - [ ] Run `cd backend && go test ./...`.
 - [ ] Run `cd frontend && pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
-- [ ] Run `git diff --check` and verify no credentials, raw Feishu content fixtures, or generated sqlc edits are staged.
+- [ ] Run `git diff --check` and verify no credentials or raw Feishu content fixtures are staged; generated sqlc changes must come from generation and match their input changes.
 - [ ] Commit `docs: document feishu integration and verification`.
 
 ## Self-review checklist
 
-- [ ] Run `rg -n "TBD|TODO|FIXME|Similar to Task|implement later" docs/superpowers/plans/2026-08-08-feishu-auth-and-agent-seams-implementation-plan.md` and require no output.
+- [ ] Review unfinished items relevant to this delivery. Resolve blocking placeholders or record the reason and acceptance impact of deferral; examples and documented future work do not require zero search matches.
 - [ ] Confirm every spec section maps to a task: OAuth/session (2-3), source loaders (5-7), staged ingestion (7), ownership (1/8), Agent seams (4), UI reuse (9), tests/migration (10).
 - [ ] Confirm generated files under `backend/internal/repo/generated` are produced only by `sqlc generate`, never hand-edited.
