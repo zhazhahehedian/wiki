@@ -217,7 +217,7 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
               </div>
             )}
             {view === "grid" && items.length > 0 && (
-              <div className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-4 p-5">
                 {items.map((item) => (
                   <Link
                     key={item.id}

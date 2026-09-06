@@ -1,0 +1,9 @@
+{
+  "fixture": "mock HTTP",
+  "checks": [
+    "Delayed registry chunk shows a route loading state while navigation remains visible",
+    "Registry shell renders before its delayed catalog response",
+    "All seven independent menu routes render after client navigation"
+  ],
+  "errors": []
+}

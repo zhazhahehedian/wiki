@@ -45,7 +45,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return <AuthErrorState onRetry={() => void auth.refetch()} retrying={auth.isFetching} />;
   }
 
-  if (auth.isLoading || auth.isFetching) {
+  if (auth.isLoading) {
     return <AuthState message="正在验证登录状态…" />;
   }
 

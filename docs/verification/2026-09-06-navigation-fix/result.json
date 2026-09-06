@@ -1,0 +1,10 @@
+{
+  "fixture": "mock HTTP",
+  "checks": [
+    "Settings stays mounted during slow auth refresh; unsaved input survives completion",
+    "Dashboard background refresh causes no login flash or sidebar remount",
+    "Blue brand and active navigation inspected on desktop, governance and mobile; no overflow",
+    "A completed 401 refresh still removes protected UI and redirects to login"
+  ],
+  "pageErrors": []
+}

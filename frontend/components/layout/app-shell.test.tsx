@@ -57,7 +57,7 @@ describe("AppShell auth guard", () => {
     expect(screen.queryByText("private docs")).not.toBeInTheDocument();
   });
 
-  it("does not render protected UI while stale auth data is revalidating", () => {
+  it("keeps protected UI visible while confirmed auth data is revalidating", () => {
     useAuth.mockReturnValue({
       isLoading: false,
       isFetching: true,
@@ -68,9 +68,9 @@ describe("AppShell auth guard", () => {
 
     renderShell(<p>private docs</p>);
 
-    expect(screen.getByRole("status")).toBeInTheDocument();
-    expect(screen.queryByText("private docs")).not.toBeInTheDocument();
-    expect(screen.queryByText("rail")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByText("private docs")).toBeInTheDocument();
+    expect(screen.getByText("rail")).toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
   });
 

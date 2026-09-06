@@ -42,8 +42,9 @@ function LoginContent() {
   const authFailed = auth.isError && !unauthenticated;
 
   useEffect(() => {
-    if (authenticated) router.replace("/");
-  }, [authenticated, router]);
+    // Entering the app from login must wait for the current session check.
+    if (authenticated && !auth.isFetching) router.replace("/");
+  }, [authenticated, auth.isFetching, router]);
 
   if (authFailed) {
     return (

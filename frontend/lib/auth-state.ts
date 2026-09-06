@@ -11,7 +11,9 @@ export function getAuthenticatedUser(
   auth: AuthQueryState,
   sessionExpired = false,
 ): AuthUser | undefined {
-  if (auth.isLoading || auth.isFetching || auth.isError || sessionExpired) {
+  // Background refresh keeps the last confirmed session visible; errors and
+  // explicit expiry still block protected UI.
+  if (auth.isLoading || auth.isError || sessionExpired) {
     return undefined;
   }
   return auth.data;

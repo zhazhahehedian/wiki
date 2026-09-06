@@ -105,7 +105,7 @@ export function HubShell({ children }: { children: ReactNode }) {
         onClick={() => setMobileOpen(false)}
         className="flex items-center gap-3 px-5 py-6 text-zinc-900"
       >
-        <span className="flex size-10 items-center justify-center rounded-lg bg-zinc-900 text-white">
+        <span className="flex size-10 items-center justify-center rounded-lg bg-blue-600 text-white">
           <Boxes className="size-6" aria-hidden="true" />
         </span>
         <span>
@@ -128,8 +128,10 @@ export function HubShell({ children }: { children: ReactNode }) {
             aria-current={isActive(href) ? "page" : undefined}
             onClick={() => setMobileOpen(false)}
             className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-2 focus-visible:outline-blue-400",
-              isActive(href) && "bg-zinc-100 font-medium text-zinc-950",
+              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors focus-visible:outline-2 focus-visible:outline-blue-400",
+              isActive(href)
+                ? "bg-blue-50 font-medium text-blue-700 hover:bg-blue-100"
+                : "hover:bg-zinc-100 hover:text-zinc-900",
             )}
           >
             <Icon className="size-[18px]" aria-hidden="true" />
@@ -154,10 +156,10 @@ export function HubShell({ children }: { children: ReactNode }) {
               onClick={() => setMobileOpen(false)}
               aria-current={isActive(href) ? "page" : undefined}
               className={cn(
-                "mt-3 flex items-center gap-3 rounded-lg px-2 py-2 text-xs hover:bg-zinc-100 hover:text-zinc-900",
+                "mt-3 flex items-center gap-3 rounded-lg px-2 py-2 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-blue-400",
                 isActive(href)
-                  ? "bg-zinc-100 font-medium text-zinc-950"
-                  : "text-zinc-600",
+                  ? "bg-blue-50 font-medium text-blue-700 hover:bg-blue-100"
+                  : "text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900",
               )}
             >
               <Icon className="size-4" aria-hidden="true" />
@@ -234,7 +236,7 @@ export function HubShell({ children }: { children: ReactNode }) {
         </header>
         <main
           id="hub-content"
-          className="mx-auto max-w-7xl px-5 py-6 sm:px-7 sm:py-7"
+          className="w-full px-5 py-6 sm:px-7 sm:py-7"
         >
           {children}
         </main>

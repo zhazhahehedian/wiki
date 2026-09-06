@@ -1,0 +1,55 @@
+{
+  "fixture": "mock HTTP",
+  "widths": [
+    {
+      "width": 390,
+      "main": 390,
+      "columns": 1,
+      "cardWidth": 308,
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "main": 768,
+      "columns": 2,
+      "cardWidth": 327,
+      "overflow": false
+    },
+    {
+      "width": 1024,
+      "main": 804,
+      "columns": 2,
+      "cardWidth": 345,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "main": 1220,
+      "columns": 3,
+      "cardWidth": 363.328125,
+      "overflow": false
+    },
+    {
+      "width": 1920,
+      "main": 1700,
+      "columns": 5,
+      "cardWidth": 307.59375,
+      "overflow": false
+    },
+    {
+      "width": 2560,
+      "main": 2340,
+      "columns": 7,
+      "cardWidth": 306.5625,
+      "overflow": false
+    },
+    {
+      "width": 3840,
+      "main": 3620,
+      "columns": 11,
+      "cardWidth": 305.625,
+      "overflow": false
+    }
+  ],
+  "errors": []
+}

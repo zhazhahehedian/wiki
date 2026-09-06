@@ -59,7 +59,7 @@ describe("Rail user menu", () => {
     expect(screen.queryByRole("button", { name: /Ada/ })).not.toBeInTheDocument();
   });
 
-  it("does not render a stale user menu while auth revalidates", () => {
+  it("keeps the confirmed user menu while auth revalidates", () => {
     useAuth.mockReturnValue({
       isLoading: false,
       isFetching: true,
@@ -69,6 +69,6 @@ describe("Rail user menu", () => {
 
     render(<TooltipProvider><Rail /></TooltipProvider>);
 
-    expect(screen.queryByRole("button", { name: /Ada/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Ada/ })).toBeInTheDocument();
   });
 });

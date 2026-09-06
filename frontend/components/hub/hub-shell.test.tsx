@@ -64,14 +64,14 @@ it("shows the new navigation with an active page and no legacy product links", (
     screen.queryByRole("link", { name: /知识库|审核队列|审计日志/ }),
   ).not.toBeInTheDocument();
 });
-it.each(["loading", "revalidating", "expired", "unauthorized"])(
+it.each(["loading", "expired", "unauthorized"])(
   "hides private content when %s",
   (state) => {
     mocks.expired = state === "expired";
     mocks.auth.mockReturnValue({
       data: { id: "stale" },
       isLoading: state === "loading",
-      isFetching: state === "revalidating",
+      isFetching: state === "loading",
       isError: state === "unauthorized",
       error: new APIError(401, "unauthenticated", ""),
     });
@@ -79,6 +79,48 @@ it.each(["loading", "revalidating", "expired", "unauthorized"])(
     expect(screen.queryByText("private content")).not.toBeInTheDocument();
     if (state === "expired" || state === "unauthorized")
       expect(mocks.replace).toHaveBeenCalledWith("/login");
+  },
+);
+it.each(["success", "unauthorized", "expired"])(
+  "preserves form state during background auth refresh, then handles %s",
+  async (outcome) => {
+    const client = new QueryClient();
+    const tree = () => (
+      <QueryClientProvider client={client}>
+        <HubShell>
+          <input aria-label="未保存的配置" defaultValue="" />
+        </HubShell>
+      </QueryClientProvider>
+    );
+    const view = render(tree());
+    const input = screen.getByRole("textbox", { name: "未保存的配置" });
+    await userEvent.type(input, "draft-model");
+    const confirmed = mocks.auth();
+    mocks.auth.mockReturnValue({ ...confirmed, isFetching: true });
+    view.rerender(tree());
+    expect(screen.queryByText("正在验证登录状态…")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBe(input);
+    expect(input).toHaveValue("draft-model");
+    expect(mocks.replace).not.toHaveBeenCalled();
+
+    mocks.expired = outcome === "expired";
+    mocks.auth.mockReturnValue({
+      ...confirmed,
+      isError: outcome === "unauthorized",
+      error:
+        outcome === "unauthorized"
+          ? new APIError(401, "unauthenticated", "")
+          : null,
+    });
+    view.rerender(tree());
+    if (outcome === "success") {
+      expect(screen.getByRole("textbox")).toBe(input);
+      expect(input).toHaveValue("draft-model");
+      expect(mocks.replace).not.toHaveBeenCalled();
+    } else {
+      expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+      expect(mocks.replace).toHaveBeenCalledWith("/login");
+    }
   },
 );
 it("offers retry rather than login on an auth service error", async () => {
