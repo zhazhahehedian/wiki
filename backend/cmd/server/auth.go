@@ -17,10 +17,6 @@ const (
 	feishuScopeOfflineAccess = "offline_access"
 	feishuScopeUserBaseRead  = "contact:user.base:readonly"
 	feishuScopeUserEmailRead = "contact:user.email:readonly"
-	feishuScopeDocxRead      = "docx:document:readonly"
-	feishuScopeSheetsRead    = "sheets:spreadsheet:readonly"
-	feishuScopeBitableRead   = "bitable:app:readonly"
-	feishuScopeWikiRead      = "wiki:wiki:readonly"
 )
 
 func requiredFeishuScopes() []string {
@@ -28,10 +24,6 @@ func requiredFeishuScopes() []string {
 		feishuScopeOfflineAccess,
 		feishuScopeUserBaseRead,
 		feishuScopeUserEmailRead,
-		feishuScopeDocxRead,
-		feishuScopeSheetsRead,
-		feishuScopeBitableRead,
-		feishuScopeWikiRead,
 	}
 }
 

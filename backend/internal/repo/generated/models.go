@@ -12,6 +12,58 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuditLog struct {
+	ID          uuid.UUID       `json:"id"`
+	ActorOpenID string          `json:"actor_open_id"`
+	Action      string          `json:"action"`
+	TargetType  string          `json:"target_type"`
+	TargetID    string          `json:"target_id"`
+	Detail      json.RawMessage `json:"detail"`
+	RequestID   string          `json:"request_id"`
+	CreatedAt   time.Time       `json:"created_at"`
+}
+
+type Capability struct {
+	ID                uuid.UUID   `json:"id"`
+	Slug              string      `json:"slug"`
+	Type              string      `json:"type"`
+	Name              string      `json:"name"`
+	Description       string      `json:"description"`
+	OwnerOpenID       string      `json:"owner_open_id"`
+	Department        string      `json:"department"`
+	Status            string      `json:"status"`
+	Visibility        string      `json:"visibility"`
+	CurrentVersionID  pgtype.UUID `json:"current_version_id"`
+	DraftVersionID    pgtype.UUID `json:"draft_version_id"`
+	Revision          int64       `json:"revision"`
+	CreatedAt         time.Time   `json:"created_at"`
+	UpdatedAt         time.Time   `json:"updated_at"`
+	IsLive            bool        `json:"is_live"`
+	PublishedMetadata []byte      `json:"published_metadata"`
+	ReviewReason      string      `json:"review_reason"`
+}
+
+type CapabilityAllowlist struct {
+	CapabilityID uuid.UUID `json:"capability_id"`
+	OpenID       string    `json:"open_id"`
+}
+
+type CapabilityVersion struct {
+	ID             uuid.UUID          `json:"id"`
+	CapabilityID   uuid.UUID          `json:"capability_id"`
+	Version        string             `json:"version"`
+	Changelog      string             `json:"changelog"`
+	CreatedBy      string             `json:"created_by"`
+	CreatedAt      time.Time          `json:"created_at"`
+	McpEndpoint    *string            `json:"mcp_endpoint"`
+	McpTransport   *string            `json:"mcp_transport"`
+	McpAuthScheme  *string            `json:"mcp_auth_scheme"`
+	Tools          []byte             `json:"tools"`
+	SkillBundleKey *string            `json:"skill_bundle_key"`
+	SkillManifest  []byte             `json:"skill_manifest"`
+	PublishedAt    pgtype.Timestamptz `json:"published_at"`
+}
+
 type Conversation struct {
 	ID          uuid.UUID   `json:"id"`
 	KbID        uuid.UUID   `json:"kb_id"`
@@ -93,6 +145,20 @@ type OauthAccount struct {
 	UpdatedAt             time.Time          `json:"updated_at"`
 }
 
+type PlatformAdminBootstrap struct {
+	Singleton bool      `json:"singleton"`
+	OpenID    string    `json:"open_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type PlatformProfile struct {
+	OpenID     string    `json:"open_id"`
+	IsAdmin    bool      `json:"is_admin"`
+	Department string    `json:"department"`
+	Revision   int64     `json:"revision"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 type User struct {
 	ID          uuid.UUID `json:"id"`
 	DisplayName string    `json:"display_name"`
@@ -100,6 +166,18 @@ type User struct {
 	Email       *string   `json:"email"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type UserLlmKey struct {
+	UserID        uuid.UUID `json:"user_id"`
+	BaseUrl       string    `json:"base_url"`
+	KeyCiphertext []byte    `json:"key_ciphertext"`
+	Models        []string  `json:"models"`
+	DefaultModel  string    `json:"default_model"`
+	Version       int64     `json:"version"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Protocol      string    `json:"protocol"`
 }
 
 type UserSession struct {

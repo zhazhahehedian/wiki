@@ -301,6 +301,7 @@ func TestStreamReActClientDisconnectDoesNotPersistAssistant(t *testing.T) {
 		ID: convID, KbID: uuid.New(), Mode: domain.ConversationModeReAct,
 	}}
 	llm := &tokenThenBlockLLM{unblock: make(chan struct{})}
+	defer close(llm.unblock)
 	srv := newReActTestServer(t, queries, llm)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -317,9 +318,13 @@ func TestStreamReActClientDisconnectDoesNotPersistAssistant(t *testing.T) {
 	_, _ = resp.Body.Read(buf)
 	cancel()
 	resp.Body.Close()
-	close(llm.unblock)
-	llm.wait()
-	time.Sleep(50 * time.Millisecond) // 给 handler 收尾余量；确定性保障由服务级取消测试覆盖
+	// Wait for the server to observe cancellation instead of racing it with a normal stream completion.
+	select {
+	case <-llm.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not cancel the upstream stream")
+	}
+	srv.Close() // Wait for the handler before inspecting persistence.
 
 	for _, m := range queries.assistantMessages() {
 		t.Fatalf("assistant persisted after disconnect: %q", m.Content)

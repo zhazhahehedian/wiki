@@ -2,15 +2,13 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
-	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/repo"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/migrations"
 )
 
@@ -20,12 +18,11 @@ func main() {
 	}
 	cmd := os.Args[1]
 
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("load config: %v", err)
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL is required")
 	}
-
-	db, err := sql.Open("pgx", cfg.DatabaseURL)
+	db, err := repo.OpenDatabase(databaseURL, os.Getenv("DATABASE_PROXY_URL"))
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
