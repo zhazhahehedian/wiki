@@ -23,7 +23,7 @@ export function Providers({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider attribute="class" defaultTheme="light" forcedTheme="light" enableSystem={false} disableTransitionOnChange>
       <TooltipProvider>
         <QueryClientProvider client={client}>
           <AuthSessionBoundary>

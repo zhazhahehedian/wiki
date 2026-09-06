@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
-import { BookOpen } from "lucide-react";
+import { Boxes } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { AuthErrorState } from "@/components/auth/auth-error-state";
@@ -37,9 +37,8 @@ function LoginContent() {
   const sessionExpired = useSessionExpired();
   const auth = useAuth();
   const authenticated = Boolean(getAuthenticatedUser(auth, sessionExpired));
-  const unauthenticated = auth.isError
-    && auth.error instanceof APIError
-    && auth.error.status === 401;
+  const unauthenticated =
+    auth.isError && auth.error instanceof APIError && auth.error.status === 401;
   const authFailed = auth.isError && !unauthenticated;
 
   useEffect(() => {
@@ -47,7 +46,12 @@ function LoginContent() {
   }, [authenticated, router]);
 
   if (authFailed) {
-    return <AuthErrorState onRetry={() => void auth.refetch()} retrying={auth.isFetching} />;
+    return (
+      <AuthErrorState
+        onRetry={() => void auth.refetch()}
+        retrying={auth.isFetching}
+      />
+    );
   }
 
   if (auth.isLoading || auth.isFetching) {
@@ -55,22 +59,34 @@ function LoginContent() {
   }
 
   if (authenticated) {
-    return <LoginState message="正在进入知识库…" />;
+    return <LoginState message="正在进入能力中心…" />;
   }
 
   const errorCode = searchParams.get("error");
-  const errorMessage = errorCode ? (LOGIN_ERRORS[errorCode] ?? LOGIN_ERRORS.oauth_failed) : null;
+  const errorMessage = errorCode
+    ? (LOGIN_ERRORS[errorCode] ?? LOGIN_ERRORS.oauth_failed)
+    : null;
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-5 py-10">
-      <div className="w-full max-w-sm space-y-6">
+    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-50 px-5 py-10">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-32 left-1/4 size-96 rounded-full bg-sky-100/60 blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -bottom-32 right-1/4 size-96 rounded-full bg-indigo-100/40 blur-3xl"
+      />
+      <div className="relative w-full max-w-md space-y-7 rounded-3xl border border-white bg-white/90 px-7 py-10 shadow-[0_20px_80px_-40px_#94a3b8] sm:px-10">
         <div className="space-y-3 text-center">
-          <div className="mx-auto flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <BookOpen className="size-5" aria-hidden="true" />
+          <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl border border-sky-100 bg-sky-50 text-primary">
+            <Boxes className="size-7" aria-hidden="true" />
           </div>
           <div className="space-y-1">
-            <h1 className="text-xl font-semibold">登录 it-wiki</h1>
-            <p className="text-sm text-muted-foreground">使用公司飞书账号继续</p>
+            <h1 className="text-xl font-semibold">登录能力中心</h1>
+            <p className="text-sm text-muted-foreground">
+              使用飞书账号，连接团队的能力与经验
+            </p>
           </div>
         </div>
 
@@ -81,6 +97,11 @@ function LoginContent() {
         )}
 
         <FeishuLoginButton />
+        <p className="border-t border-slate-100 pt-5 text-center text-xs leading-6 text-slate-400">
+          团队能力，共同创造
+          <br />
+          Capability Hub
+        </p>
       </div>
     </main>
   );
@@ -89,7 +110,9 @@ function LoginContent() {
 function LoginState({ message }: { message: string }) {
   return (
     <main className="flex min-h-screen items-center justify-center px-4">
-      <p className="text-sm text-muted-foreground" role="status">{message}</p>
+      <p className="text-sm text-muted-foreground" role="status">
+        {message}
+      </p>
     </main>
   );
 }
