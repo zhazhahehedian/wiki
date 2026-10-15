@@ -12,16 +12,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	k "github.com/zenith-wang/it-wiki/backend/internal/knowledge"
+	"github.com/zenith-wang/it-wiki/backend/internal/registry"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
+// Enqueue schedules indexing of a version inside the staging transaction.
+type Enqueue func(context.Context, pgx.Tx, string) error
+
 type KnowledgeRepository struct {
 	pool    *pgxpool.Pool
-	Enqueue func(context.Context, pgx.Tx, string) error
+	enqueue Enqueue
 }
 
-func NewKnowledgeRepository(p *pgxpool.Pool) *KnowledgeRepository {
-	return &KnowledgeRepository{pool: p}
+func NewKnowledgeRepository(p *pgxpool.Pool, enqueue Enqueue) *KnowledgeRepository {
+	return &KnowledgeRepository{pool: p, enqueue: enqueue}
 }
 func ku(s string) uuid.UUID   { v, _ := uuid.Parse(s); return v }
 func kn(s string) pgtype.UUID { v, e := uuid.Parse(s); return pgtype.UUID{Bytes: v, Valid: e == nil} }
@@ -38,17 +42,16 @@ func ke(e error) error {
 	return e
 }
 
-// All knowledge mutations share this transaction lock, including publication.
-// It serializes authority checks with revocation and document state changes.
+// mutate runs fn in one transaction. Concurrent writers are ordered by row
+// locks rather than a global lock: base FOR UPDATE (save/delete/upload, so the
+// checksum check sees in-flight uploads), base FOR SHARE (grants vs. unshare),
+// document FOR UPDATE (stage/publish) and application FOR UPDATE (credentials).
 func (r *KnowledgeRepository) mutate(ctx context.Context, fn func(*generated.Queries, pgx.Tx) error) error {
 	tx, e := r.pool.Begin(ctx)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback(context.Background())
-	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(684291574)"); e != nil {
-		return e
-	}
 	if e = fn(generated.New(tx), tx); e != nil {
 		return e
 	}
@@ -57,38 +60,54 @@ func (r *KnowledgeRepository) mutate(ctx context.Context, fn func(*generated.Que
 func base(b generated.KnowledgeBase, manage bool) k.KB {
 	return k.KB{ID: b.ID.String(), Name: b.Name, Description: b.Description, Visibility: b.Visibility, Department: b.Department, Members: b.Members, Manage: manage, ApplicationShared: b.ApplicationShared, Model: b.EmbedModel, Dim: int(b.EmbedDim)}
 }
-func access(ctx context.Context, q *generated.Queries, p k.Principal, b generated.KnowledgeBase, manage bool) error {
+
+// viewer is a principal's resolved authority, loaded once per operation.
+type viewer struct {
+	userID string
+	who    registry.Identity
+	app    bool
+	grants []uuid.UUID
+}
+
+func loadViewer(ctx context.Context, q *generated.Queries, p k.Principal) (viewer, error) {
 	if p.ApplicationID != "" {
-		if manage || !b.ApplicationShared {
-			return k.ErrForbidden
-		}
 		valid, e := q.KnowledgeCredentialCurrent(ctx, generated.KnowledgeCredentialCurrentParams{ID: ku(p.CredentialID), ApplicationID: ku(p.ApplicationID)})
 		if e != nil {
-			return e
+			return viewer{}, e
 		}
 		if !valid {
-			return k.ErrUnauthenticated
+			return viewer{}, k.ErrUnauthenticated
 		}
 		ids, e := q.KnowledgeGrants(ctx, ku(p.ApplicationID))
-		if e != nil {
-			return e
-		}
-		if !slices.Contains(ids, b.ID) {
-			return k.ErrForbidden
-		}
-		return nil
+		return viewer{app: true, grants: ids}, e
 	}
 	who, e := identity(ctx, q, p.UserID)
+	if errors.Is(e, registry.ErrIdentity) {
+		return viewer{}, k.ErrForbidden
+	}
+	return viewer{userID: p.UserID, who: who}, e
+}
+
+// can reports read authority over b, or write authority when manage is set.
+// Applications never manage and only read granted, application-shared bases.
+func (v viewer) can(b generated.KnowledgeBase, manage bool) bool {
+	if v.app {
+		return !manage && b.ApplicationShared && slices.Contains(v.grants, b.ID)
+	}
+	if v.who.IsAdmin || ks(b.OwnerUserID) == v.userID {
+		return true
+	}
+	return !manage && (b.Visibility == "company" || (b.Visibility == "department" && v.who.Department != "" && v.who.Department == b.Department) || (b.Visibility == "members" && slices.Contains(b.Members, v.who.OpenID)))
+}
+func access(ctx context.Context, q *generated.Queries, p k.Principal, b generated.KnowledgeBase, manage bool) error {
+	v, e := loadViewer(ctx, q, p)
 	if e != nil {
+		return e
+	}
+	if !v.can(b, manage) {
 		return k.ErrForbidden
 	}
-	if who.IsAdmin || ks(b.OwnerUserID) == p.UserID {
-		return nil
-	}
-	if !manage && (b.Visibility == "company" || (b.Visibility == "department" && who.Department != "" && who.Department == b.Department) || (b.Visibility == "members" && slices.Contains(b.Members, who.OpenID))) {
-		return nil
-	}
-	return k.ErrForbidden
+	return nil
 }
 func admin(ctx context.Context, q *generated.Queries, p k.Principal) error {
 	if p.ApplicationID != "" {
@@ -102,25 +121,44 @@ func admin(ctx context.Context, q *generated.Queries, p k.Principal) error {
 }
 func (r *KnowledgeRepository) ListKB(ctx context.Context, p k.Principal) ([]k.KB, error) {
 	q := generated.New(r.pool)
+	out := []k.KB{}
+	v, e := loadViewer(ctx, q, p)
+	if errors.Is(e, k.ErrForbidden) {
+		return out, nil
+	}
+	if e != nil {
+		return nil, e
+	}
 	rows, e := q.KnowledgeListBases(ctx)
 	if e != nil {
 		return nil, e
 	}
-	out := []k.KB{}
 	for _, b := range rows {
-		if e := access(ctx, q, p, b, false); e == nil {
-			out = append(out, base(b, access(ctx, q, p, b, true) == nil))
-		} else if !errors.Is(e, k.ErrForbidden) {
-			return nil, e
+		if v.can(b, false) {
+			out = append(out, base(b, v.can(b, true)))
 		}
 	}
 	return out, nil
+}
+
+// AuthorizeManage checks write authority over one base. A missing base is
+// reported as forbidden so callers cannot probe for existence.
+func (r *KnowledgeRepository) AuthorizeManage(ctx context.Context, p k.Principal, id string) error {
+	q := generated.New(r.pool)
+	b, e := q.KnowledgeGetBase(ctx, ku(id))
+	if errors.Is(e, pgx.ErrNoRows) {
+		return k.ErrForbidden
+	}
+	if e != nil {
+		return e
+	}
+	return access(ctx, q, p, b, true)
 }
 func (r *KnowledgeRepository) SaveKB(ctx context.Context, p k.Principal, id string, in k.KB, model string, dim int) (out k.KB, e error) {
 	e = r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
 		owner := kn(p.UserID)
 		if id != "" {
-			b, e := q.KnowledgeGetBase(ctx, ku(id))
+			b, e := q.KnowledgeLockBase(ctx, ku(id))
 			if e != nil {
 				return ke(e)
 			}
@@ -177,7 +215,7 @@ func knowledgeAdminAudit(ctx context.Context, q *generated.Queries, p k.Principa
 }
 func (r *KnowledgeRepository) DeleteKB(ctx context.Context, p k.Principal, id string) error {
 	return r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
-		b, e := q.KnowledgeGetBase(ctx, ku(id))
+		b, e := q.KnowledgeLockBase(ctx, ku(id))
 		if e != nil {
 			return ke(e)
 		}
@@ -225,7 +263,9 @@ func (r *KnowledgeRepository) Documents(ctx context.Context, p k.Principal, id s
 }
 func (r *KnowledgeRepository) Stage(ctx context.Context, p k.Principal, kbID, docID string, v k.Version, size int64) (out k.Document, e error) {
 	e = r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
-		b, e := q.KnowledgeGetBase(ctx, ku(kbID))
+		// Locking the base serializes uploads within one KB, so the checksum
+		// check also covers versions other uploads are staging concurrently.
+		b, e := q.KnowledgeLockBase(ctx, ku(kbID))
 		if e != nil {
 			return ke(e)
 		}
@@ -260,10 +300,7 @@ func (r *KnowledgeRepository) Stage(ctx context.Context, p k.Principal, kbID, do
 		if e = q.KnowledgeStageVersion(ctx, generated.KnowledgeStageVersionParams{ID: d.ID, PendingVersionID: kn(v.ID)}); e != nil {
 			return e
 		}
-		if r.Enqueue == nil {
-			return k.ErrUnavailable
-		}
-		if e = r.Enqueue(ctx, tx, v.ID); e != nil {
+		if e = r.enqueue(ctx, tx, v.ID); e != nil {
 			return e
 		}
 		d.PendingVersionID = kn(v.ID)
@@ -321,16 +358,16 @@ func (r *KnowledgeRepository) Retry(ctx context.Context, p k.Principal, id strin
 		if e != nil {
 			return e
 		}
-		if d.Status != "failed" || !d.PendingVersionID.Valid {
-			return k.ErrConflict
-		}
-		if e = q.KnowledgeStageVersion(ctx, generated.KnowledgeStageVersionParams{ID: d.ID, PendingVersionID: d.PendingVersionID}); e != nil {
+		// Conditional on the failed pending version still being current, so a
+		// concurrent re-upload or delete is never overwritten by a stale retry.
+		n, e := q.KnowledgeRetryDocument(ctx, generated.KnowledgeRetryDocumentParams{ID: d.ID, PendingVersionID: d.PendingVersionID})
+		if e != nil {
 			return e
 		}
-		if r.Enqueue == nil {
-			return k.ErrUnavailable
+		if n != 1 {
+			return k.ErrConflict
 		}
-		return r.Enqueue(ctx, tx, ks(d.PendingVersionID))
+		return r.enqueue(ctx, tx, ks(d.PendingVersionID))
 	})
 }
 func (r *KnowledgeRepository) LoadVersion(ctx context.Context, id string) (k.Version, error) {
@@ -357,33 +394,36 @@ func (r *KnowledgeRepository) Fail(ctx context.Context, id, code string) error {
 		return q.KnowledgeDocumentFail(ctx, generated.KnowledgeDocumentFailParams{PendingVersionID: kn(id), ErrorMessage: &code})
 	})
 }
+
+// Authorize resolves the principal once and checks every requested base. A
+// missing base is reported as forbidden, never as not found.
 func (r *KnowledgeRepository) Authorize(ctx context.Context, p k.Principal, ids []string) ([]k.KB, error) {
 	q := generated.New(r.pool)
-	out := []k.KB{}
+	v, e := loadViewer(ctx, q, p)
+	if e != nil {
+		return nil, e
+	}
+	out := make([]k.KB, 0, len(ids))
 	for _, id := range ids {
 		b, e := q.KnowledgeGetBase(ctx, ku(id))
-		if e != nil {
-			if errors.Is(e, pgx.ErrNoRows) {
-				return nil, k.ErrForbidden
-			}
-			return nil, e
+		if errors.Is(e, pgx.ErrNoRows) {
+			return nil, k.ErrForbidden
 		}
-		if e = access(ctx, q, p, b, false); e != nil {
-			return nil, e
-		}
-		docs, e := q.KnowledgeDocuments(ctx, b.ID)
 		if e != nil {
 			return nil, e
 		}
-		ready := false
-		for _, d := range docs {
-			ready = ready || d.ActiveVersionID.Valid
+		if !v.can(b, false) {
+			return nil, k.ErrForbidden
 		}
-		if len(docs) > 0 && !ready {
+		ready, e := q.KnowledgeBaseReadiness(ctx, b.ID)
+		if e != nil {
+			return nil, e
+		}
+		if ready.HasDocuments && !ready.HasActive {
 			return nil, k.ErrNotReady
 		}
 		item := base(b, false)
-		item.HasActive = ready
+		item.HasActive = ready.HasActive
 		out = append(out, item)
 	}
 	return out, nil
@@ -392,7 +432,6 @@ func (r *KnowledgeRepository) Recheck(ctx context.Context, p k.Principal, ids []
 	if _, e := r.Authorize(ctx, p, ids); e != nil {
 		return nil, e
 	}
-	q := generated.New(r.pool)
 	out := []k.Match{}
 	if len(matches) == 0 {
 		return out, nil
@@ -405,7 +444,7 @@ func (r *KnowledgeRepository) Recheck(ctx context.Context, p k.Principal, ids []
 	for i, id := range ids {
 		kbIDs[i] = ku(id)
 	}
-	documents, e := q.KnowledgeActiveDocuments(ctx, generated.KnowledgeActiveDocumentsParams{DocumentIds: documentIDs, KbIds: kbIDs})
+	documents, e := generated.New(r.pool).KnowledgeActiveDocuments(ctx, generated.KnowledgeActiveDocumentsParams{DocumentIds: documentIDs, KbIds: kbIDs})
 	if e != nil {
 		return nil, e
 	}
@@ -478,10 +517,15 @@ func (r *KnowledgeRepository) SaveApplication(ctx context.Context, p k.Principal
 		if id == "" {
 			id = uuid.NewString()
 		}
+		// FOR SHARE orders this against a concurrent unshare/delete of the base,
+		// whose grant revocation then sees (and removes) the grant written here.
 		for _, kbID := range in.KBIDs {
-			b, e := q.KnowledgeGetBase(ctx, ku(kbID))
-			if e != nil || !b.ApplicationShared {
+			b, e := q.KnowledgeShareLockBase(ctx, ku(kbID))
+			if errors.Is(e, pgx.ErrNoRows) || (e == nil && !b.ApplicationShared) {
 				return k.ErrForbidden
+			}
+			if e != nil {
+				return e
 			}
 		}
 		a, e := q.KnowledgeSaveApplication(ctx, generated.KnowledgeSaveApplicationParams{ID: ku(id), Name: in.Name, Enabled: in.Enabled})
@@ -501,9 +545,19 @@ func (r *KnowledgeRepository) SaveApplication(ctx context.Context, p k.Principal
 	})
 	return
 }
+
+// lockApplication requires an admin and an existing application, and holds the
+// application row so concurrent rotations cannot leave two live credentials.
+func lockApplication(ctx context.Context, q *generated.Queries, p k.Principal, id string) error {
+	if e := admin(ctx, q, p); e != nil {
+		return e
+	}
+	_, e := q.KnowledgeLockApplication(ctx, ku(id))
+	return ke(e)
+}
 func (r *KnowledgeRepository) Rotate(ctx context.Context, p k.Principal, id string, digest []byte, prefix string, expiry time.Time) error {
 	return r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
-		if e := admin(ctx, q, p); e != nil {
+		if e := lockApplication(ctx, q, p, id); e != nil {
 			return e
 		}
 		if e := q.KnowledgeRevoke(ctx, ku(id)); e != nil {
@@ -517,7 +571,7 @@ func (r *KnowledgeRepository) Rotate(ctx context.Context, p k.Principal, id stri
 }
 func (r *KnowledgeRepository) Revoke(ctx context.Context, p k.Principal, id string) error {
 	return r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
-		if e := admin(ctx, q, p); e != nil {
+		if e := lockApplication(ctx, q, p, id); e != nil {
 			return e
 		}
 		if e := q.KnowledgeRevoke(ctx, ku(id)); e != nil {
@@ -526,13 +580,12 @@ func (r *KnowledgeRepository) Revoke(ctx context.Context, p k.Principal, id stri
 		return knowledgeAdminAudit(ctx, q, p, "knowledge.credential.revoke", id)
 	})
 }
+
+// Audit records one search; kbIDs must already be validated and deduplicated.
 func (r *KnowledgeRepository) Audit(ctx context.Context, p k.Principal, kbIDs []string, requestID, status string, count int, duration time.Duration) error {
-	ids := []uuid.UUID{}
-	for _, id := range kbIDs {
-		v, e := uuid.Parse(id)
-		if e == nil && !slices.Contains(ids, v) {
-			ids = append(ids, v)
-		}
+	ids := make([]uuid.UUID, len(kbIDs))
+	for i, id := range kbIDs {
+		ids[i] = ku(id)
 	}
 	return generated.New(r.pool).KnowledgeAudit(ctx, generated.KnowledgeAuditParams{ApplicationID: kn(p.ApplicationID), UserID: kn(p.UserID), KnowledgeBaseIds: ids, RequestID: requestID, Status: status, ResultCount: int32(count), DurationMs: duration.Milliseconds()})
 }

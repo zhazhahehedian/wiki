@@ -18,48 +18,46 @@ import (
 type KnowledgeHandler struct{ service *k.Service }
 
 func NewKnowledgeHandler(s *k.Service) *KnowledgeHandler { return &KnowledgeHandler{s} }
-func knowledgeError(w http.ResponseWriter, r *http.Request, e error) {
-	status := 503
-	code := "knowledge_unavailable"
-	message := "知识服务依赖暂不可用，请稍后重试"
+
+// knowledgeFailure is the public form of a knowledge error; its code is also
+// the search audit status.
+type knowledgeFailure struct {
+	status        int
+	code, message string
+}
+
+func classifyKnowledge(e error) knowledgeFailure {
 	switch {
 	case errors.Is(e, k.ErrInvalid):
-		status = 400
-		code = "invalid_request"
-		message = "请检查输入、文档格式或请求字段"
+		return knowledgeFailure{400, "invalid_request", "请检查输入、文档格式或请求字段"}
 	case errors.Is(e, k.ErrUnauthenticated):
-		status = 401
-		code = "invalid_credential"
-		message = "应用凭证无效或已失效"
+		return knowledgeFailure{401, "invalid_credential", "应用凭证无效或已失效"}
 	case errors.Is(e, k.ErrForbidden):
-		status = 403
-		code = "knowledge_forbidden"
-		message = "无权访问所请求的知识资源"
+		return knowledgeFailure{403, "knowledge_forbidden", "无权访问所请求的知识资源"}
 	case errors.Is(e, k.ErrNotFound):
-		status = 404
-		code = "knowledge_not_found"
-		message = "知识资源不存在"
+		return knowledgeFailure{404, "knowledge_not_found", "知识资源不存在"}
 	case errors.Is(e, k.ErrConflict):
-		status = 409
-		code = "knowledge_conflict"
-		message = "版本或共享条件不满足，请刷新检查"
+		return knowledgeFailure{409, "knowledge_conflict", "版本或共享条件不满足，请刷新检查"}
 	case errors.Is(e, k.ErrNotReady):
-		status = 409
-		code = "knowledge_not_ready"
-		message = "知识库尚无可检索版本，请检查文档处理状态与索引配置"
+		return knowledgeFailure{409, "knowledge_not_ready", "知识库尚无可检索版本，请检查文档处理状态与索引配置"}
 	case errors.Is(e, k.ErrLimited):
-		status = 429
-		code = "knowledge_rate_limited"
-		message = "请求过于频繁，请稍后重试"
-		w.Header().Set("Retry-After", "60")
+		return knowledgeFailure{429, "knowledge_rate_limited", "请求过于频繁，请稍后重试"}
 	case errors.Is(e, context.DeadlineExceeded):
-		status = 504
-		code = "knowledge_timeout"
-		message = "检索超时，请稍后重试"
+		return knowledgeFailure{504, "knowledge_timeout", "检索超时，请稍后重试"}
 	case errors.Is(e, context.Canceled):
-		return
+		return knowledgeFailure{0, "client_canceled", ""}
 	}
-	WriteError(w, r, NewAPIError(status, code, message))
+	return knowledgeFailure{503, "knowledge_unavailable", "知识服务依赖暂不可用，请稍后重试"}
+}
+func knowledgeError(w http.ResponseWriter, r *http.Request, e error) {
+	f := classifyKnowledge(e)
+	if f.status == 0 {
+		return // client went away; nothing to write
+	}
+	if f.status == 429 {
+		w.Header().Set("Retry-After", "60")
+	}
+	WriteError(w, r, NewAPIError(f.status, f.code, f.message))
 }
 func knowledgeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
@@ -196,25 +194,25 @@ func (h *KnowledgeHandler) search(w http.ResponseWriter, r *http.Request, p k.Pr
 	if !knowledgeJSON(w, r, &in) {
 		return
 	}
-	info := k.RetrievalInfo{}
-	out, e := h.service.SearchDetailed(r.Context(), p, in, &info)
+	// Normalized once here so the audit stores canonical, deduplicated IDs.
+	var out []k.Match
+	var info k.RetrievalInfo
+	e := k.ValidateSearch(&in)
+	if e != nil {
+		in.KBIDs = nil
+	} else {
+		out, info, e = h.service.Search(r.Context(), p, in)
+	}
 	status := "ok"
 	if e != nil {
-		status = "knowledge_unavailable"
-		for _, known := range []error{k.ErrInvalid, k.ErrForbidden, k.ErrUnauthenticated, k.ErrNotFound, k.ErrConflict, k.ErrNotReady, k.ErrLimited, context.DeadlineExceeded, context.Canceled} {
-			if errors.Is(e, known) {
-				status = known.Error()
-				break
-			}
-		}
+		status = classifyKnowledge(e).code
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	// The audit records exactly the outcome returned below; a result that
+	// cannot be audited is withheld.
 	if auditErr := h.service.Repo.Audit(ctx, p, in.KBIDs, middleware.GetReqID(r.Context()), status, len(out), time.Since(start)); auditErr != nil && e == nil {
 		e = k.ErrUnavailable
-	}
-	if e == nil {
-		out, e = h.service.Repo.Recheck(r.Context(), p, in.KBIDs, out)
 	}
 	knowledgeResult(w, r, map[string]any{"request_id": middleware.GetReqID(r.Context()), "matches": out, "retrieval": info}, e)
 }

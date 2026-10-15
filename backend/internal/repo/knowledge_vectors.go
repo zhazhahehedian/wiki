@@ -5,7 +5,6 @@ package repo
 import (
 	"context"
 	"encoding/json"
-	"math"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -14,24 +13,19 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
+// Publish atomically stores all chunks of a version and switches the active
+// pointer. Process has already validated block/vector pairing and vectors, and
+// Stage guaranteed the version matches the base embedding model/dimension.
 func (r *KnowledgeRepository) Publish(ctx context.Context, v k.Version, blocks []k.Block, vectors [][]float32) error {
-	if len(blocks) == 0 || len(blocks) != len(vectors) {
-		return k.ErrInvalid
-	}
-	for _, vec := range vectors {
-		if len(vec) != v.Dim {
-			return k.ErrInvalid
+	contents := make([]string, len(blocks))
+	locators := make([]string, len(blocks))
+	embeddings := make([]string, len(blocks))
+	for i, b := range blocks {
+		loc, e := json.Marshal(b.Locator)
+		if e != nil {
+			return e
 		}
-		norm := float64(0)
-		for _, x := range vec {
-			if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
-				return k.ErrInvalid
-			}
-			norm += float64(x) * float64(x)
-		}
-		if norm == 0 {
-			return k.ErrInvalid
-		}
+		contents[i], locators[i], embeddings[i] = b.Content, string(loc), pgvector.NewVector(vectors[i]).String()
 	}
 	return r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
 		d, e := q.KnowledgeLockDocument(ctx, ku(v.DocumentID))
@@ -41,24 +35,13 @@ func (r *KnowledgeRepository) Publish(ctx context.Context, v k.Version, blocks [
 		if ks(d.PendingVersionID) != v.ID {
 			return k.ErrConflict
 		}
-		b, e := q.KnowledgeGetBase(ctx, d.KbID)
-		if e != nil {
-			return ke(e)
-		}
-		if b.EmbedModel != v.Model || int(b.EmbedDim) != v.Dim {
-			return k.ErrConflict
-		}
 		if _, e = tx.Exec(ctx, "DELETE FROM knowledge_chunks WHERE version_id=$1", ku(v.ID)); e != nil {
 			return e
 		}
-		for i, b := range blocks {
-			loc, e := json.Marshal(b.Locator)
-			if e != nil {
-				return e
-			}
-			if _, e = tx.Exec(ctx, `INSERT INTO knowledge_chunks(version_id,seq,content,locator,embedding) VALUES($1,$2,$3,$4,$5::vector)`, ku(v.ID), i, b.Content, loc, pgvector.NewVector(vectors[i]).String()); e != nil {
-				return e
-			}
+		if _, e = tx.Exec(ctx, `INSERT INTO knowledge_chunks(version_id,seq,content,locator,embedding)
+ SELECT $1::uuid,(t.n-1)::int,t.content,t.locator::jsonb,t.embedding::vector
+ FROM unnest($2::text[],$3::text[],$4::text[]) WITH ORDINALITY AS t(content,locator,embedding,n)`, ku(v.ID), contents, locators, embeddings); e != nil {
+			return e
 		}
 		if e = q.KnowledgeVersionReady(ctx, ku(v.ID)); e != nil {
 			return e

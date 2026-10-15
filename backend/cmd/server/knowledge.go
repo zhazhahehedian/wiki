@@ -20,23 +20,18 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/repo"
 )
 
+// buildKnowledge validates all knowledge configuration. Without platform
+// embedding configuration the knowledge service is not wired at all and both
+// returned values are nil.
 func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.KnowledgeHandler, *river.Client[pgx.Tx], error) {
-	var embedding ports.Embedder
 	model, base, key := os.Getenv("EMBEDDING_MODEL"), os.Getenv("EMBEDDING_BASE_URL"), os.Getenv("EMBEDDING_API_KEY")
-	if model != "" || base != "" || key != "" {
-		dim, e := strconv.Atoi(os.Getenv("EMBEDDING_DIM"))
+	configured := model != "" || base != "" || key != ""
+	dim := 0
+	if configured {
+		var e error
+		dim, e = strconv.Atoi(os.Getenv("EMBEDDING_DIM"))
 		if e != nil || dim < 1 || dim > 16000 || model == "" || base == "" || key == "" {
 			return nil, nil, fmt.Errorf("knowledge requires complete platform EMBEDDING configuration")
-		}
-		embedding = embedder.New(embedder.Config{BaseURL: strings.TrimRight(base, "/"), APIKey: key, Model: model, Dim: dim})
-		var actual string
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if e := pool.QueryRow(ctx, `SELECT format_type(atttypid,atttypmod) FROM pg_attribute WHERE attrelid='knowledge_chunks'::regclass AND attname='embedding'`).Scan(&actual); e != nil {
-			return nil, nil, fmt.Errorf("knowledge vector schema unavailable")
-		}
-		if actual != fmt.Sprintf("vector(%d)", dim) {
-			return nil, nil, fmt.Errorf("knowledge embedding dimension differs from schema; explicit rebuild migration required")
 		}
 	}
 	min := float32(0.5)
@@ -47,25 +42,42 @@ func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.Kno
 		}
 		min = float32(v)
 	}
-	r := repo.NewKnowledgeRepository(pool)
-	s := knowledge.New(r, storage, embedding, min)
+	var optimizer knowledge.QueryOptimizer
 	optBase, optKey, optModel := os.Getenv("KNOWLEDGE_OPTIMIZER_BASE_URL"), os.Getenv("KNOWLEDGE_OPTIMIZER_API_KEY"), os.Getenv("KNOWLEDGE_OPTIMIZER_MODEL")
 	if optBase != "" || optKey != "" || optModel != "" {
-		optimizer, err := knowledge.NewModelOptimizer(optBase, optKey, optModel)
+		o, err := knowledge.NewModelOptimizer(optBase, optKey, optModel)
 		if err != nil {
 			return nil, nil, fmt.Errorf("knowledge requires complete valid KNOWLEDGE_OPTIMIZER configuration")
 		}
-		s.Optimizer = optimizer
+		optimizer = o
 	}
+	if !configured {
+		return nil, nil, nil
+	}
+	var actual string
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if e := pool.QueryRow(ctx, `SELECT format_type(atttypid,atttypmod) FROM pg_attribute WHERE attrelid='knowledge_chunks'::regclass AND attname='embedding'`).Scan(&actual); e != nil {
+		return nil, nil, fmt.Errorf("knowledge vector schema unavailable")
+	}
+	if actual != fmt.Sprintf("vector(%d)", dim) {
+		return nil, nil, fmt.Errorf("knowledge embedding dimension differs from schema; explicit rebuild migration required")
+	}
+	embedding := embedder.New(embedder.Config{BaseURL: strings.TrimRight(base, "/"), APIKey: key, Model: model, Dim: dim})
+	// The worker needs the service and the repository needs the River client,
+	// so the client is captured by the enqueue closure after construction.
+	var rc *river.Client[pgx.Tx]
+	r := repo.NewKnowledgeRepository(pool, func(ctx context.Context, tx pgx.Tx, id string) error {
+		_, e := rc.InsertTx(ctx, tx, knowledge.Job{VersionID: id}, nil)
+		return e
+	})
+	s := knowledge.New(r, storage, embedding, min)
+	s.Optimizer = optimizer
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &knowledge.Worker{Service: s})
-	rc, e := river.NewClient(riverpgxv5.New(pool), &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"knowledge": {MaxWorkers: 4}}})
+	rc, e := river.NewClient(riverpgxv5.New(pool), &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{knowledge.Queue: {MaxWorkers: 4}}})
 	if e != nil {
 		return nil, nil, e
-	}
-	r.Enqueue = func(ctx context.Context, tx pgx.Tx, id string) error {
-		_, e := rc.InsertTx(ctx, tx, knowledge.Job{VersionID: id}, &river.InsertOpts{Queue: "knowledge", MaxAttempts: 3})
-		return e
 	}
 	return httpx.NewKnowledgeHandler(s), rc, nil
 }

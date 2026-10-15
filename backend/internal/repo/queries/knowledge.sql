@@ -4,6 +4,16 @@ SELECT * FROM knowledge_bases WHERE deleted_at IS NULL ORDER BY created_at DESC;
 -- name: KnowledgeGetBase :one
 SELECT * FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL;
 
+-- name: KnowledgeLockBase :one
+SELECT * FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR UPDATE;
+
+-- name: KnowledgeShareLockBase :one
+SELECT * FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR SHARE;
+
+-- name: KnowledgeBaseReadiness :one
+SELECT EXISTS(SELECT 1 FROM documents d WHERE d.kb_id=$1 AND d.deleted_at IS NULL)::boolean AS has_documents,
+EXISTS(SELECT 1 FROM documents a WHERE a.kb_id=$1 AND a.deleted_at IS NULL AND a.active_version_id IS NOT NULL)::boolean AS has_active;
+
 -- name: KnowledgeSaveBase :one
 INSERT INTO knowledge_bases(id,name,description,owner_user_id,embed_model,embed_dim,visibility,department,members,application_shared)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
@@ -44,6 +54,10 @@ AND (d.checksum=$3 OR EXISTS(SELECT 1 FROM knowledge_versions v WHERE v.id=d.pen
 -- name: KnowledgeStageVersion :exec
 UPDATE documents SET pending_version_id=$2,status='pending',error_message=NULL,updated_at=now() WHERE id=$1;
 
+-- name: KnowledgeRetryDocument :execrows
+UPDATE documents SET status='pending',error_message=NULL,updated_at=now()
+WHERE id=$1 AND pending_version_id=$2 AND status='failed' AND deleted_at IS NULL;
+
 -- name: KnowledgeVersion :one
 SELECT v.*,d.kb_id FROM knowledge_versions v JOIN documents d ON d.id=v.document_id
 JOIN knowledge_bases k ON k.id=d.kb_id
@@ -70,6 +84,9 @@ UPDATE documents SET status='failed',error_message=$2,updated_at=now() WHERE pen
 
 -- name: KnowledgeDeleteDocument :exec
 UPDATE documents SET deleted_at=now(),pending_version_id=NULL WHERE id=$1;
+
+-- name: KnowledgeLockApplication :one
+SELECT id FROM knowledge_applications WHERE id=$1 FOR UPDATE;
 
 -- name: KnowledgeApplications :many
 SELECT * FROM knowledge_applications ORDER BY created_at DESC;
