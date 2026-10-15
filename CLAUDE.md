@@ -45,5 +45,4 @@
 | 知识服务 API 与配置 | [knowledge-api.md](docs/knowledge-api.md) |
 | Skill 创建 / 市场 | [Skill 创建计划](docs/superpowers/plans/2026-09-06-skill-builder-plan.md)、[市场计划](docs/superpowers/plans/2026-09-19-skill-market-plan.md) |
 | 飞书认证与排错、K2 同步参考 | [飞书部署排错](docs/deploy-debug-feishu.md)、[飞书设计](docs/superpowers/specs/2026-08-08-feishu-auth-and-source-ingestion-design.md)、[同步恢复设计](docs/superpowers/specs/2026-08-09-feishu-sync-liveness-design.md) |
-| 遗留摄入 / RAG 参考 | [阶段 1 决策](docs/superpowers/specs/2026-05-20-phase-1-decisions.md)、[RAG 设计](docs/superpowers/specs/2026-06-02-phase-2-deterministic-rag-design.md) |
 | 验证记录与截图 | `docs/verification/` |

@@ -19,7 +19,7 @@
    - 关键词召回结果不经过 `minScore`，可能造成无答案误召回。
    - 前端：应用授权了已取消共享的库后无法保存；文档列表无条件 3 秒轮询；市场详情发布者显示 open_id；可见范围切换后仍提交旧成员 / 部门。
 2. **简化**：检索每次请求多轮重复权限复核（每库 4 次查询）、不可能为 nil 的判空、跨层重复校验、游乐场上游错误码分类与多层超时、`knowledge-pages.tsx` 拆分并改用 `useMutation`、删除锁定实现细节的测试。
-3. **删除旧 it-wiki 代码**：`internal/agent`、`service`、`worker`、`eval`、`cmd/evalretrieval`、`docs/eval/` 及 http 下 chat/kb/document/chunk 处理器；先确认 K2 要复用的飞书导入部分。
+3. ~~**删除旧 it-wiki 代码**~~（已完成，分支 `cleanup-backend`）：已删 `internal/agent`、`worker`、`eval`、`cmd/evalretrieval`、`docs/eval/`、`service` 中除飞书登录外的部分、http 下 chat/kb/document/chunk/feishu 导入处理器、legacy 路由、llm/parser/splitter/tokenizer/vectorstore、飞书 sheet/bitable loader 及只被它们使用的 SQL；表与迁移保留。`infra/feishu` 的 OAuth、client、docx/wiki loader、URL 解析保留供 K2。旧飞书导入/同步实现见 git 提交 `c18e34e`。
 4. **真实验收**：在根 `.env` 配置平台 `EMBEDDING_BASE_URL/API_KEY/MODEL`（不借用个人游乐场密钥），用 `go run ./cmd/evalknowledge` 跑 baseline 集，再加 `KNOWLEDGE_EVAL_SUITE=optimization KNOWLEDGE_EVAL_REQUIRE_OPTIMIZER=1` 跑优化集；补浏览器文件选择上传与真实账号检查。
 5. 业务库迁移到 16/17、提交、推送、部署都需要用户单独授权。
 

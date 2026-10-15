@@ -69,6 +69,6 @@ standalone 构建在 Linux/WSL 验证；Windows 可能在最终 symlink-copy 阶
 
 ## 结构
 
-- `backend/`：Go/chi、pgx/sqlc、goose、River、PostgreSQL + pgvector、MinIO；`internal/knowledge` 为知识服务。遗留 KB/RAG 代码暂留，未接入生产路由。
+- `backend/`：Go/chi、pgx/sqlc、goose、River、PostgreSQL + pgvector、MinIO；`internal/knowledge` 为知识服务。遗留 KB/RAG/聊天代码已删除（历史表保留），需参考时见 git 提交 `c18e34e`。
 - `frontend/`：Next.js 15、React 19、Tailwind v4、Base UI/shadcn。
 - `docs/`：产品设计、实施计划、验证记录与发布说明（`docs/releases/`）。

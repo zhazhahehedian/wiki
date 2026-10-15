@@ -111,7 +111,7 @@ func TestAuthMiddlewareEnforcesOriginAndSessionBoundCSRFForUnsafeMethods(t *test
 
 func TestRouterKeepsHealthAndOAuthPublicButProtectsBusinessRoutes(t *testing.T) {
 	h := newTestAuthHandler(t, &fakeAuthFlow{state: "state"}, &fakeSessionStore{}, fakeUserResolver{})
-	router := NewRouter(Handlers{Auth: h})
+	router := NewCapabilityHubRouter(Handlers{Auth: h})
 
 	for _, path := range []string{"/healthz", "/api/healthz", "/api/v1/auth/feishu/start"} {
 		rec := httptest.NewRecorder()
@@ -121,7 +121,7 @@ func TestRouterKeepsHealthAndOAuthPublicButProtectsBusinessRoutes(t *testing.T) 
 		}
 	}
 
-	for _, path := range []string{"/api/v1/auth/me", "/api/v1/kbs", "/api/v1/docs/id", "/api/v1/conversations/id/messages"} {
+	for _, path := range []string{"/api/v1/auth/me"} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusUnauthorized {
@@ -130,20 +130,20 @@ func TestRouterKeepsHealthAndOAuthPublicButProtectsBusinessRoutes(t *testing.T) 
 	}
 }
 
-func TestNewRouterRequiresAuthHandler(t *testing.T) {
+func TestNewCapabilityHubRouterRequiresAuthHandler(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Fatal("NewRouter() did not panic without an auth handler")
+			t.Fatal("NewCapabilityHubRouter() did not panic without an auth handler")
 		}
 	}()
 
-	_ = NewRouter(Handlers{})
+	_ = NewCapabilityHubRouter(Handlers{})
 }
 
 func TestRouterDerivesCORSOriginFromAuthHandler(t *testing.T) {
 	t.Setenv("FRONTEND_ORIGIN", "")
 	h := newTestAuthHandler(t, &fakeAuthFlow{state: "state"}, &fakeSessionStore{}, fakeUserResolver{})
-	router := NewRouter(Handlers{Auth: h})
+	router := NewCapabilityHubRouter(Handlers{Auth: h})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/start", nil)
 	req.Header.Set("Origin", "https://app.example.test")
 	rec := httptest.NewRecorder()
@@ -165,7 +165,7 @@ func TestRouterLogsSanitizedOAuthCallbackAccess(t *testing.T) {
 	defer log.SetOutput(previousWriter)
 
 	h := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{}, fakeUserResolver{})
-	router := NewRouter(Handlers{Auth: h})
+	router := NewCapabilityHubRouter(Handlers{Auth: h})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=secret-state&code=secret-code", nil)
 	req.AddCookie(&http.Cookie{Name: OAuthStateCookieName, Value: "secret-state"})
 	router.ServeHTTP(httptest.NewRecorder(), req)
