@@ -1,12 +1,11 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Save } from "lucide-react";
+import { Select } from "@/components/ui/select";
 import {
   getCapability,
   saveCapability,

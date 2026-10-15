@@ -1,7 +1,5 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -13,6 +11,7 @@ import {
   ArrowUpRight,
   Search,
 } from "lucide-react";
+import { Select } from "@/components/ui/select";
 import {
   listCapabilities,
   listCatalog,
@@ -181,7 +180,7 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
               aria-label="筛选状态"
               value={filter.status ?? ""}
               onValueChange={(value) => change({ status: value })}
-              className="w-auto rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+              className="w-auto"
               options={[
                 { value: "", label: "全部状态" },
                 { value: "draft", label: "草稿" },

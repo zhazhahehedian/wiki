@@ -1,7 +1,5 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
@@ -12,6 +10,7 @@ import {
   Lightbulb,
   Trash2,
 } from "lucide-react";
+import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownContent } from "@/components/chat/markdown-content";
@@ -371,7 +370,7 @@ export function PlaygroundPage() {
                   value={activeModel}
                   disabled={!connection || generating || loading}
                   onValueChange={(value) => setModel(value)}
-                  className="w-44 min-w-0 rounded-full border-zinc-200/70 bg-white px-4 text-sm font-medium disabled:text-zinc-400 sm:w-56"
+                  className="w-44 rounded-full border-zinc-200/70 px-4 font-medium sm:w-56"
                   placeholder="请先配置模型接口"
                   options={(connection?.models ?? []).map((value) => ({
                     value,

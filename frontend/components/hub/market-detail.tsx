@@ -243,7 +243,9 @@ export function MarketDetailPage({ slug }: { slug: string }) {
               </div>
               <div>
                 <dt className="text-xs text-zinc-400">发布者</dt>
-                <dd className="mt-1 break-all">{item.owner_open_id}</dd>
+                <dd className="mt-1 break-all">
+                  {item.publisher_name || item.owner_open_id}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-zinc-400">当前版本</dt>

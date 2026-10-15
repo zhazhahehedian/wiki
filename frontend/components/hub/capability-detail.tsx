@@ -1,11 +1,10 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Pencil, Download } from "lucide-react";
+import { Select } from "@/components/ui/select";
 import { GovernanceControls } from "./governance-controls";
 import { SkillFiles } from "./skill-files";
 import { getCapability, skillBundleURL } from "@/lib/api/registry";
@@ -79,7 +78,7 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
                 aria-label="查看版本"
                 value={version?.id ?? ""}
                 onValueChange={(value) => setSelected(value)}
-                className="w-auto max-w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                className="w-auto max-w-full"
                 options={item.versions.map((v) => ({
                   value: v.id,
                   label: `${v.version}${v.id === item.current_version_id ? " · 上线版本" : v.id === item.draft_version_id ? (item.status === "in_review" ? " · 待审版本" : " · 当前草稿") : " · 历史版本"}`,
