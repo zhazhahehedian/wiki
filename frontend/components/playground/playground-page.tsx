@@ -1,8 +1,11 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUp,
+  ArrowDown,
   MessageSquarePlus,
   Code2,
   FileText,
@@ -62,12 +65,43 @@ export function PlaygroundPage() {
   const [draft, setDraft] = useState("");
   const [parameters, setParameters] = useState<ChatParameters>({});
   const [systemPrompt, setSystemPrompt] = useState("");
+  const transcript = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const [composerHeight, setComposerHeight] = useState(220);
+  const [showLatest, setShowLatest] = useState(false);
+
+  function scrollToLatest() {
+    followLatest.current = true;
+    setShowLatest(false);
+    if (transcript.current)
+      transcript.current.scrollTop = transcript.current.scrollHeight;
+  }
+
+  useEffect(() => {
+    const element = composer.current;
+    if (!element) return;
+    // Keep the final reply above the floating input, including wrapped mobile controls.
+    const observer = new ResizeObserver(() => {
+      setComposerHeight(element.getBoundingClientRect().height);
+      if (followLatest.current) scrollToLatest();
+    });
+    observer.observe(element);
+    if (transcript.current) observer.observe(transcript.current);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (followLatest.current) scrollToLatest();
+  }, [messages, composerHeight]);
+
   useEffect(() => {
     request.current?.abort();
     setMessages([]);
     lastHistory.current = [];
     setStreamError("");
     setModel(connection?.defaultModel ?? "");
+    scrollToLatest();
   }, [connection]);
   const activeModel = connection?.models.includes(model)
     ? model
@@ -83,6 +117,7 @@ export function PlaygroundPage() {
     )
       return;
     const controller = new AbortController();
+    scrollToLatest();
     request.current = controller;
     lastHistory.current = history;
     setGenerating(true);
@@ -153,36 +188,41 @@ export function PlaygroundPage() {
     setDraft("");
   }
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">游乐场</h1>
-          <p className="mt-2 text-sm text-zinc-500">
-            选择模型，发送消息，按需调整参数。
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <ConnectionSettings compact />
-        </div>
+    <section
+      aria-label="模型对话"
+      className="relative isolate h-full min-h-0 min-w-0 overflow-hidden rounded-2xl border border-zinc-200 bg-white"
+    >
+      <div className="absolute right-3 top-3 z-20 max-w-[calc(100%-1.5rem)] sm:right-5 sm:top-5">
+        <ConnectionSettings compact />
       </div>
-      <div className="flex flex-col gap-5 xl:flex-row">
-        <section
-          aria-label="模型对话"
-          className="flex min-h-[min(680px,calc(100dvh-190px))] min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white"
+      <div
+        ref={transcript}
+        aria-label="对话消息"
+        tabIndex={0}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          const atBottom =
+            element.scrollHeight - element.scrollTop - element.clientHeight <
+            48;
+          followLatest.current = atBottom;
+          setShowLatest(!atBottom);
+        }}
+        className="absolute inset-0 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable_both-edges]"
+      >
+        <div
+          className="mx-auto flex min-h-full w-full max-w-4xl flex-col px-4 pt-20 sm:px-6"
+          style={{ paddingBottom: composerHeight + 32 }}
         >
           {messages.length > 0 ? (
-            <div
-              aria-label="对话消息"
-              className="flex-1 space-y-6 overflow-x-hidden px-5 py-6 sm:px-8"
-            >
+            <div className="space-y-8">
               {messages.map((message, index) => (
                 <article
                   key={index}
                   aria-label={message.role === "user" ? "我的消息" : "模型回复"}
                   className={
                     message.role === "user"
-                      ? "ml-auto max-w-3xl rounded-xl bg-zinc-50 p-4"
-                      : "max-w-3xl rounded-xl border border-zinc-100 p-4"
+                      ? "ml-auto w-fit max-w-[90%] break-words rounded-3xl rounded-br-lg bg-zinc-100/80 px-5 py-4"
+                      : "min-w-0 break-words px-1 py-2"
                   }
                 >
                   <p className="mb-3 text-xs font-medium text-zinc-400">
@@ -204,13 +244,13 @@ export function PlaygroundPage() {
               ))}
             </div>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 py-12 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center py-8 text-center">
               <span className="flex size-11 items-center justify-center rounded-xl border border-zinc-100 bg-zinc-50 text-zinc-500">
                 <MessageSquarePlus className="size-5" strokeWidth={1.5} />
               </span>
-              <h2 className="mt-5 text-xl font-semibold tracking-tight">
+              <h1 className="mt-5 text-xl font-semibold tracking-tight">
                 开始一场对话
-              </h2>
+              </h1>
               <p className="mt-3 max-w-md text-sm leading-7 text-zinc-500">
                 选择下方示例，或直接输入你的问题。
               </p>
@@ -229,125 +269,154 @@ export function PlaygroundPage() {
               </div>
             </div>
           )}
-          <div className="px-4 pb-4 sm:px-6 sm:pb-6">
-            {streamError && (
-              <p role="alert" className="mb-4 text-sm text-red-600">
-                {streamError}
-              </p>
-            )}
-            {messages.length > 0 && (
-              <div className="mb-3 flex justify-end gap-2">
+        </div>
+      </div>
+      <div
+        ref={composer}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3 before:absolute before:inset-x-0 before:bottom-0 before:h-12 before:bg-white sm:px-6 sm:pb-4"
+      >
+        <div className="pointer-events-auto relative mx-auto w-full max-w-4xl">
+          {showLatest && (
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="回到最新消息"
+              className="absolute -top-12 left-1/2 -translate-x-1/2 rounded-full bg-white shadow-sm"
+              onClick={scrollToLatest}
+            >
+              <ArrowDown className="size-4" />
+            </Button>
+          )}
+          {streamError && (
+            <p
+              role="alert"
+              className="mb-3 rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600"
+            >
+              {streamError}
+            </p>
+          )}
+          {messages.length > 0 && (
+            <div className="mb-3 flex justify-end gap-2">
+              <Button
+                variant="outline"
+                className="rounded-full bg-white"
+                disabled={generating}
+                onClick={() => {
+                  setMessages([]);
+                  setStreamError("");
+                  lastHistory.current = [];
+                  scrollToLatest();
+                }}
+              >
+                新对话
+              </Button>
+              <Button
+                variant="outline"
+                className="rounded-full bg-white"
+                disabled={generating}
+                onClick={() => void generate(lastHistory.current)}
+              >
+                重新生成
+              </Button>
+            </div>
+          )}
+          <div
+            aria-label="消息输入区"
+            className="overflow-hidden rounded-[28px] border border-zinc-200/80 bg-zinc-50/95 shadow-[0_12px_40px_-10px_rgba(0,0,0,0.16),0_2px_8px_rgba(0,0,0,0.03)] backdrop-blur-xl transition-[border-color,box-shadow] focus-within:border-zinc-300 focus-within:shadow-[0_12px_40px_-10px_rgba(0,0,0,0.20)]"
+          >
+            <Textarea
+              aria-label="消息"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  if (connection && !loading && !configurationError) send();
+                }
+              }}
+              placeholder="随便问…"
+              className="min-h-24 max-h-[min(15rem,30dvh)] resize-none rounded-none border-0 bg-transparent px-5 py-4 shadow-none focus-visible:ring-0 sm:px-6"
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-zinc-100/40 p-3">
+              <div className="flex items-center gap-1 rounded-full border border-zinc-100 bg-white p-1 shadow-sm">
+                <ChatParameterSettings
+                  parameters={parameters}
+                  onChange={setParameters}
+                  systemPrompt={systemPrompt}
+                  onSystemPromptChange={setSystemPrompt}
+                  protocol={connection?.protocol ?? "openai"}
+                  disabled={generating || loading}
+                />
                 <Button
                   variant="ghost"
-                  disabled={generating}
-                  onClick={() => {
-                    setMessages([]);
-                    setStreamError("");
-                    lastHistory.current = [];
-                  }}
+                  size="icon"
+                  className="rounded-full"
+                  aria-label="清空输入"
+                  disabled={!draft}
+                  onClick={() => setDraft("")}
                 >
-                  新对话
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={generating}
-                  onClick={() => void generate(lastHistory.current)}
-                >
-                  重新生成
+                  <Trash2 className="size-4" />
                 </Button>
               </div>
-            )}
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 focus-within:border-zinc-300">
-              <Textarea
-                aria-label="消息"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (
-                    event.key === "Enter" &&
-                    !event.shiftKey &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    event.preventDefault();
-                    if (connection && !loading && !configurationError) send();
+              <div className="ml-auto flex min-w-0 max-w-full items-center gap-2">
+                <label htmlFor="chat-model" className="sr-only">
+                  对话模型
+                </label>
+                <Select
+                  id="chat-model"
+                  value={activeModel}
+                  disabled={!connection || generating || loading}
+                  onValueChange={(value) => setModel(value)}
+                  className="w-44 min-w-0 rounded-full border-zinc-200/70 bg-white px-4 text-sm font-medium disabled:text-zinc-400 sm:w-56"
+                  placeholder="请先配置模型接口"
+                  options={(connection?.models ?? []).map((value) => ({
+                    value,
+                    label: value,
+                  }))}
+                />
+                <Button
+                  size="icon-lg"
+                  className="rounded-full"
+                  aria-label={generating ? "停止生成" : "发送消息"}
+                  disabled={
+                    !generating &&
+                    (!connection ||
+                      !draft.trim() ||
+                      loading ||
+                      Boolean(configurationError))
                   }
-                }}
-                placeholder="输入你的问题…"
-                className="min-h-24 max-h-60 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-              />
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1">
-                  <ChatParameterSettings
-                    parameters={parameters}
-                    onChange={setParameters}
-                    systemPrompt={systemPrompt}
-                    onSystemPromptChange={setSystemPrompt}
-                    protocol={connection?.protocol ?? "openai"}
-                    disabled={generating || loading}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label="清空输入"
-                    disabled={!draft}
-                    onClick={() => setDraft("")}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-                <div className="ml-auto flex min-w-0 items-center gap-2">
-                  <label htmlFor="chat-model" className="sr-only">
-                    对话模型
-                  </label>
-                  <select
-                    id="chat-model"
-                    value={activeModel}
-                    disabled={!connection || generating || loading}
-                    onChange={(event) => setModel(event.target.value)}
-                    className="w-44 max-w-full truncate rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-medium disabled:text-zinc-400"
-                  >
-                    {!connection && <option value="">请先配置模型接口</option>}
-                    {connection?.models.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                  <Button
-                    size="icon"
-                    aria-label={generating ? "停止生成" : "发送消息"}
-                    disabled={
-                      !generating &&
-                      (!connection ||
-                        !draft.trim() ||
-                        loading ||
-                        Boolean(configurationError))
-                    }
-                    onClick={() =>
-                      generating ? request.current?.abort() : send()
-                    }
-                    aria-describedby="chat-availability"
-                  >
-                    {generating ? (
-                      <span className="size-3 rounded-sm bg-current" />
-                    ) : (
-                      <ArrowUp className="size-4" />
-                    )}
-                  </Button>
-                </div>
+                  onClick={() =>
+                    generating ? request.current?.abort() : send()
+                  }
+                  aria-describedby="chat-availability"
+                >
+                  {generating ? (
+                    <span className="size-3 rounded-sm bg-current" />
+                  ) : (
+                    <ArrowUp className="size-4" />
+                  )}
+                </Button>
               </div>
             </div>
-            <p
-              id="chat-availability"
-              className="mt-3 text-center text-xs leading-5 text-zinc-500"
-            >
-              {connection
-                ? "对话仅在当前页面保留；Enter 发送，Shift + Enter 换行。"
-                : "先在右上角配置 API 地址、API Key 和模型。"}
-            </p>
           </div>
-        </section>
+          <p
+            id="chat-availability"
+            className={
+              connection
+                ? "sr-only"
+                : "relative mt-2 text-center text-[11px] leading-4 text-zinc-400"
+            }
+          >
+            {connection
+              ? "对话仅在当前页面保留；Enter 发送，Shift + Enter 换行。"
+              : "先在右上角配置 API 地址、API Key 和模型。"}
+          </p>
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

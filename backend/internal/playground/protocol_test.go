@@ -30,7 +30,7 @@ func TestAnthropicModelsAndStream(t *testing.T) {
 				Messages  []Message `json:"messages"`
 				Stream    bool      `json:"stream"`
 			}
-			if json.NewDecoder(r.Body).Decode(&body) != nil || body.System != "system instructions" || body.MaxTokens != 4096 || len(body.Messages) != 1 || body.Messages[0].Role != "user" || !body.Stream {
+			if json.NewDecoder(r.Body).Decode(&body) != nil || body.System != "system instructions" || body.MaxTokens != DefaultOutputTokens || len(body.Messages) != 1 || body.Messages[0].Role != "user" || !body.Stream {
 				t.Error("incorrect Anthropic payload")
 			}
 			w.Header().Set("Content-Type", "text/event-stream")

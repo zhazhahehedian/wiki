@@ -1,0 +1,10 @@
+[
+ {"id":"expense-materials","query":"报销需要哪些材料？","title":"expense.md","evidence":["发票和审批单"],"line":1},
+ {"id":"cross-paragraph","query":"报销发票和审批单分别有哪些要求？","title":"expense.md","evidence":["公司全称","直属主管批准"],"line":1},
+ {"id":"expense-deadline","query":"报销应在多少天内提交？","title":"expense.md","evidence":["30 天"],"line":7},
+ {"id":"domestic-table","query":"境内普通员工住宿限额是多少？单位是什么？","title":"travel.md","evidence":["元/晚","普通员工 | 500","只适用于中国大陆"],"line":1,"first":true},
+ {"id":"similar-not-applicable","query":"境外住宿限额和审批要求是什么？","title":"travel.md","evidence":["150 美元","专项审批"],"line":10,"first":true},
+ {"id":"leave","query":"请假需要提前多久申请？","title":"leave.txt","evidence":["三个工作日"],"line":1},
+ {"id":"no-answer","query":"董事会成员名单是什么？","no_answer":true},
+ {"id":"no-answer-technical","query":"服务器数据库连接池如何配置？","no_answer":true}
+]

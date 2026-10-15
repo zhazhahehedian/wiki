@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/pgvector/pgvector-go"
 )
 
 type AuditLog struct {
@@ -103,19 +104,87 @@ type Document struct {
 	PendingTitle          *string            `json:"pending_title"`
 	PendingBytes          *int64             `json:"pending_bytes"`
 	PendingMetadata       []byte             `json:"pending_metadata"`
+	ActiveVersionID       pgtype.UUID        `json:"active_version_id"`
+	PendingVersionID      pgtype.UUID        `json:"pending_version_id"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type KnowledgeApplication struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type KnowledgeBase struct {
-	ID          uuid.UUID       `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	OwnerID     string          `json:"owner_id"`
-	EmbedModel  string          `json:"embed_model"`
-	EmbedDim    int32           `json:"embed_dim"`
-	Settings    json.RawMessage `json:"settings"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	OwnerUserID pgtype.UUID     `json:"owner_user_id"`
+	ID                uuid.UUID          `json:"id"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	OwnerID           string             `json:"owner_id"`
+	EmbedModel        string             `json:"embed_model"`
+	EmbedDim          int32              `json:"embed_dim"`
+	Settings          json.RawMessage    `json:"settings"`
+	CreatedAt         time.Time          `json:"created_at"`
+	UpdatedAt         time.Time          `json:"updated_at"`
+	OwnerUserID       pgtype.UUID        `json:"owner_user_id"`
+	Visibility        string             `json:"visibility"`
+	Department        string             `json:"department"`
+	Members           []string           `json:"members"`
+	ApplicationShared bool               `json:"application_shared"`
+	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type KnowledgeChunk struct {
+	ID        uuid.UUID        `json:"id"`
+	VersionID uuid.UUID        `json:"version_id"`
+	Seq       int32            `json:"seq"`
+	Content   string           `json:"content"`
+	Locator   json.RawMessage  `json:"locator"`
+	Embedding *pgvector.Vector `json:"embedding"`
+}
+
+type KnowledgeCredential struct {
+	ID            uuid.UUID          `json:"id"`
+	ApplicationID uuid.UUID          `json:"application_id"`
+	Digest        []byte             `json:"digest"`
+	Prefix        string             `json:"prefix"`
+	Scopes        []string           `json:"scopes"`
+	ExpiresAt     time.Time          `json:"expires_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	LastUsedAt    pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+}
+
+type KnowledgeGrant struct {
+	ApplicationID uuid.UUID `json:"application_id"`
+	KbID          uuid.UUID `json:"kb_id"`
+}
+
+type KnowledgeSearchAudit struct {
+	ID               int64       `json:"id"`
+	ApplicationID    pgtype.UUID `json:"application_id"`
+	UserID           pgtype.UUID `json:"user_id"`
+	RequestID        string      `json:"request_id"`
+	Status           string      `json:"status"`
+	ResultCount      int32       `json:"result_count"`
+	DurationMs       int64       `json:"duration_ms"`
+	KnowledgeBaseIds []uuid.UUID `json:"knowledge_base_ids"`
+	CreatedAt        time.Time   `json:"created_at"`
+}
+
+type KnowledgeVersion struct {
+	ID            uuid.UUID       `json:"id"`
+	DocumentID    uuid.UUID       `json:"document_id"`
+	Title         string          `json:"title"`
+	ObjectKey     string          `json:"object_key"`
+	Checksum      string          `json:"checksum"`
+	Status        string          `json:"status"`
+	ErrorCode     string          `json:"error_code"`
+	Preview       json.RawMessage `json:"preview"`
+	EmbedModel    string          `json:"embed_model"`
+	EmbedDim      int32           `json:"embed_dim"`
+	ParserVersion string          `json:"parser_version"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 type Message struct {

@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -161,17 +163,18 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
           {action === "visibility" && (
             <>
               <Field label="生效可见范围">
-                <select
+                <Select
                   className={fieldClass}
                   value={visibility}
-                  onChange={(e) =>
-                    setVisibility(e.target.value as typeof visibility)
+                  onValueChange={(value) =>
+                    setVisibility(value as typeof visibility)
                   }
-                >
-                  <option value="org">全公司</option>
-                  <option value="department">同部门</option>
-                  <option value="allowlist">指定名单</option>
-                </select>
+                  options={[
+                    { value: "org", label: "全公司" },
+                    { value: "department", label: "同部门" },
+                    { value: "allowlist", label: "指定名单" },
+                  ]}
+                />
               </Field>
               <Field label="生效部门">
                 <input

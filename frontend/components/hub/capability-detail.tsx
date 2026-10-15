@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -35,11 +37,11 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
   return (
     <div className="space-y-6">
       <Link
-        href="/hub/registry"
+        href="/hub/publications"
         className="inline-flex items-center gap-2 text-sm text-zinc-500"
       >
         <ArrowLeft className="size-4" />
-        注册中心
+        我的发布
       </Link>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -73,25 +75,16 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
           <section className="rounded-xl border border-zinc-200 bg-white p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-semibold">版本内容</h2>
-              <select
+              <Select
                 aria-label="查看版本"
                 value={version?.id ?? ""}
-                onChange={(e) => setSelected(e.target.value)}
-                className="max-w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-              >
-                {item.versions.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.version}
-                    {v.id === item.current_version_id
-                      ? " · 上线版本"
-                      : v.id === item.draft_version_id
-                        ? item.status === "in_review"
-                          ? " · 待审版本"
-                          : " · 当前草稿"
-                        : " · 历史版本"}
-                  </option>
-                ))}
-              </select>
+                onValueChange={(value) => setSelected(value)}
+                className="w-auto max-w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+                options={item.versions.map((v) => ({
+                  value: v.id,
+                  label: `${v.version}${v.id === item.current_version_id ? " · 上线版本" : v.id === item.draft_version_id ? (item.status === "in_review" ? " · 待审版本" : " · 当前草稿") : " · 历史版本"}`,
+                }))}
+              />
             </div>
             {version?.changelog && (
               <p className="mt-4 whitespace-pre-wrap text-sm text-zinc-500">

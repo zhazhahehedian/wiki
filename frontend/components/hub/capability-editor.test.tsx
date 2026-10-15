@@ -60,7 +60,8 @@ it("saves the loaded revision and clears hidden allowlist when visibility change
   const user = userEvent.setup();
   mount(detail);
   expect(screen.getByLabelText(/唯一标识/)).toBeDisabled();
-  await user.selectOptions(screen.getByLabelText("上线后可见范围"), "org");
+  await user.click(screen.getByRole("combobox", { name: "上线后可见范围" }));
+  await user.click(await screen.findByRole("option", { name: "全公司" }));
   await user.click(screen.getByRole("button", { name: "保存草稿" }));
   await waitFor(() =>
     expect(saveCapability).toHaveBeenCalledWith(

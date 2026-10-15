@@ -36,7 +36,7 @@ export default function Dashboard() {
             text: "浏览你有权访问的 MCP 服务和 Skill，查看版本与接入说明。",
             href: "/hub/registry",
             icon: Library,
-            action: "浏览注册中心",
+            action: "浏览能力市场",
           },
           {
             title: "我的发布",

@@ -35,7 +35,8 @@ import { cn } from "@/lib/utils";
 
 const navigation = [
   { href: "/hub", label: "仪表盘", icon: LayoutDashboard },
-  { href: "/hub/registry", label: "注册中心", icon: Library },
+  { href: "/hub/registry", label: "能力市场", icon: Library },
+  { href: "/hub/knowledge", label: "知识服务", icon: Library },
   { href: "/hub/playground", label: "游乐场", icon: FlaskConical },
   { href: "/hub/publications", label: "我的发布", icon: Send },
   { href: "/hub/settings", label: "设置", icon: Settings },
@@ -98,6 +99,7 @@ export function HubShell({ children }: { children: ReactNode }) {
       "/hub/profiles": "部门授权",
     }[pathname] ??
     "能力中心";
+  const isPlayground = pathname === "/hub/playground";
   const sidebar = (
     <div className="flex h-full flex-col border-r border-zinc-200 bg-white text-zinc-600">
       <Link
@@ -214,8 +216,13 @@ export function HubShell({ children }: { children: ReactNode }) {
           {sidebar}
         </SheetContent>
       </Sheet>
-      <div className="min-w-0 flex-1 lg:pl-[220px]">
-        <header className="flex h-16 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 sm:px-7">
+      <div
+        className={cn(
+          "min-w-0 flex-1 lg:pl-[220px]",
+          isPlayground && "flex h-dvh flex-col overflow-hidden",
+        )}
+      >
+        <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-zinc-200 bg-white px-5 sm:px-7">
           <div className="flex items-center gap-3">
             <Button
               variant="ghost"
@@ -236,7 +243,12 @@ export function HubShell({ children }: { children: ReactNode }) {
         </header>
         <main
           id="hub-content"
-          className="w-full px-5 py-6 sm:px-7 sm:py-7"
+          className={cn(
+            "w-full",
+            isPlayground
+              ? "min-h-0 flex-1 p-2 sm:p-3"
+              : "px-5 py-6 sm:px-7 sm:py-7",
+          )}
         >
           {children}
         </main>

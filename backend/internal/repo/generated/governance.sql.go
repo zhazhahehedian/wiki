@@ -122,16 +122,20 @@ func (q *Queries) IsPlatformAdmin(ctx context.Context, openID string) (bool, err
 }
 
 const listCatalogCapabilities = `-- name: ListCatalogCapabilities :many
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities c WHERE is_live
-AND ($1::boolean OR owner_open_id=$2
+SELECT c.id, c.slug, c.type, c.name, c.description, c.owner_open_id, c.department, c.status, c.visibility, c.current_version_id, c.draft_version_id, c.revision, c.created_at, c.updated_at, c.is_live, c.published_metadata, c.review_reason, v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name
+FROM capabilities c JOIN capability_versions v ON v.id=c.current_version_id
+LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=c.owner_open_id
+LEFT JOIN users u ON u.id=a.user_id
+WHERE c.is_live
+AND ($1::boolean OR c.owner_open_id=$2
     OR published_metadata->>'visibility'='org'
     OR (published_metadata->>'visibility'='department' AND $3::text<>'' AND published_metadata->>'department'=$3)
     OR (published_metadata->>'visibility'='allowlist' AND (published_metadata->'allowlist') @> to_jsonb(ARRAY[$2::text])))
-AND ($4::text='' OR type=$4)
+AND ($4::text='' OR c.type=$4)
 AND ($5::text='' OR $5='published')
 AND ($6::text='' OR published_metadata->>'department'=$6)
 AND ($7::text='' OR strpos(lower((published_metadata->>'name') || ' ' || (published_metadata->>'description') || ' ' || slug),lower($7))>0)
-ORDER BY updated_at DESC,id LIMIT $9 OFFSET $8
+ORDER BY c.updated_at DESC,c.id LIMIT $9 OFFSET $8
 `
 
 type ListCatalogCapabilitiesParams struct {
@@ -146,7 +150,13 @@ type ListCatalogCapabilitiesParams struct {
 	PageLimit        int32  `json:"page_limit"`
 }
 
-func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCapabilitiesParams) ([]Capability, error) {
+type ListCatalogCapabilitiesRow struct {
+	Capability       Capability `json:"capability"`
+	PublishedVersion string     `json:"published_version"`
+	PublisherName    string     `json:"publisher_name"`
+}
+
+func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCapabilitiesParams) ([]ListCatalogCapabilitiesRow, error) {
 	rows, err := q.db.Query(ctx, listCatalogCapabilities,
 		arg.IsAdmin,
 		arg.OpenID,
@@ -162,27 +172,29 @@ func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCa
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Capability{}
+	items := []ListCatalogCapabilitiesRow{}
 	for rows.Next() {
-		var i Capability
+		var i ListCatalogCapabilitiesRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.Slug,
-			&i.Type,
-			&i.Name,
-			&i.Description,
-			&i.OwnerOpenID,
-			&i.Department,
-			&i.Status,
-			&i.Visibility,
-			&i.CurrentVersionID,
-			&i.DraftVersionID,
-			&i.Revision,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.IsLive,
-			&i.PublishedMetadata,
-			&i.ReviewReason,
+			&i.Capability.ID,
+			&i.Capability.Slug,
+			&i.Capability.Type,
+			&i.Capability.Name,
+			&i.Capability.Description,
+			&i.Capability.OwnerOpenID,
+			&i.Capability.Department,
+			&i.Capability.Status,
+			&i.Capability.Visibility,
+			&i.Capability.CurrentVersionID,
+			&i.Capability.DraftVersionID,
+			&i.Capability.Revision,
+			&i.Capability.CreatedAt,
+			&i.Capability.UpdatedAt,
+			&i.Capability.IsLive,
+			&i.Capability.PublishedMetadata,
+			&i.Capability.ReviewReason,
+			&i.PublishedVersion,
+			&i.PublisherName,
 		); err != nil {
 			return nil, err
 		}

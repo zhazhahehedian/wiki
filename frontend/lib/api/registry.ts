@@ -13,6 +13,8 @@ export interface Capability {
   is_live?: boolean;
   review_reason?: string;
   current_version_id?: string;
+  published_version?: string;
+  publisher_name?: string;
   draft_version_id?: string;
   revision: number;
   created_at: string;
@@ -153,6 +155,12 @@ export function getGovernanceIdentity(signal?: AbortSignal) {
 }
 export function listCatalog(filter: RegistryFilter, signal?: AbortSignal) {
   return registryPage("/api/v1/catalog", filter, signal);
+}
+export function getCatalogCapability(slug: string, signal?: AbortSignal) {
+  return apiFetch<CapabilityDetail>(
+    `/api/v1/catalog/${encodeURIComponent(slug)}`,
+    { signal },
+  );
 }
 export function listReviews(filter: RegistryFilter, signal?: AbortSignal) {
   return registryPage("/api/v1/governance/reviews", filter, signal);

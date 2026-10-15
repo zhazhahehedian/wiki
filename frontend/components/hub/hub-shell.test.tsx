@@ -55,7 +55,7 @@ beforeEach(() => {
 });
 it("shows the new navigation with an active page and no legacy product links", () => {
   mount();
-  expect(screen.getByRole("link", { name: "注册中心" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "能力市场" })).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -167,7 +167,7 @@ it("opens mobile navigation and closes it on destination selection", async () =>
 it("keeps registry navigation selected on detail and edit routes", () => {
   mocks.pathname = "/hub/registry/search/edit";
   mount();
-  expect(screen.getByRole("link", { name: "注册中心" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "能力市场" })).toHaveAttribute(
     "aria-current",
     "page",
   );

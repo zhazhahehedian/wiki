@@ -1,0 +1,8 @@
+{
+  "fixture": "mock business APIs; real production frontend",
+  "checks": [
+    "desktop: filters, published detail, attachments, download, template edit/save without model, unsupported template, denied source, no overflow",
+    "mobile: filters, published detail, attachments, download, template edit/save without model, unsupported template, denied source, no overflow"
+  ],
+  "pageErrors": []
+}

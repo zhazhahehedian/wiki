@@ -27,6 +27,7 @@ var (
 const MaxArtifactBytes = 128 * 1024
 const MaxResponseBytes = 192 * 1024
 const MaxMaterialBytes = 48 * 1024
+const DefaultOutputTokens = playground.DefaultOutputTokens
 
 type InvalidError struct{ Message string }
 
@@ -46,11 +47,12 @@ type Draft struct {
 	Files        []File `json:"files"`
 }
 type Request struct {
-	Mode     string               `json:"mode"`
-	Model    string               `json:"model"`
-	Messages []playground.Message `json:"messages"`
-	Material string               `json:"material"`
-	Draft    *Draft               `json:"draft,omitempty"`
+	Mode      string               `json:"mode"`
+	Model     string               `json:"model"`
+	Messages  []playground.Message `json:"messages"`
+	Material  string               `json:"material"`
+	Draft     *Draft               `json:"draft,omitempty"`
+	MaxTokens *int                 `json:"max_tokens,omitempty"`
 }
 type Reply struct {
 	Message string `json:"message"`
@@ -92,6 +94,13 @@ func (s *Service) Turn(ctx context.Context, user string, r Request) (Reply, erro
 	if r.Model == "" || len(r.Model) > 200 || len(r.Messages) == 0 || len(r.Messages) > 24 || len(r.Material) > MaxMaterialBytes {
 		return Reply{}, ErrInvalid
 	}
+	tokens := DefaultOutputTokens
+	if r.MaxTokens != nil {
+		tokens = *r.MaxTokens
+	}
+	if tokens < 1 || tokens > playground.MaxOutputTokens {
+		return Reply{}, invalid(fmt.Sprintf("最大输出 Tokens 需为 1–%d 的整数，并且不超过所选模型支持的范围", playground.MaxOutputTokens))
+	}
 	messages := []playground.Message{{Role: "system", Content: prompt + contract}}
 	size := len(r.Material)
 	// A final user turn is required; clients cannot inject system roles. History
@@ -132,15 +141,13 @@ func (s *Service) Turn(ctx context.Context, user string, r Request) (Reply, erro
 	if messageBytes > 256*1024 {
 		return Reply{}, invalid("对话、素材与草案合计过大，请精简后重试")
 	}
-	tokens := 8192
-	temperature := 0.3
 	var output strings.Builder
-	e := s.model.Stream(ctx, user, playground.ChatRequest{Model: r.Model, Messages: messages, MaxTokens: &tokens, Temperature: &temperature}, func(delta string) error {
+	e := s.model.Stream(ctx, user, playground.ChatRequest{Model: r.Model, Messages: messages, MaxTokens: &tokens}, func(delta string) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if output.Len()+len(delta) > MaxResponseBytes {
-			return ErrOutput
+			return outputError("response_too_large", "模型返回内容超过平台大小上限（192 KiB），请减少正文或附件后重试", output.Len()+len(delta))
 		}
 		output.WriteString(delta)
 		return nil
@@ -148,19 +155,13 @@ func (s *Service) Turn(ctx context.Context, user string, r Request) (Reply, erro
 	if ctx.Err() != nil {
 		return Reply{}, ctx.Err()
 	}
+	if errors.Is(e, playground.ErrOutputLimit) {
+		return Reply{}, outputError("token_limit", fmt.Sprintf("模型达到本轮输出上限，内容被截断（本次请求 %d tokens）；可提高“最大输出 Tokens”，或减少正文与附件", tokens), output.Len())
+	}
 	if e != nil {
 		return Reply{}, e
 	}
-	var reply Reply
-	if e = decode([]byte(output.String()), &reply); e != nil || strings.TrimSpace(reply.Message) == "" || len(reply.Message) > 12000 {
-		return Reply{}, ErrOutput
-	}
-	if reply.Draft != nil {
-		if _, e = Files(*reply.Draft); e != nil {
-			return Reply{}, ErrOutput
-		}
-	}
-	return reply, nil
+	return parseReply(output.String())
 }
 func (s *Service) Save(ctx context.Context, user string, r SaveRequest) (registry.Detail, error) {
 	files, e := Files(r.Draft)

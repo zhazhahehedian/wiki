@@ -1,0 +1,77 @@
+{
+  "mode": "fixture-only",
+  "model": "deterministic-business-terms-v1",
+  "top_k": 5,
+  "min_score": 0.25,
+  "recall_at_5": 1,
+  "citation_accuracy": 1,
+  "no_answer_false_positive_rate": 0,
+  "passed": true,
+  "cases": [
+    {
+      "id": "expense-materials",
+      "passed": true,
+      "matches": 2,
+      "versions": [
+        "fixture-k1-1-expense.md",
+        "fixture-k1-1-expense.md"
+      ]
+    },
+    {
+      "id": "cross-paragraph",
+      "passed": true,
+      "matches": 2,
+      "versions": [
+        "fixture-k1-1-expense.md",
+        "fixture-k1-1-expense.md"
+      ]
+    },
+    {
+      "id": "expense-deadline",
+      "passed": true,
+      "matches": 2,
+      "versions": [
+        "fixture-k1-1-expense.md",
+        "fixture-k1-1-expense.md"
+      ]
+    },
+    {
+      "id": "domestic-table",
+      "passed": true,
+      "matches": 2,
+      "versions": [
+        "fixture-k1-1-travel.md",
+        "fixture-k1-1-travel.md"
+      ]
+    },
+    {
+      "id": "similar-not-applicable",
+      "passed": true,
+      "matches": 2,
+      "versions": [
+        "fixture-k1-1-travel.md",
+        "fixture-k1-1-travel.md"
+      ]
+    },
+    {
+      "id": "leave",
+      "passed": true,
+      "matches": 1,
+      "versions": [
+        "fixture-k1-1-leave.txt"
+      ]
+    },
+    {
+      "id": "no-answer",
+      "passed": true,
+      "matches": 0,
+      "versions": []
+    },
+    {
+      "id": "no-answer-technical",
+      "passed": true,
+      "matches": 0,
+      "versions": []
+    }
+  ]
+}

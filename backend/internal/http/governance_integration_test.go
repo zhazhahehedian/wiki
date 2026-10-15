@@ -16,6 +16,7 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	"github.com/zenith-wang/it-wiki/backend/internal/registry"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo"
+	"github.com/zenith-wang/it-wiki/backend/internal/skillbuilder"
 )
 
 // Runs only in the UUID disposable database owned by TestRegistryCloudIntegration.
@@ -350,6 +351,26 @@ func verifyGovernanceIntegration(t *testing.T, pool *pgxpool.Pool, s *registry.S
 	status(action(admin, sd.Slug, "approve", sd, ""), 200)
 	sd = get(alice, sd.Slug)
 	oldSkill := sd.CurrentVersionID
+	templatePath := "/api/v1/catalog/" + sd.Slug + "/template?version_id=" + oldSkill
+	templateResponse := call(bob, "GET", templatePath, nil, "")
+	status(templateResponse, 200)
+	var template struct {
+		Draft skillbuilder.Draft `json:"draft"`
+	}
+	if e := json.Unmarshal(templateResponse.Body.Bytes(), &template); e != nil {
+		t.Fatal(e)
+	}
+	copy, e := skillbuilder.New(nil, s).Save(ctx, bob, skillbuilder.SaveRequest{Draft: template.Draft})
+	if e != nil || copy.OwnerOpenID != "ou_"+bob || copy.Status != "draft" || copy.Slug == sd.Slug || copy.IsLive {
+		t.Fatal("template did not create a separate Owner draft", e)
+	}
+	status(call(alice, "GET", "/api/v1/catalog/"+copy.Slug, nil, ""), 404)
+	market := call(bob, "GET", "/api/v1/catalog?type=skill&q=governed-skill", nil, "")
+	status(market, 200)
+	var marketPage registry.Page
+	if json.Unmarshal(market.Body.Bytes(), &marketPage) != nil || len(marketPage.Items) != 1 || marketPage.Items[0].PublishedVersion != "1" || marketPage.Items[0].PublisherName == "" {
+		t.Fatal("market lost release or publisher metadata", market.Body.String())
+	}
 	bundlePath := "/api/v1/capabilities/" + sd.Slug + "/versions/" + oldSkill + "/bundle"
 	status(call(bob, "GET", bundlePath, nil, ""), 200)
 	status(action(alice, sd.Slug, "new-draft", sd, ""), 200)
@@ -361,13 +382,17 @@ func verifyGovernanceIntegration(t *testing.T, pool *pgxpool.Pool, s *registry.S
 		t.Fatal(e)
 	}
 	status(call(bob, "GET", "/api/v1/capabilities/"+sd.Slug+"/versions/"+sd.DraftVersionID+"/bundle", nil, ""), 404)
+	status(call(alice, "GET", templatePath, nil, ""), 200)
+	status(call(admin, "GET", "/api/v1/catalog/"+sd.Slug+"/template?version_id="+sd.DraftVersionID, nil, ""), 409)
 	status(action(alice, sd.Slug, "submit", sd, ""), 200)
 	sd = get(admin, sd.Slug)
 	status(action(admin, sd.Slug, "approve", sd, ""), 200)
 	status(call(bob, "GET", bundlePath, nil, ""), 404)
 	status(call(alice, "GET", bundlePath, nil, ""), 200)
+	status(call(alice, "GET", templatePath, nil, ""), 409)
 	sd = get(alice, sd.Slug)
 	status(action(admin, sd.Slug, "offline", sd, "管理员下线"), 200)
+	status(call(admin, "GET", "/api/v1/catalog/"+sd.Slug+"/template?version_id="+sd.CurrentVersionID, nil, ""), 404)
 	sd = get(admin, sd.Slug)
 	status(action(admin, sd.Slug, "force-publish", sd, "恢复已校验版本"), 200)
 	// An administrator's own publication uses the same state machine.

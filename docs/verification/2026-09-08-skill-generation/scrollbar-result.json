@@ -1,0 +1,71 @@
+{
+  "fixture": "mock generation; sample 120 animation frames per case",
+  "checks": [
+    {
+      "name": "desktop-short",
+      "samples": [
+        {
+          "clientHeight": 116,
+          "scrollHeight": 116,
+          "clientWidth": 463,
+          "scrollTop": 0,
+          "overflow": false
+        }
+      ],
+      "animation": "spin"
+    },
+    {
+      "name": "wide-short",
+      "samples": [
+        {
+          "clientHeight": 116,
+          "scrollHeight": 116,
+          "clientWidth": 1543,
+          "scrollTop": 0,
+          "overflow": false
+        }
+      ],
+      "animation": "spin"
+    },
+    {
+      "name": "mobile-short",
+      "samples": [
+        {
+          "clientHeight": 116,
+          "scrollHeight": 116,
+          "clientWidth": 308,
+          "scrollTop": 0,
+          "overflow": false
+        }
+      ],
+      "animation": "spin"
+    },
+    {
+      "name": "desktop-125-percent",
+      "samples": [
+        {
+          "clientHeight": 116,
+          "scrollHeight": 116,
+          "clientWidth": 334,
+          "scrollTop": 0,
+          "overflow": false
+        }
+      ],
+      "animation": "spin"
+    },
+    {
+      "name": "desktop-long",
+      "samples": [
+        {
+          "clientHeight": 440,
+          "scrollHeight": 2012,
+          "clientWidth": 463,
+          "scrollTop": 150,
+          "overflow": true
+        }
+      ],
+      "animation": "spin"
+    }
+  ],
+  "pageErrors": []
+}

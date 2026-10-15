@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -36,13 +38,13 @@ export function AdminGate({ children }: { children: ReactNode }) {
       <div className="rounded-xl border border-zinc-200 bg-white p-8">
         <h1 className="font-semibold">需要管理员权限</h1>
         <p className="mt-3 text-sm text-zinc-500">
-          当前账号可浏览注册中心并管理自己的发布。
+          当前账号可浏览能力市场并管理自己的发布。
         </p>
         <Link
           href="/hub/registry"
           className="mt-4 inline-block text-sm text-zinc-600"
         >
-          返回注册中心
+          返回能力市场
         </Link>
       </div>
     );
@@ -207,19 +209,19 @@ function AuditLog() {
           setFilter({ ...form, offset: 0 });
         }}
       >
-        <select
+        <Select
           aria-label="审计动作"
           className={fieldClass}
           value={form.action}
-          onChange={(e) => setForm({ ...form, action: e.target.value })}
-        >
-          <option value="">全部动作</option>
-          {Object.entries(labels).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+          onValueChange={(value) => setForm({ ...form, action: value })}
+          options={[
+            { value: "", label: "全部动作" },
+            ...Object.entries(labels).map(([value, label]) => ({
+              value,
+              label,
+            })),
+          ]}
+        />
         <input
           aria-label="操作者 Open ID"
           className={fieldClass}

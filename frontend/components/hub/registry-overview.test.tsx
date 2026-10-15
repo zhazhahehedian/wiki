@@ -46,7 +46,7 @@ it("shows saved capabilities in cards and table with navigation", async () => {
   mount();
   expect(await screen.findByRole("link", { name: /团队搜索/ })).toHaveAttribute(
     "href",
-    "/hub/registry/search",
+    "/hub/registry/search/market",
   );
   expect(screen.getByRole("link", { name: "发布能力" })).toHaveAttribute(
     "href",
@@ -89,6 +89,40 @@ it("sends filters and resets pagination", async () => {
     ),
   );
 });
+it("shows published metadata and applies scene search across all pages", async () => {
+  vi.mocked(listCatalog).mockResolvedValue({
+    items: [
+      {
+        ...item,
+        type: "skill",
+        published_version: "2.1.0",
+        publisher_name: "张同学",
+      },
+    ],
+    has_more: true,
+  });
+  mount();
+  expect(await screen.findByText("v2.1.0")).toBeInTheDocument();
+  expect(screen.getByText(/发布者 · 张同学/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("combobox", { name: "筛选状态" }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "下一页" }));
+  await userEvent.click(screen.getByRole("button", { name: "周报" }));
+  await waitFor(() =>
+    expect(listCatalog).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: "skill", q: "周报", offset: 0 }),
+      expect.any(AbortSignal),
+    ),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+  await waitFor(() =>
+    expect(listCatalog).toHaveBeenLastCalledWith(
+      { offset: 0 },
+      expect.any(AbortSignal),
+    ),
+  );
+});
 it("distinguishes errors from an empty directory and supports retry", async () => {
   vi.mocked(listCatalog).mockRejectedValueOnce(
     new APIError(503, "unavailable", "目录暂时不可用"),
@@ -96,10 +130,10 @@ it("distinguishes errors from an empty directory and supports retry", async () =
   const user = userEvent.setup();
   mount();
   expect(await screen.findByRole("alert")).toHaveTextContent("目录暂时不可用");
-  expect(screen.queryByText("从第一个能力开始")).not.toBeInTheDocument();
+  expect(screen.queryByText("暂无可用能力")).not.toBeInTheDocument();
   vi.mocked(listCatalog).mockResolvedValue({ items: [], has_more: false });
   await user.click(screen.getByRole("button", { name: "重新加载" }));
-  expect(await screen.findByText("从第一个能力开始")).toBeInTheDocument();
+  expect(await screen.findByText("暂无可用能力")).toBeInTheDocument();
 });
 
 it("uses separate queries for the published catalog and Owner drafts", async () => {

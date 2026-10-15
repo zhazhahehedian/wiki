@@ -261,6 +261,7 @@ func (r *importFakeRow) Scan(dest ...any) error {
 		r.doc.UpdatedAt, r.doc.ContentRef, r.doc.SourceUrl, r.doc.RemoteRevision, r.doc.OauthAccountID,
 		r.doc.PendingContentRef, r.doc.PendingChecksum, r.doc.PendingRemoteRevision, r.doc.SyncStatus,
 		r.doc.LastSyncError, r.doc.LastSyncedAt, r.doc.PendingTitle, r.doc.PendingBytes, r.doc.PendingMetadata,
+		r.doc.ActiveVersionID, r.doc.PendingVersionID, r.doc.DeletedAt,
 	}
 	if len(dest) != len(values) {
 		return errors.New("scan count mismatch")

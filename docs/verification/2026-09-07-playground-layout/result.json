@@ -1,0 +1,144 @@
+{
+  "fixture": "Mock API and controllable SSE ReadableStream; not real model acceptance",
+  "checks": [
+    {
+      "label": "desktop empty 1440x1000",
+      "canvas": {
+        "x": 232,
+        "y": 76,
+        "width": 1196,
+        "height": 912
+      },
+      "composer": {
+        "x": 382,
+        "y": 807,
+        "width": 896,
+        "height": 164
+      }
+    },
+    {
+      "label": "wide empty 3840x1929",
+      "canvas": {
+        "x": 232,
+        "y": 76,
+        "width": 3596,
+        "height": 1841
+      },
+      "composer": {
+        "x": 1582,
+        "y": 1736,
+        "width": 896,
+        "height": 164
+      }
+    },
+    {
+      "label": "desktop long response streaming",
+      "canvas": {
+        "x": 232,
+        "y": 76,
+        "width": 1196,
+        "height": 912
+      },
+      "composer": {
+        "x": 382,
+        "y": 807,
+        "width": 896,
+        "height": 164
+      }
+    },
+    "Streaming follows latest; reading position preserved; jump returns to bottom; reply tail unobscured",
+    "Parameters and model picker work; stop retains partial response",
+    {
+      "label": "mobile empty 390x844",
+      "canvas": {
+        "x": 8,
+        "y": 72,
+        "width": 374,
+        "height": 764
+      },
+      "composer": {
+        "x": 21,
+        "y": 613,
+        "width": 348,
+        "height": 210
+      }
+    },
+    {
+      "label": "mobile long response",
+      "canvas": {
+        "x": 8,
+        "y": 72,
+        "width": 374,
+        "height": 764
+      },
+      "composer": {
+        "x": 21,
+        "y": 613,
+        "width": 348,
+        "height": 210
+      }
+    },
+    {
+      "label": "mobile stream failure with retained response",
+      "canvas": {
+        "x": 8,
+        "y": 72,
+        "width": 374,
+        "height": 764
+      },
+      "composer": {
+        "x": 21,
+        "y": 613,
+        "width": 348,
+        "height": 210
+      }
+    },
+    {
+      "label": "compact 320x640",
+      "canvas": {
+        "x": 8,
+        "y": 72,
+        "width": 304,
+        "height": 560
+      },
+      "composer": {
+        "x": 21,
+        "y": 409,
+        "width": 278,
+        "height": 210
+      }
+    },
+    {
+      "label": "compact 844x390",
+      "canvas": {
+        "x": 12,
+        "y": 76,
+        "width": 820,
+        "height": 302
+      },
+      "composer": {
+        "x": 37,
+        "y": 197,
+        "width": 770,
+        "height": 164
+      }
+    },
+    {
+      "label": "return navigation",
+      "canvas": {
+        "x": 232,
+        "y": 76,
+        "width": 1196,
+        "height": 912
+      },
+      "composer": {
+        "x": 382,
+        "y": 807,
+        "width": 896,
+        "height": 164
+      }
+    },
+    "Mobile connection dialog, short viewport, normal-page spacing, route return and unconfigured state"
+  ],
+  "pageErrors": []
+}

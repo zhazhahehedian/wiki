@@ -73,7 +73,7 @@ func NewHTTPClient(allowedOrigins string) (*http.Client, error) {
 		origins[raw] = true
 	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ResponseHeaderTimeout: 15 * time.Second, TLSHandshakeTimeout: 10 * time.Second, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 20}
+	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, ResponseHeaderTimeout: time.Minute, TLSHandshakeTimeout: 10 * time.Second, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 20}
 	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, port, e := net.SplitHostPort(addr)
 		if e != nil {
@@ -101,5 +101,5 @@ func NewHTTPClient(allowedOrigins string) (*http.Client, error) {
 	trusted := transport.Clone()
 	trusted.Proxy = http.ProxyFromEnvironment
 	trusted.DialContext = dialer.DialContext
-	return &http.Client{Transport: &guardedTransport{transport, trusted, origins}, Timeout: 50 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+	return &http.Client{Transport: &guardedTransport{transport, trusted, origins}, Timeout: StreamTimeout + time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }

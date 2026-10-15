@@ -92,7 +92,22 @@ func run() error {
 		return fmt.Errorf("bootstrap platform admin: %w", err)
 	}
 	registryService := registry.New(registryRepo, mc)
+	knowledgeHandler, knowledgeWorker, err := buildKnowledge(pool, mc)
+	if err != nil {
+		return err
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	if err := knowledgeWorker.Start(workerCtx); err != nil {
+		return fmt.Errorf("knowledge worker: %w", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = knowledgeWorker.Stop(ctx)
+	}()
 	router := httpx.NewCapabilityHubRouter(httpx.Handlers{
+		Knowledge:    knowledgeHandler,
 		Auth:         authHandler,
 		Playground:   httpx.NewPlaygroundHandler(modelService),
 		Registry:     httpx.NewRegistryHandler(registryService),

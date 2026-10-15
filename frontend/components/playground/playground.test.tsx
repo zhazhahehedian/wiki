@@ -14,7 +14,8 @@ import {
   type ModelConnection,
 } from "@/lib/api/playground";
 
-vi.mock("@/lib/api/playground", () => ({
+vi.mock("@/lib/api/playground", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/playground")>()),
   playgroundApi: {
     get: vi.fn(),
     save: vi.fn(),
@@ -26,6 +27,14 @@ vi.mock("@/lib/api/playground", () => ({
 let saved: ModelConnection | null;
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   saved = null;
   vi.mocked(playgroundApi.get).mockImplementation(async () => saved);
   vi.mocked(playgroundApi.save).mockImplementation(
@@ -41,7 +50,10 @@ beforeEach(() => {
     },
   );
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 function mount() {
   return render(
     <PlaygroundProvider>
@@ -64,7 +76,10 @@ async function configure() {
     screen.getByLabelText("可用模型 ID"),
     "team-chat,team-reasoning,team-chat",
   );
-  await user.selectOptions(screen.getByLabelText("默认模型"), "team-reasoning");
+  await user.click(screen.getByRole("combobox", { name: "默认模型" }));
+  await user.click(
+    await screen.findByRole("option", { name: "team-reasoning" }),
+  );
   await user.click(screen.getByRole("button", { name: "保存配置" }));
   await waitFor(() =>
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
@@ -83,7 +98,9 @@ it("saves manual models and a key, reloads redacted metadata, and deletes server
     }),
     expect.any(AbortSignal),
   );
-  expect(screen.getByLabelText("对话模型")).toHaveValue("team-reasoning");
+  expect(screen.getByRole("combobox", { name: "对话模型" })).toHaveTextContent(
+    "team-reasoning",
+  );
   expect(storageWrite).not.toHaveBeenCalled();
   expect(streamModelChat).not.toHaveBeenCalled();
   view.unmount();
@@ -198,7 +215,12 @@ it("uses the selected Claude protocol for discovery and saved configuration", as
     expect(screen.getByRole("button", { name: "接口配置" })).toBeEnabled(),
   );
   await user.click(screen.getByRole("button", { name: "接口配置" }));
-  await user.selectOptions(screen.getByLabelText("接口协议"), "anthropic");
+  await user.click(screen.getByRole("combobox", { name: "接口协议" }));
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Claude（Anthropic）",
+    }),
+  );
   expect(screen.getByLabelText("API 基础地址")).toHaveValue(
     "https://api.anthropic.com",
   );
@@ -246,7 +268,9 @@ it("fetches available models before saving and persists only selected models", a
   await user.click(screen.getByRole("button", { name: "获取模型" }));
   await user.click(await screen.findByRole("checkbox", { name: "chat-beta" }));
   expect(playgroundApi.save).not.toHaveBeenCalled();
-  expect(screen.getByLabelText("默认模型")).toHaveValue("chat-beta");
+  expect(screen.getByRole("combobox", { name: "默认模型" })).toHaveTextContent(
+    "chat-beta",
+  );
   await user.click(screen.getByRole("button", { name: "保存配置" }));
   await waitFor(() =>
     expect(playgroundApi.save).toHaveBeenCalledWith(
@@ -293,7 +317,7 @@ it("omits disabled parameters and transmits explicit zero values with system ins
   await user.clear(screen.getByLabelText("最大 Tokens", { exact: true }));
   await user.type(
     screen.getByLabelText("最大 Tokens", { exact: true }),
-    "1024",
+    "262144",
   );
   await user.type(screen.getByLabelText("系统提示词"), "Answer briefly");
   await user.click(screen.getByRole("button", { name: "关闭参数" }));
@@ -301,7 +325,7 @@ it("omits disabled parameters and transmits explicit zero values with system ins
   await user.click(screen.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(streamModelChat).toHaveBeenCalledTimes(2));
   const payload = vi.mocked(streamModelChat).mock.calls[1][0];
-  expect(payload).toMatchObject({ frequency_penalty: 0, max_tokens: 1024 });
+  expect(payload).toMatchObject({ frequency_penalty: 0, max_tokens: 262144 });
   expect(payload.messages[0]).toEqual({
     role: "system",
     content: "Answer briefly",
@@ -327,7 +351,9 @@ it("uses only one sampling parameter and hides OpenAI penalties for Claude", asy
   mount();
   const user = userEvent.setup();
   await waitFor(() =>
-    expect(screen.getByLabelText("对话模型")).toHaveValue("claude-test"),
+    expect(
+      screen.getByRole("combobox", { name: "对话模型" }),
+    ).toHaveTextContent("claude-test"),
   );
   await user.click(screen.getByRole("button", { name: "模型参数" }));
   await user.click(await screen.findByRole("switch", { name: "启用温度" }));
@@ -362,7 +388,12 @@ it("drops OpenAI-only parameters when changing the saved connection to Claude", 
   await user.type(screen.getByLabelText("温度", { exact: true }), "2");
   await user.click(screen.getByRole("button", { name: "关闭参数" }));
   await user.click(screen.getByRole("button", { name: "接口配置" }));
-  await user.selectOptions(screen.getByLabelText("接口协议"), "anthropic");
+  await user.click(screen.getByRole("combobox", { name: "接口协议" }));
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Claude（Anthropic）",
+    }),
+  );
   await user.type(
     screen.getByLabelText("API Key", { exact: true }),
     "claude-test-key",

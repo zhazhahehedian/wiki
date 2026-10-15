@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type ReactElement,
 } from "react";
+import { Select } from "@/components/ui/select";
 import { APIError } from "@/lib/api/client";
 
 export const fieldClass =
@@ -73,7 +74,8 @@ export function Field({
       {Children.map(children, (child) => {
         if (
           !isValidElement(child) ||
-          !["input", "textarea", "select"].includes(String(child.type))
+          (child.type !== Select &&
+            !["input", "textarea", "select"].includes(String(child.type)))
         )
           return child;
         return cloneElement(

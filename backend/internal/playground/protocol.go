@@ -45,10 +45,15 @@ func setModelAuthentication(req *http.Request, protocol, key string) {
 
 func chatBody(protocol string, input ChatRequest) ([]byte, error) {
 	if protocolName(protocol) != ProtocolAnthropic {
+		// Current OpenAI-compatible reasoning models use max_completion_tokens.
+		// Keep max_tokens as our client-facing field, but never send both upstream.
+		tokens := input.MaxTokens
+		input.MaxTokens = nil
 		return json.Marshal(struct {
 			ChatRequest
-			Stream bool `json:"stream"`
-		}{input, true})
+			MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
+			Stream              bool `json:"stream"`
+		}{input, tokens, true})
 	}
 	var system []string
 	messages := make([]Message, 0, len(input.Messages))
@@ -62,7 +67,7 @@ func chatBody(protocol string, input ChatRequest) ([]byte, error) {
 	if len(messages) == 0 {
 		return nil, ErrInvalid
 	}
-	maxTokens := 4096
+	maxTokens := DefaultOutputTokens
 	if input.MaxTokens != nil {
 		maxTokens = *input.MaxTokens
 	}
@@ -84,8 +89,9 @@ func anthropicDelta(data string, emit func(string) error) (bool, error) {
 	var event struct {
 		Type  string `json:"type"`
 		Delta struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type       string `json:"type"`
+			Text       string `json:"text"`
+			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
 	}
 	if json.Unmarshal([]byte(data), &event) != nil {
@@ -96,6 +102,10 @@ func anthropicDelta(data string, emit func(string) error) (bool, error) {
 		return false, ErrUpstream
 	case "message_stop":
 		return true, nil
+	case "message_delta":
+		if event.Delta.StopReason == "max_tokens" {
+			return false, ErrOutputLimit
+		}
 	case "content_block_delta":
 		if event.Delta.Type == "text_delta" && event.Delta.Text != "" {
 			return false, emit(event.Delta.Text)

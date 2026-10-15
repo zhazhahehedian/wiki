@@ -12,17 +12,20 @@ import (
 
 func TestOptionalChatParametersReachProvider(t *testing.T) {
 	zero, half, penalty, tokens := 0.0, 0.5, -1.0, 1024
+	largeBudget := MaxOutputTokens
 	for _, tc := range []struct {
 		name, protocol string
 		input          ChatRequest
 		want           map[string]any
 		absent         []string
 	}{
-		{"openai defaults", ProtocolOpenAI, ChatRequest{}, map[string]any{}, []string{"temperature", "top_p", "max_tokens", "frequency_penalty", "presence_penalty"}},
-		{"openai explicit zero", ProtocolOpenAI, ChatRequest{Temperature: &zero, MaxTokens: &tokens, FrequencyPenalty: &zero, PresencePenalty: &penalty}, map[string]any{"temperature": 0.0, "max_tokens": 1024.0, "frequency_penalty": 0.0, "presence_penalty": -1.0}, []string{"top_p"}},
+		{"openai defaults", ProtocolOpenAI, ChatRequest{}, map[string]any{}, []string{"temperature", "top_p", "max_tokens", "max_completion_tokens", "frequency_penalty", "presence_penalty"}},
+		{"openai explicit zero", ProtocolOpenAI, ChatRequest{Temperature: &zero, MaxTokens: &tokens, FrequencyPenalty: &zero, PresencePenalty: &penalty}, map[string]any{"temperature": 0.0, "max_completion_tokens": 1024.0, "frequency_penalty": 0.0, "presence_penalty": -1.0}, []string{"top_p", "max_tokens"}},
 		{"openai top p", ProtocolOpenAI, ChatRequest{TopP: &half}, map[string]any{"top_p": 0.5}, []string{"temperature"}},
-		{"claude defaults", ProtocolAnthropic, ChatRequest{}, map[string]any{"max_tokens": 4096.0}, []string{"temperature", "top_p", "frequency_penalty", "presence_penalty"}},
+		{"claude defaults", ProtocolAnthropic, ChatRequest{}, map[string]any{"max_tokens": float64(DefaultOutputTokens)}, []string{"temperature", "top_p", "frequency_penalty", "presence_penalty"}},
 		{"claude top p", ProtocolAnthropic, ChatRequest{TopP: &half, MaxTokens: &tokens}, map[string]any{"top_p": 0.5, "max_tokens": 1024.0}, []string{"temperature", "frequency_penalty", "presence_penalty"}},
+		{"openai large output", ProtocolOpenAI, ChatRequest{MaxTokens: &largeBudget}, map[string]any{"max_completion_tokens": float64(MaxOutputTokens)}, []string{"max_tokens"}},
+		{"claude large output", ProtocolAnthropic, ChatRequest{MaxTokens: &largeBudget}, map[string]any{"max_tokens": float64(MaxOutputTokens)}, []string{"max_completion_tokens"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var received map[string]any
@@ -64,7 +67,7 @@ func TestOptionalChatParametersReachProvider(t *testing.T) {
 }
 
 func TestInvalidChatParametersNeverReachProvider(t *testing.T) {
-	low, high, tooHigh, temp, tokens := -0.1, 1.1, 2.1, 0.7, 32769
+	low, high, tooHigh, temp, tokens := -0.1, 1.1, 2.1, 0.7, MaxOutputTokens+1
 	for _, tc := range []struct {
 		name, protocol string
 		input          ChatRequest

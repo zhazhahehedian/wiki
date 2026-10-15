@@ -1,0 +1,9 @@
+{
+  "fixture": "mock model and API; not real model acceptance",
+  "checks": [
+    "Animated pending draft, elapsed time and long wait, valid completion, retained edited draft and input on timeout, safe request id",
+    "Cancel retains work; mobile has no horizontal overflow; reduced motion disables animation",
+    "Output budget defaults to 65536; custom 131072/262144 and lower 8192 supported; disabled while pending; invalid collapsed input is revealed without submitting; failure retains budget and edits"
+  ],
+  "pageErrors": []
+}

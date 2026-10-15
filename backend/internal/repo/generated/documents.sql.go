@@ -74,7 +74,7 @@ WHERE id = $1
       sync_status IN ('idle', 'failed')
       OR (sync_status = 'syncing' AND updated_at < now() - ($3::bigint * interval '1 second'))
   )
-RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata
+RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at
 `
 
 type ClaimFeishuSyncParams struct {
@@ -113,6 +113,9 @@ func (q *Queries) ClaimFeishuSync(ctx context.Context, arg ClaimFeishuSyncParams
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -210,7 +213,7 @@ INSERT INTO documents (
     bytes, checksum, status, metadata
 )
 VALUES ($1, $2, $3, CASE WHEN $2 = 'local-upload' THEN $3 ELSE NULL END, $4, $5, $6, $7, $8, $9)
-RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata
+RETURNING id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at
 `
 
 type CreateDocumentParams struct {
@@ -265,6 +268,9 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -283,7 +289,7 @@ SELECT kb.id, $1, $2,
 FROM knowledge_bases AS kb
 WHERE kb.id = $9
   AND kb.owner_user_id = $10
-RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at, documents.pending_title, documents.pending_bytes, documents.pending_metadata
+RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at, documents.pending_title, documents.pending_bytes, documents.pending_metadata, documents.active_version_id, documents.pending_version_id, documents.deleted_at
 `
 
 type CreateDocumentForOwnerParams struct {
@@ -340,6 +346,9 @@ func (q *Queries) CreateDocumentForOwner(ctx context.Context, arg CreateDocument
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -359,7 +368,7 @@ JOIN oauth_accounts AS oa
  AND oa.provider = 'feishu'
 WHERE kb.id = $7
   AND kb.owner_user_id = $6
-RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at, documents.pending_title, documents.pending_bytes, documents.pending_metadata
+RETURNING documents.id, documents.kb_id, documents.source_type, documents.source_ref, documents.title, documents.mime_type, documents.bytes, documents.checksum, documents.status, documents.error_message, documents.metadata, documents.created_at, documents.updated_at, documents.content_ref, documents.source_url, documents.remote_revision, documents.oauth_account_id, documents.pending_content_ref, documents.pending_checksum, documents.pending_remote_revision, documents.sync_status, documents.last_sync_error, documents.last_synced_at, documents.pending_title, documents.pending_bytes, documents.pending_metadata, documents.active_version_id, documents.pending_version_id, documents.deleted_at
 `
 
 type CreateFeishuDocumentForOwnerParams struct {
@@ -410,6 +419,9 @@ func (q *Queries) CreateFeishuDocumentForOwner(ctx context.Context, arg CreateFe
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -492,7 +504,7 @@ func (q *Queries) FailFeishuSync(ctx context.Context, arg FailFeishuSyncParams) 
 }
 
 const findDocumentByChecksum = `-- name: FindDocumentByChecksum :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at FROM documents
 WHERE kb_id = $1 AND checksum = $2 AND source_type = 'local-upload'
 `
 
@@ -531,12 +543,15 @@ func (q *Queries) FindDocumentByChecksum(ctx context.Context, arg FindDocumentBy
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const findDocumentByChecksumForOwner = `-- name: FindDocumentByChecksumForOwner :one
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata, d.active_version_id, d.pending_version_id, d.deleted_at FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.kb_id = $1
   AND d.checksum = $2
@@ -580,12 +595,15 @@ func (q *Queries) FindDocumentByChecksumForOwner(ctx context.Context, arg FindDo
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getDocument = `-- name: GetDocument :one
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents WHERE id = $1
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at FROM documents WHERE id = $1
 `
 
 func (q *Queries) GetDocument(ctx context.Context, id uuid.UUID) (Document, error) {
@@ -618,12 +636,15 @@ func (q *Queries) GetDocument(ctx context.Context, id uuid.UUID) (Document, erro
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getDocumentForOwner = `-- name: GetDocumentForOwner :one
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata, d.active_version_id, d.pending_version_id, d.deleted_at FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.id = $1 AND kb.owner_user_id = $2
 `
@@ -663,12 +684,15 @@ func (q *Queries) GetDocumentForOwner(ctx context.Context, arg GetDocumentForOwn
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getFeishuDocumentForOwnerAndAccount = `-- name: GetFeishuDocumentForOwnerAndAccount :one
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata, d.active_version_id, d.pending_version_id, d.deleted_at FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 JOIN oauth_accounts AS oa ON oa.id = d.oauth_account_id
 WHERE d.id = $1
@@ -714,12 +738,15 @@ func (q *Queries) GetFeishuDocumentForOwnerAndAccount(ctx context.Context, arg G
 		&i.PendingTitle,
 		&i.PendingBytes,
 		&i.PendingMetadata,
+		&i.ActiveVersionID,
+		&i.PendingVersionID,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listDocumentsByKB = `-- name: ListDocumentsByKB :many
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata FROM documents
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at FROM documents
 WHERE kb_id = $1
   AND ($4::text IS NULL OR status = $4::text)
 ORDER BY created_at DESC
@@ -774,6 +801,9 @@ func (q *Queries) ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBPa
 			&i.PendingTitle,
 			&i.PendingBytes,
 			&i.PendingMetadata,
+			&i.ActiveVersionID,
+			&i.PendingVersionID,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -786,7 +816,7 @@ func (q *Queries) ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBPa
 }
 
 const listDocumentsByKBForOwner = `-- name: ListDocumentsByKBForOwner :many
-SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata FROM documents AS d
+SELECT d.id, d.kb_id, d.source_type, d.source_ref, d.title, d.mime_type, d.bytes, d.checksum, d.status, d.error_message, d.metadata, d.created_at, d.updated_at, d.content_ref, d.source_url, d.remote_revision, d.oauth_account_id, d.pending_content_ref, d.pending_checksum, d.pending_remote_revision, d.sync_status, d.last_sync_error, d.last_synced_at, d.pending_title, d.pending_bytes, d.pending_metadata, d.active_version_id, d.pending_version_id, d.deleted_at FROM documents AS d
 JOIN knowledge_bases AS kb ON kb.id = d.kb_id
 WHERE d.kb_id = $1
   AND kb.owner_user_id = $2
@@ -845,6 +875,9 @@ func (q *Queries) ListDocumentsByKBForOwner(ctx context.Context, arg ListDocumen
 			&i.PendingTitle,
 			&i.PendingBytes,
 			&i.PendingMetadata,
+			&i.ActiveVersionID,
+			&i.PendingVersionID,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -857,7 +890,7 @@ func (q *Queries) ListDocumentsByKBForOwner(ctx context.Context, arg ListDocumen
 }
 
 const listStaleFeishuSyncs = `-- name: ListStaleFeishuSyncs :many
-SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata
+SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at
 FROM documents
 WHERE source_type LIKE 'feishu-%'
   AND sync_status = 'syncing'
@@ -915,6 +948,9 @@ func (q *Queries) ListStaleFeishuSyncs(ctx context.Context, arg ListStaleFeishuS
 			&i.PendingTitle,
 			&i.PendingBytes,
 			&i.PendingMetadata,
+			&i.ActiveVersionID,
+			&i.PendingVersionID,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}

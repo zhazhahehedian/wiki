@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
@@ -197,7 +199,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
         className="inline-flex items-center gap-2 text-sm text-zinc-500"
       >
         <ArrowLeft className="size-4" />
-        {detail ? "返回详情" : "注册中心"}
+        {detail ? "返回详情" : "能力市场"}
       </Link>
       <header>
         {!detail && (
@@ -246,17 +248,18 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                 />
               </Field>
               <Field label="能力类型">
-                <select
-                  disabled={!!detail}
+                <Select
+                  disabled={!!detail || saving}
                   className={fieldClass}
                   value={form.type}
-                  onChange={(e) =>
-                    set("type", e.target.value as CapabilityInput["type"])
+                  onValueChange={(value) =>
+                    set("type", value as CapabilityInput["type"])
                   }
-                >
-                  <option value="mcp">MCP 服务</option>
-                  <option value="skill">Skill</option>
-                </select>
+                  options={[
+                    { value: "mcp", label: "MCP 服务" },
+                    { value: "skill", label: "Skill" },
+                  ]}
+                />
               </Field>
               <Field label="部门">
                 <input
@@ -310,14 +313,16 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                     />
                   </Field>
                   <Field label="鉴权方式">
-                    <select
+                    <Select
                       className={fieldClass}
                       value={form.mcp_auth_scheme}
-                      onChange={(e) => set("mcp_auth_scheme", e.target.value)}
-                    >
-                      <option value="bearer">Bearer</option>
-                      <option value="none">无需鉴权</option>
-                    </select>
+                      onValueChange={(value) => set("mcp_auth_scheme", value)}
+                      disabled={saving}
+                      options={[
+                        { value: "bearer", label: "Bearer" },
+                        { value: "none", label: "无需鉴权" },
+                      ]}
+                    />
                   </Field>
                 </div>
                 <Field
@@ -388,20 +393,19 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                 />
               </Field>
               <Field label="上线后可见范围">
-                <select
+                <Select
                   className={fieldClass}
                   value={form.visibility}
-                  onChange={(e) =>
-                    set(
-                      "visibility",
-                      e.target.value as CapabilityInput["visibility"],
-                    )
+                  onValueChange={(value) =>
+                    set("visibility", value as CapabilityInput["visibility"])
                   }
-                >
-                  <option value="org">全公司</option>
-                  <option value="department">指定部门</option>
-                  <option value="allowlist">指定用户</option>
-                </select>
+                  disabled={saving}
+                  options={[
+                    { value: "org", label: "全公司" },
+                    { value: "department", label: "指定部门" },
+                    { value: "allowlist", label: "指定用户" },
+                  ]}
+                />
               </Field>
             </div>
             {form.visibility === "allowlist" && (

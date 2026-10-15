@@ -30,6 +30,8 @@ type Capability struct {
 	ReviewReason     string    `json:"review_reason,omitempty"`
 	Visibility       string    `json:"visibility"`
 	CurrentVersionID string    `json:"current_version_id,omitempty"`
+	PublishedVersion string    `json:"published_version,omitempty"`
+	PublisherName    string    `json:"publisher_name,omitempty"`
 	DraftVersionID   string    `json:"draft_version_id,omitempty"`
 	Revision         int64     `json:"revision"`
 	CreatedAt        time.Time `json:"created_at"`

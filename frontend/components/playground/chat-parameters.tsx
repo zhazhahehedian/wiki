@@ -5,7 +5,12 @@ import { Popover } from "@base-ui/react/popover";
 import { SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { ChatParameters, ModelProtocol } from "@/lib/api/playground";
+import {
+  MAX_OUTPUT_TOKENS,
+  DEFAULT_OUTPUT_TOKENS,
+  type ChatParameters,
+  type ModelProtocol,
+} from "@/lib/api/playground";
 
 const fields = [
   {
@@ -49,9 +54,9 @@ const fields = [
     label: "最大 Tokens",
     hint: "限制这次回复的输出长度。",
     min: 1,
-    max: 32768,
+    max: MAX_OUTPUT_TOKENS,
     step: 1,
-    initial: 4096,
+    initial: DEFAULT_OUTPUT_TOKENS,
   },
 ] as const;
 
@@ -234,7 +239,7 @@ export function ChatParameterSettings({
               {protocol === "anthropic" && (
                 <p className="text-[11px] leading-5 text-zinc-500">
                   Claude 不发送惩罚参数；未启用最大 Tokens 时使用
-                  4096。部分模型不接受采样参数，遇到参数错误可关闭温度与 Top P。
+                  65,536。部分模型不接受采样参数，遇到参数错误可关闭温度与 Top P。
                 </p>
               )}
               <div className="space-y-2">

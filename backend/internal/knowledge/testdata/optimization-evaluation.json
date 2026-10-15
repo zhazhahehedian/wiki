@@ -1,0 +1,8 @@
+[
+ {"id":"colloquial-materials","query":"垫的钱想拿回来，票据抬头写啥、谁签字才行？","title":"expense.md","evidence":["公司全称","直属主管批准"],"line":1,"first":true},
+ {"id":"colloquial-domestic","query":"普通员工去中国大陆出差，住酒店一晚上能报多少钱？","title":"travel.md","evidence":["元/晚","普通员工 | 500","只适用于中国大陆"],"line":1,"first":true},
+ {"id":"negated-region","query":"不是境内，是境外住宿，限额用什么币种、要提前办什么审批？","title":"travel.md","evidence":["150 美元","专项审批"],"line":10,"first":true},
+ {"id":"exception-sick-leave","query":"突然生病来不及先走请假流程，回来后几天内补证明？","title":"leave.txt","evidence":["紧急病假","两个工作日"],"line":1,"first":true},
+ {"id":"similar-unanswered-benefit","query":"普通员工生日礼金限额是多少元？","no_answer":true},
+ {"id":"unknown-exact-identifier","query":"制度 FIN-2099 的适用范围和审批人是什么？","no_answer":true}
+]

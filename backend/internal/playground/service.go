@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -20,7 +22,37 @@ var (
 	ErrInvalid       = errors.New("invalid model configuration or request")
 	ErrConflict      = errors.New("configuration changed; reload before saving")
 	ErrUpstream      = errors.New("model service failed or returned an invalid stream")
+	ErrTimeout       = fmt.Errorf("model response timed out: %w", ErrUpstream)
+	ErrInterrupted   = fmt.Errorf("model stream ended before completion: %w", ErrUpstream)
+	ErrOutputLimit   = fmt.Errorf("model reached its output token limit: %w", ErrUpstream)
 )
+
+// Long model replies and structured Skill drafts need more than a short HTTP
+// request budget. Discovery keeps its separate 20-second deadline.
+const StreamTimeout = 5 * time.Minute
+
+// Platform request ceiling, not a claim about any configured model's capacity.
+const MaxOutputTokens = 1048576
+const DefaultOutputTokens = 65536
+
+type UpstreamHTTPError struct {
+	StatusCode int
+	Reason     string
+}
+
+func (e *UpstreamHTTPError) Error() string { return fmt.Sprintf("model HTTP status %d", e.StatusCode) }
+func (e *UpstreamHTTPError) Unwrap() error { return ErrUpstream }
+
+func streamReadError(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return context.Canceled
+	}
+	var networkError net.Error
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+		return ErrTimeout
+	}
+	return ErrInterrupted
+}
 
 type Connection struct {
 	Protocol     string   `json:"protocol"`
@@ -173,7 +205,7 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 	}
 	if size > 256*1024 || size == 0 ||
 		(r.Temperature != nil && (*r.Temperature < 0 || *r.Temperature > 2)) ||
-		(r.MaxTokens != nil && (*r.MaxTokens < 1 || *r.MaxTokens > 32768)) ||
+		(r.MaxTokens != nil && (*r.MaxTokens < 1 || *r.MaxTokens > MaxOutputTokens)) ||
 		(r.TopP != nil && (*r.TopP < 0 || *r.TopP > 1)) ||
 		(r.FrequencyPenalty != nil && (*r.FrequencyPenalty < -2 || *r.FrequencyPenalty > 2)) ||
 		(r.PresencePenalty != nil && (*r.PresencePenalty < -2 || *r.PresencePenalty > 2)) {
@@ -187,7 +219,7 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 	if err != nil {
 		return ErrInvalid
 	}
-	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, StreamTimeout)
 	defer cancel()
 	path := "/chat/completions"
 	if protocolName(c.Protocol) == ProtocolAnthropic {
@@ -202,10 +234,21 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 	req.Header.Set("Accept", "text/event-stream")
 	response, err := s.client.Do(req)
 	if err != nil {
+		if cause := streamReadError(ctx, err); !errors.Is(cause, ErrInterrupted) {
+			return cause
+		}
 		return ErrUpstream
 	}
 	defer response.Body.Close()
-	if response.StatusCode != 200 || !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+	if response.StatusCode != http.StatusOK {
+		// Some gateways never finish their error body. Limit diagnostic collection
+		// separately so a known rejection does not consume the generation budget.
+		timer := time.AfterFunc(2*time.Second, cancel)
+		err := readUpstreamError(response)
+		timer.Stop()
+		return err
+	}
+	if !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		return ErrUpstream
 	}
 	scanner := bufio.NewScanner(io.LimitReader(response.Body, 8*1024*1024))
@@ -232,14 +275,23 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 				Delta struct {
 					Content string `json:"content"`
 				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Error json.RawMessage `json:"error"`
 		}
 		if json.Unmarshal([]byte(data), &chunk) != nil || len(chunk.Error) > 0 {
 			return ErrUpstream
 		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			return emit(chunk.Choices[0].Delta.Content)
+		if len(chunk.Choices) > 0 {
+			choice := chunk.Choices[0]
+			if choice.Delta.Content != "" {
+				if err := emit(choice.Delta.Content); err != nil {
+					return err
+				}
+			}
+			if choice.FinishReason == "length" {
+				return ErrOutputLimit
+			}
 		}
 		return nil
 	}
@@ -262,7 +314,7 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 		}
 	}
 	if scanner.Err() != nil || !finished {
-		return ErrUpstream
+		return streamReadError(ctx, scanner.Err())
 	}
 	return nil
 }

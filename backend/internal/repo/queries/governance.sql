@@ -31,16 +31,20 @@ AND (sqlc.arg(search)::text='' OR strpos(lower(name || ' ' || description || ' '
 ORDER BY updated_at, id LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
 -- name: ListCatalogCapabilities :many
-SELECT * FROM capabilities c WHERE is_live
-AND (sqlc.arg(is_admin)::boolean OR owner_open_id=sqlc.arg(open_id)
+SELECT sqlc.embed(c), v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name
+FROM capabilities c JOIN capability_versions v ON v.id=c.current_version_id
+LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=c.owner_open_id
+LEFT JOIN users u ON u.id=a.user_id
+WHERE c.is_live
+AND (sqlc.arg(is_admin)::boolean OR c.owner_open_id=sqlc.arg(open_id)
     OR published_metadata->>'visibility'='org'
     OR (published_metadata->>'visibility'='department' AND sqlc.arg(department)::text<>'' AND published_metadata->>'department'=sqlc.arg(department))
     OR (published_metadata->>'visibility'='allowlist' AND (published_metadata->'allowlist') @> to_jsonb(ARRAY[sqlc.arg(open_id)::text])))
-AND (sqlc.arg(filter_type)::text='' OR type=sqlc.arg(filter_type))
+AND (sqlc.arg(filter_type)::text='' OR c.type=sqlc.arg(filter_type))
 AND (sqlc.arg(filter_status)::text='' OR sqlc.arg(filter_status)='published')
 AND (sqlc.arg(filter_department)::text='' OR published_metadata->>'department'=sqlc.arg(filter_department))
 AND (sqlc.arg(search)::text='' OR strpos(lower((published_metadata->>'name') || ' ' || (published_metadata->>'description') || ' ' || slug),lower(sqlc.arg(search)))>0)
-ORDER BY updated_at DESC,id LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+ORDER BY c.updated_at DESC,c.id LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
 -- name: SetCapabilityGovernance :one
 UPDATE capabilities SET status=$2, is_live=$3, current_version_id=$4, draft_version_id=$5,

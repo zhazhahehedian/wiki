@@ -146,10 +146,12 @@ func (r *RegistryRepository) Catalog(ctx context.Context, user string, f registr
 		rows = rows[:f.Limit]
 	}
 	for _, c := range rows {
-		v, e := publishedCapability(c)
+		v, e := publishedCapability(c.Capability)
 		if e != nil {
 			return page, e
 		}
+		v.PublishedVersion = c.PublishedVersion
+		v.PublisherName = c.PublisherName
 		page.Items = append(page.Items, v)
 	}
 	return page, nil

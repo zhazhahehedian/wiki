@@ -1,0 +1,10 @@
+{
+  "fixture": "mock HTTP; not real model acceptance",
+  "checks": [
+    "Dialog popup, Escape focus, protocol switching preserves custom relay URL, discovery and default model saving",
+    "Chat uses selected model and renders simulated streaming reply",
+    "Registry type/auth/visibility, Skill mode/model, empty-value status reset",
+    "390px mobile popup fits viewport and long model identifier wraps"
+  ],
+  "pageErrors": []
+}

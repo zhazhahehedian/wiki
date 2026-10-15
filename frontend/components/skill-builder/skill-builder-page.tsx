@@ -1,8 +1,10 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -14,7 +16,9 @@ import {
   FileText,
   Plus,
   Trash2,
+  LoaderCircle,
 } from "lucide-react";
+import { GenerationProgress } from "./generation-progress";
 import { useModelConnection } from "@/components/playground/playground-provider";
 import {
   Field,
@@ -24,12 +28,15 @@ import {
   RegistryError,
 } from "@/components/hub/registry-shared";
 import { APIError } from "@/lib/api/client";
+import { MAX_OUTPUT_TOKENS } from "@/lib/api/playground";
 import {
   generateSkill,
   saveGeneratedSkill,
   skillMarkdown,
+  DEFAULT_SKILL_OUTPUT_TOKENS,
   type BuilderMessage,
   type SkillDraft,
+  type SkillTemplate,
 } from "@/lib/api/skill-builder";
 
 const examples = [
@@ -37,7 +44,8 @@ const examples = [
   "按团队规范审查产品需求",
   "用第一性原理分析产品方案",
 ];
-export function SkillBuilderPage() {
+export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
+  const generationFormId = useId();
   const router = useRouter();
   const queryClient = useQueryClient();
   const {
@@ -48,10 +56,16 @@ export function SkillBuilderPage() {
   } = useModelConnection();
   const [mode, setMode] = useState<"task" | "perspective">("task");
   const [model, setModel] = useState("");
+  const [maxTokens, setMaxTokens] = useState(
+    String(DEFAULT_SKILL_OUTPUT_TOKENS),
+  );
   const [messages, setMessages] = useState<BuilderMessage[]>([]);
   const [input, setInput] = useState("");
   const [material, setMaterial] = useState("");
-  const [draft, setDraft] = useState<SkillDraft | null>(null);
+  const [draft, setDraft] = useState<SkillDraft | null>(() =>
+    template ? structuredClone(template.draft) : null,
+  );
+  const [source, setSource] = useState(template?.source);
   const [preview, setPreview] = useState(false);
   const [fileView, setFileView] = useState("SKILL.md");
   const [busy, setBusy] = useState<"generate" | "save" | null>(null);
@@ -99,6 +113,7 @@ export function SkillBuilderPage() {
     setBusy(null);
     setMessages([]);
     setDraft(null);
+    setSource(undefined);
     setInput("");
     setMaterial("");
     setError(undefined);
@@ -130,6 +145,15 @@ export function SkillBuilderPage() {
       setNotice("参考素材最多 48 KiB，请精简后重试。");
       return;
     }
+    const outputTokens = Number(maxTokens);
+    if (
+      !Number.isInteger(outputTokens) ||
+      outputTokens < 1 ||
+      outputTokens > MAX_OUTPUT_TOKENS
+    ) {
+      setNotice(`最大输出 Tokens 需为 1–${MAX_OUTPUT_TOKENS} 的整数。`);
+      return;
+    }
     const controller = new AbortController();
     active.current = controller;
     generating.current = true;
@@ -142,6 +166,7 @@ export function SkillBuilderPage() {
           model: activeModel,
           messages: history,
           material,
+          max_tokens: outputTokens,
           ...(draft ? { draft } : {}),
         },
         controller.signal,
@@ -216,6 +241,10 @@ export function SkillBuilderPage() {
       { path: `references/note-${n}.md`, content: "" },
     ]);
   }
+  const displayMessages: BuilderMessage[] =
+    busy === "generate"
+      ? [...messages, { role: "user", content: input.trim() }]
+      : messages;
   return (
     <div className="space-y-6">
       <Link
@@ -223,7 +252,7 @@ export function SkillBuilderPage() {
         className="inline-flex items-center gap-2 text-sm text-zinc-500"
       >
         <ArrowLeft className="size-4" />
-        注册中心
+        能力市场
       </Link>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -241,10 +270,33 @@ export function SkillBuilderPage() {
           开始新建
         </button>
       </header>
+      {source && (
+        <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 text-sm leading-6">
+          基于{" "}
+          <Link
+            className="font-medium underline"
+            href={`/hub/registry/${encodeURIComponent(source.slug)}/market`}
+          >
+            {source.name}
+          </Link>{" "}
+          · v{source.version} 创建。
+          已复制正文和全部附件，使用新的标识。可以直接编辑保存，也可以描述修改需求；保存后成为你的独立草稿。
+        </div>
+      )}
       <p className="rounded-xl border border-zinc-100 bg-zinc-50/60 px-4 py-3 text-xs leading-6 text-zinc-700">
         生成后可以编辑并保存为自己的草稿。对话、素材和未保存内容仅在本页保留；离开页面前请保存。
       </p>
       {!!error && <RegistryError error={error} />}
+      {!!error && (
+        <p className="text-sm leading-6 text-zinc-500">
+          需求、参考素材和已有草案均已保留，可直接重试。
+          {error instanceof APIError && error.requestId && (
+            <span className="ml-2 break-all text-xs">
+              请求编号：{error.requestId}
+            </span>
+          )}
+        </p>
+      )}
       {error instanceof APIError && error.status === 409 && (
         <p className="text-sm text-amber-700">
           该标识可能已被使用，或上次保存已经成功。请先在“我的发布”检查，再修改标识重试。
@@ -265,34 +317,62 @@ export function SkillBuilderPage() {
         >
           <fieldset disabled={!!busy} className="grid gap-4 sm:grid-cols-2">
             <Field label="创建方式">
-              <select
+              <Select
                 className={fieldClass}
                 value={mode}
-                disabled={!!messages.length}
-                onChange={(e) => setMode(e.target.value as typeof mode)}
-              >
-                <option value="task">通用工作流程</option>
-                <option value="perspective">专家思维 · 女娲方法</option>
-              </select>
+                disabled={!!messages.length || !!busy}
+                onValueChange={(value) => setMode(value as typeof mode)}
+                options={[
+                  { value: "task", label: "通用工作流程" },
+                  { value: "perspective", label: "专家思维 · 女娲方法" },
+                ]}
+              />
             </Field>
             <Field label="使用模型">
-              <select
+              <Select
                 className={fieldClass}
                 value={activeModel}
-                disabled={!connection || loading}
-                onChange={(e) => setModel(e.target.value)}
-              >
-                <option value="" disabled>
-                  请选择模型
-                </option>
-                {connection?.models.map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
+                disabled={!connection || loading || !!busy}
+                onValueChange={(value) => setModel(value)}
+                placeholder="请选择模型"
+                options={(connection?.models ?? []).map((value) => ({
+                  value,
+                  label: value,
+                }))}
+              />
             </Field>
           </fieldset>
+          <details className="rounded-xl border border-zinc-200 px-4 py-3">
+            <summary className="cursor-pointer text-sm text-zinc-600">
+              生成设置
+              <span className="ml-2 text-xs text-zinc-400">
+                最多 {maxTokens || "—"} tokens
+              </span>
+            </summary>
+            <fieldset disabled={!!busy} className="mt-4 space-y-2">
+              <Field label="最大输出 Tokens">
+                <input
+                  className={fieldClass}
+                  type="number"
+                  form={generationFormId}
+                  min={1}
+                  max={MAX_OUTPUT_TOKENS}
+                  step={1}
+                  required
+                  value={maxTokens}
+                  onChange={(event) => setMaxTokens(event.target.value)}
+                  onInvalid={(event) => {
+                    const section = event.currentTarget.closest("details");
+                    if (section) section.open = true;
+                  }}
+                />
+              </Field>
+              <p className="text-xs leading-5 text-zinc-500">
+                默认 65,536，可自定义到
+                1,048,576。推理模型的思考也可能占用此预算；实际支持范围以所选模型和中转服务为准。
+              </p>
+            </fieldset>
+          </details>
           {mode === "perspective" && (
             <p className="text-xs leading-6 text-zinc-500">
               根据人物思维或主题方法论提炼辅助视角，基于你提供的素材与模型知识。采用
@@ -361,10 +441,11 @@ export function SkillBuilderPage() {
             </fieldset>
           </details>
           <div
+            aria-label="创建对话消息"
             aria-live="polite"
             className="max-h-[440px] space-y-4 overflow-y-auto"
           >
-            {messages.length === 0 ? (
+            {displayMessages.length === 0 ? (
               <div className="py-4">
                 <div className="mb-3 inline-flex rounded-xl bg-zinc-50 p-3 text-zinc-500">
                   <Sparkles className="size-6" />
@@ -387,7 +468,7 @@ export function SkillBuilderPage() {
                 </div>
               </div>
             ) : (
-              messages.map((message, i) => (
+              displayMessages.map((message, i) => (
                 <div
                   key={i}
                   className={`rounded-xl p-4 ${message.role === "user" ? "bg-zinc-50" : "bg-zinc-50"}`}
@@ -402,12 +483,22 @@ export function SkillBuilderPage() {
               ))
             )}
             {busy === "generate" && (
-              <p role="status" className="animate-pulse text-sm text-zinc-600">
-                正在整理需求与生成草案…
+              <p className="flex items-center gap-2 text-sm text-zinc-600">
+                <span
+                  aria-hidden="true"
+                  className="flex size-5 shrink-0 items-center justify-center overflow-hidden"
+                >
+                  <LoaderCircle className="size-4 motion-safe:animate-spin" />
+                </span>
+                正在等待模型回复…
               </p>
             )}
           </div>
-          <form onSubmit={(e) => void submit(e)} className="space-y-3">
+          <form
+            id={generationFormId}
+            onSubmit={(e) => void submit(e)}
+            className="space-y-3"
+          >
             <Field label="你的需求或修改意见">
               <textarea
                 rows={3}
@@ -425,7 +516,16 @@ export function SkillBuilderPage() {
             </Field>
             <div className="flex justify-end">
               {busy === "generate" ? (
-                <button type="button" onClick={stop} className={secondaryClass}>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    // React reuses this node for the submit button after stopping.
+                    // Cancel its native action so the same click cannot resubmit.
+                    event.preventDefault();
+                    stop();
+                  }}
+                  className={secondaryClass}
+                >
                   <Square className="size-4" />
                   停止生成
                 </button>
@@ -477,7 +577,8 @@ export function SkillBuilderPage() {
               </div>
             )}
           </div>
-          {!draft ? (
+          {busy === "generate" && <GenerationProgress updating={!!draft} />}
+          {!draft && busy !== "generate" ? (
             <div className="flex min-h-96 flex-col items-center justify-center text-center">
               <FileText className="size-12 text-zinc-200" />
               <h3 className="mt-5 font-medium text-zinc-600">
@@ -487,23 +588,23 @@ export function SkillBuilderPage() {
                 生成后，名称、使用说明和附件会出现在这里。你可以逐项修改，确认后保存。
               </p>
             </div>
-          ) : (
+          ) : draft ? (
             <>
               {preview ? (
                 <div className="mt-5 space-y-4">
                   <Field label="预览文件">
-                    <select
+                    <Select
                       className={fieldClass}
                       value={fileView}
-                      onChange={(e) => setFileView(e.target.value)}
-                    >
-                      <option value="SKILL.md">SKILL.md</option>
-                      {draft.files.map((file, i) => (
-                        <option key={i} value={file.path}>
-                          {file.path}
-                        </option>
-                      ))}
-                    </select>
+                      onValueChange={(value) => setFileView(value)}
+                      options={[
+                        { value: "SKILL.md", label: "SKILL.md" },
+                        ...draft.files.map((file) => ({
+                          value: file.path,
+                          label: file.path,
+                        })),
+                      ]}
+                    />
                   </Field>
                   <pre className="max-h-[720px] overflow-auto whitespace-pre-wrap break-words rounded-xl bg-zinc-50 p-4 font-mono text-xs leading-6">
                     {fileView === "SKILL.md"
@@ -640,11 +741,11 @@ export function SkillBuilderPage() {
                   className={primaryClass}
                 >
                   <Save className="size-4" />
-                  {busy === "save" ? "正在保存…" : "保存到注册中心"}
+                  {busy === "save" ? "正在保存…" : "保存为我的草稿"}
                 </button>
               </div>
             </>
-          )}
+          ) : null}
         </section>
       </div>
     </div>

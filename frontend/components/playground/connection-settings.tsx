@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { playgroundApi, type ModelProtocol } from "@/lib/api/playground";
 import { Eye, EyeOff, KeyRound, Settings2, Unplug } from "lucide-react";
@@ -253,17 +255,17 @@ function ConnectionForm({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={apply} noValidate className="space-y-5">
+    <form onSubmit={apply} noValidate className="min-w-0 space-y-5">
       <div className="space-y-2">
         <label htmlFor="model-protocol" className="text-sm font-medium">
           接口协议
         </label>
-        <select
+        <Select
           id="model-protocol"
           value={protocol}
           className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm"
-          onChange={(e) => {
-            const next = e.target.value as ModelProtocol;
+          onValueChange={(value) => {
+            const next = value as ModelProtocol;
             resetDiscovery();
             setProtocol(next);
             if (
@@ -277,10 +279,11 @@ function ConnectionForm({ onDone }: { onDone: () => void }) {
             )
               setBaseUrl("https://tokenhub.robosense.cn/v1");
           }}
-        >
-          <option value="openai">OpenAI 兼容</option>
-          <option value="anthropic">Claude（Anthropic）</option>
-        </select>
+          options={[
+            { value: "openai", label: "OpenAI 兼容" },
+            { value: "anthropic", label: "Claude（Anthropic）" },
+          ]}
+        />
       </div>
       <div className="space-y-2">
         <label htmlFor="model-base-url" className="text-sm font-medium">
@@ -423,20 +426,15 @@ function ConnectionForm({ onDone }: { onDone: () => void }) {
         <label htmlFor="default-model" className="text-sm font-medium">
           默认模型
         </label>
-        <select
+        <Select
           id="default-model"
           value={selected}
-          onChange={(event) => setDefaultModel(event.target.value)}
+          onValueChange={(value) => setDefaultModel(value)}
           disabled={!models.length}
           className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm disabled:text-zinc-400"
-        >
-          {!models.length && <option value="">先选择或填写模型</option>}
-          {models.map((model) => (
-            <option key={model} value={model}>
-              {model}
-            </option>
-          ))}
-        </select>
+          placeholder="先选择或填写模型"
+          options={models.map((model) => ({ value: model, label: model }))}
+        />
       </div>
       <p className="rounded-xl bg-zinc-50 p-3 text-xs leading-6 text-zinc-800">
         API Key 将加密保存。修改接口地址或协议时必须重新填写

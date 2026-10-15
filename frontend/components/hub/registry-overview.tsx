@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 import { useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -43,12 +45,12 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            {mine ? "我的发布" : "注册中心"}
+            {mine ? "我的发布" : "能力市场"}
           </h1>
           <p className="mt-2 text-sm text-zinc-500">
             {mine
               ? "管理你的能力草稿与版本。"
-              : "构建团队可复用的 MCP 服务和 Skill。"}
+              : "发现团队已发布的 Skill 和 MCP，下载使用，或基于现成 Skill 创建自己的版本。"}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -66,6 +68,38 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
           ? "维护草稿、提交审核与发布新版本；审核新版期间，已上线版本继续可用。"
           : "这里展示已上线且你有权访问的能力。新建或待审内容请前往「我的发布」。"}
       </p>
+      {!mine && (
+        <div
+          className="flex flex-wrap items-center gap-2"
+          role="group"
+          aria-label="场景快捷搜索"
+        >
+          <span className="mr-1 text-xs text-zinc-500">按场景找 Skill</span>
+          {["周报", "需求", "代码", "数据", "文档"].map((scene) => (
+            <button
+              key={scene}
+              aria-pressed={filter.q === scene && filter.type === "skill"}
+              className={secondaryClass}
+              onClick={() => {
+                setSearch(scene);
+                change({ type: "skill", q: scene });
+              }}
+            >
+              {scene}
+            </button>
+          ))}
+          <button
+            className={secondaryClass}
+            onClick={() => {
+              setSearch("");
+              setDepartment("");
+              setFilter({ offset: 0 });
+            }}
+          >
+            清除筛选
+          </button>
+        </div>
+      )}
       <section className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-zinc-100 px-5 py-4">
           <div
@@ -142,19 +176,21 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
             placeholder="部门"
             className="w-32 rounded-lg border border-zinc-200 px-3 py-2 text-sm"
           />
-          <select
-            disabled={!mine}
-            aria-label="筛选状态"
-            value={filter.status ?? ""}
-            onChange={(e) => change({ status: e.target.value })}
-            className="rounded-lg border border-zinc-200 px-3 py-2 text-sm"
-          >
-            <option value="">全部状态</option>
-            <option value="draft">草稿</option>
-            <option value="in_review">审核中</option>
-            <option value="published">已上线</option>
-            <option value="offline">已下线</option>
-          </select>
+          {mine && (
+            <Select
+              aria-label="筛选状态"
+              value={filter.status ?? ""}
+              onValueChange={(value) => change({ status: value })}
+              className="w-auto rounded-lg border border-zinc-200 px-3 py-2 text-sm"
+              options={[
+                { value: "", label: "全部状态" },
+                { value: "draft", label: "草稿" },
+                { value: "in_review", label: "审核中" },
+                { value: "published", label: "已上线" },
+                { value: "offline", label: "已下线" },
+              ]}
+            />
+          )}
           <button className={secondaryClass}>
             <Search className="size-4" />
             搜索
@@ -193,7 +229,7 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
                       <tr key={item.id} className="border-t border-zinc-100">
                         <td className="px-5 py-4">
                           <Link
-                            href={`/hub/registry/${item.slug}`}
+                            href={`/hub/registry/${encodeURIComponent(item.slug)}${mine ? "" : "/market"}`}
                             className="font-medium text-zinc-600 hover:underline"
                           >
                             {item.name}
@@ -221,14 +257,22 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
                 {items.map((item) => (
                   <Link
                     key={item.id}
-                    href={`/hub/registry/${item.slug}`}
+                    href={`/hub/registry/${encodeURIComponent(item.slug)}${mine ? "" : "/market"}`}
                     className="group flex min-w-0 flex-col rounded-xl border border-zinc-200 p-5 transition hover:border-zinc-300 hover:shadow-md"
                   >
                     <div className="flex items-center justify-between">
                       <span className="rounded-lg bg-zinc-50 px-2.5 py-1.5 text-xs font-semibold uppercase text-zinc-600">
                         {item.type}
                       </span>
-                      <StatusBadge status={item.status} />
+                      {mine ? (
+                        <StatusBadge status={item.status} />
+                      ) : (
+                        <span className="text-xs text-zinc-500">
+                          {item.published_version
+                            ? `v${item.published_version}`
+                            : "已上线"}
+                        </span>
+                      )}
                     </div>
                     <h2 className="mt-4 break-words font-semibold">
                       {item.name}
@@ -242,6 +286,14 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
                       </span>
                       <ArrowUpRight className="ml-2 size-4 shrink-0 group-hover:text-zinc-600" />
                     </div>
+                    {!mine && (
+                      <p
+                        className="mt-3 truncate text-xs text-zinc-500"
+                        title={item.publisher_name || item.owner_open_id}
+                      >
+                        发布者 · {item.publisher_name || item.owner_open_id}
+                      </p>
+                    )}
                   </Link>
                 ))}
               </div>
@@ -256,10 +308,14 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
                   filter.status ||
                   filter.offset
                     ? "没有匹配的能力"
-                    : "从第一个能力开始"}
+                    : mine
+                      ? "从第一个能力开始"
+                      : "暂无可用能力"}
                 </h2>
                 <p className="mt-2 text-sm text-zinc-400">
-                  创建 MCP 或 Skill 草稿，在这里维护版本和接入信息。
+                  {mine
+                    ? "创建 MCP 或 Skill 草稿，在这里维护版本和接入信息。"
+                    : "试试其他关键词或清除筛选；审核上线且对你可见的能力会出现在这里。"}
                 </p>
               </div>
             )}

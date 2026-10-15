@@ -71,9 +71,43 @@ type Querier interface {
 	GovernanceIdentity(ctx context.Context, userID uuid.UUID) (GovernanceIdentityRow, error)
 	InsertGovernanceAudit(ctx context.Context, arg InsertGovernanceAuditParams) error
 	IsPlatformAdmin(ctx context.Context, openID string) (bool, error)
+	KnowledgeActivate(ctx context.Context, arg KnowledgeActivateParams) (int64, error)
+	KnowledgeActiveDocuments(ctx context.Context, arg KnowledgeActiveDocumentsParams) ([]KnowledgeActiveDocumentsRow, error)
+	KnowledgeApplications(ctx context.Context) ([]KnowledgeApplication, error)
+	KnowledgeAudit(ctx context.Context, arg KnowledgeAuditParams) error
+	KnowledgeAuditEntries(ctx context.Context) ([]KnowledgeAuditEntriesRow, error)
+	KnowledgeClearGrants(ctx context.Context, applicationID uuid.UUID) error
+	KnowledgeCreateDocument(ctx context.Context, arg KnowledgeCreateDocumentParams) (Document, error)
+	KnowledgeCreateVersion(ctx context.Context, arg KnowledgeCreateVersionParams) error
+	KnowledgeCredential(ctx context.Context, digest []byte) (KnowledgeCredential, error)
+	KnowledgeCredentialCurrent(ctx context.Context, arg KnowledgeCredentialCurrentParams) (bool, error)
+	KnowledgeCredentialUsed(ctx context.Context, id uuid.UUID) error
+	KnowledgeDeleteBase(ctx context.Context, id uuid.UUID) error
+	KnowledgeDeleteDocument(ctx context.Context, id uuid.UUID) error
+	KnowledgeDocument(ctx context.Context, id uuid.UUID) (Document, error)
+	KnowledgeDocumentFail(ctx context.Context, arg KnowledgeDocumentFailParams) error
+	KnowledgeDocumentProcessing(ctx context.Context, pendingVersionID pgtype.UUID) error
+	KnowledgeDocuments(ctx context.Context, kbID uuid.UUID) ([]Document, error)
+	KnowledgeDuplicateChecksum(ctx context.Context, arg KnowledgeDuplicateChecksumParams) (bool, error)
+	KnowledgeGetBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
+	KnowledgeGrant(ctx context.Context, arg KnowledgeGrantParams) error
+	KnowledgeGrants(ctx context.Context, applicationID uuid.UUID) ([]uuid.UUID, error)
+	KnowledgeIssue(ctx context.Context, arg KnowledgeIssueParams) error
+	KnowledgeLatestCredential(ctx context.Context, applicationID uuid.UUID) (KnowledgeLatestCredentialRow, error)
+	KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, error)
+	KnowledgeLockDocument(ctx context.Context, id uuid.UUID) (Document, error)
+	KnowledgePreview(ctx context.Context, arg KnowledgePreviewParams) error
+	KnowledgeRevoke(ctx context.Context, applicationID uuid.UUID) error
+	KnowledgeRevokeBaseGrants(ctx context.Context, kbID uuid.UUID) error
+	KnowledgeSaveApplication(ctx context.Context, arg KnowledgeSaveApplicationParams) (KnowledgeApplication, error)
+	KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBaseParams) (KnowledgeBase, error)
+	KnowledgeStageVersion(ctx context.Context, arg KnowledgeStageVersionParams) error
+	KnowledgeVersion(ctx context.Context, id uuid.UUID) (KnowledgeVersionRow, error)
+	KnowledgeVersionFail(ctx context.Context, arg KnowledgeVersionFailParams) error
+	KnowledgeVersionReady(ctx context.Context, id uuid.UUID) error
 	ListCapabilityAllowlist(ctx context.Context, capabilityID uuid.UUID) ([]string, error)
 	ListCapabilityVersions(ctx context.Context, capabilityID uuid.UUID) ([]CapabilityVersion, error)
-	ListCatalogCapabilities(ctx context.Context, arg ListCatalogCapabilitiesParams) ([]Capability, error)
+	ListCatalogCapabilities(ctx context.Context, arg ListCatalogCapabilitiesParams) ([]ListCatalogCapabilitiesRow, error)
 	ListConversationsByKB(ctx context.Context, arg ListConversationsByKBParams) ([]Conversation, error)
 	ListConversationsByKBForOwner(ctx context.Context, arg ListConversationsByKBForOwnerParams) ([]Conversation, error)
 	ListDocumentsByKB(ctx context.Context, arg ListDocumentsByKBParams) ([]Document, error)

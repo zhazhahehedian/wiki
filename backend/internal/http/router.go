@@ -7,9 +7,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/zenith-wang/it-wiki/backend/internal/playground"
 )
 
 type Handlers struct {
+	Knowledge    *KnowledgeHandler
 	KB           *KBHandler
 	Doc          *DocumentHandler
 	Chunk        *ChunkHandler
@@ -48,7 +50,7 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(SanitizedAccessLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(requestTimeout)
 	r.Use(func(next http.Handler) http.Handler {
 		return CORS(next, h.Auth.FrontendOrigin())
 	})
@@ -57,6 +59,9 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 	r.Get("/api/healthz", healthz)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		if h.Knowledge != nil {
+			r.Post("/knowledge/search", h.Knowledge.MachineSearch)
+		}
 		r.Route("/auth/feishu", func(r chi.Router) {
 			r.Get("/start", h.Auth.Start)
 			r.Get("/callback", h.Auth.Callback)
@@ -66,6 +71,25 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 			r.Use(h.Auth.Middleware)
 			r.Get("/auth/me", h.Auth.Me)
 			r.Post("/auth/logout", h.Auth.Logout)
+			if h.Knowledge != nil {
+				r.Get("/knowledge/bases", h.Knowledge.Bases)
+				r.Post("/knowledge/bases", h.Knowledge.Bases)
+				r.Put("/knowledge/bases/{id}", h.Knowledge.Bases)
+				r.Delete("/knowledge/bases/{id}", h.Knowledge.DeleteBase)
+				r.Get("/knowledge/bases/{id}/documents", h.Knowledge.Documents)
+				r.Post("/knowledge/bases/{id}/documents", h.Knowledge.Upload)
+				r.Post("/knowledge/bases/{id}/documents/{documentID}/versions", h.Knowledge.Upload)
+				r.Delete("/knowledge/documents/{id}", h.Knowledge.DeleteDocument)
+				r.Post("/knowledge/documents/{id}/retry", h.Knowledge.Retry)
+				r.Get("/knowledge/versions/{id}", h.Knowledge.Preview)
+				r.Post("/knowledge/test-search", h.Knowledge.Search)
+				r.Get("/knowledge/applications", h.Knowledge.Applications)
+				r.Get("/knowledge/audit", h.Knowledge.Audit)
+				r.Post("/knowledge/applications", h.Knowledge.Applications)
+				r.Put("/knowledge/applications/{id}", h.Knowledge.Applications)
+				r.Post("/knowledge/applications/{id}/credentials", h.Knowledge.Rotate)
+				r.Delete("/knowledge/applications/{id}/credentials", h.Knowledge.Revoke)
+			}
 			if h.Playground != nil {
 				r.Get("/playground/connection", h.Playground.Get)
 				r.Put("/playground/connection", h.Playground.Save)
@@ -77,6 +101,7 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 			if h.Registry != nil {
 				r.Get("/catalog", h.Registry.Catalog)
 				r.Get("/catalog/{slug}", h.Registry.Published)
+				r.Get("/catalog/{slug}/template", h.Registry.SkillTemplate)
 				r.Get("/governance/me", h.Registry.Identity)
 				r.Get("/governance/reviews", h.Registry.Reviews)
 				r.Get("/governance/audit", h.Registry.Audit)
@@ -129,6 +154,20 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 	})
 
 	return r
+}
+
+func requestTimeout(next http.Handler) http.Handler {
+	standard := middleware.Timeout(time.Minute)(next)
+	// Leave room for auth/config reads and for the model's own timeout to return
+	// a structured error. A nested timeout cannot extend a 60-second parent.
+	model := middleware.Timeout(playground.StreamTimeout + time.Minute)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/skill-builder/turn" || r.URL.Path == "/api/v1/playground/chat/stream") {
+			model.ServeHTTP(w, r)
+			return
+		}
+		standard.ServeHTTP(w, r)
+	})
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {

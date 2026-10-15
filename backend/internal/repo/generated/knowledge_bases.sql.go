@@ -39,7 +39,7 @@ func (q *Queries) CountKnowledgeBasesForOwner(ctx context.Context, ownerUserID p
 const createKnowledgeBase = `-- name: CreateKnowledgeBase :one
 INSERT INTO knowledge_bases (name, description, embed_model, embed_dim, settings)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id
+RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at
 `
 
 type CreateKnowledgeBaseParams struct {
@@ -70,6 +70,11 @@ func (q *Queries) CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerUserID,
+		&i.Visibility,
+		&i.Department,
+		&i.Members,
+		&i.ApplicationShared,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -77,7 +82,7 @@ func (q *Queries) CreateKnowledgeBase(ctx context.Context, arg CreateKnowledgeBa
 const createKnowledgeBaseForOwner = `-- name: CreateKnowledgeBaseForOwner :one
 INSERT INTO knowledge_bases (name, description, embed_model, embed_dim, settings, owner_user_id)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id
+RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at
 `
 
 type CreateKnowledgeBaseForOwnerParams struct {
@@ -110,6 +115,11 @@ func (q *Queries) CreateKnowledgeBaseForOwner(ctx context.Context, arg CreateKno
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerUserID,
+		&i.Visibility,
+		&i.Department,
+		&i.Members,
+		&i.ApplicationShared,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -139,7 +149,7 @@ func (q *Queries) DeleteKnowledgeBaseForOwner(ctx context.Context, arg DeleteKno
 }
 
 const getKnowledgeBase = `-- name: GetKnowledgeBase :one
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases WHERE id = $1
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE id = $1
 `
 
 func (q *Queries) GetKnowledgeBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
@@ -156,12 +166,17 @@ func (q *Queries) GetKnowledgeBase(ctx context.Context, id uuid.UUID) (Knowledge
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerUserID,
+		&i.Visibility,
+		&i.Department,
+		&i.Members,
+		&i.ApplicationShared,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getKnowledgeBaseForOwner = `-- name: GetKnowledgeBaseForOwner :one
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases
 WHERE id = $1 AND owner_user_id = $2
 `
 
@@ -184,12 +199,17 @@ func (q *Queries) GetKnowledgeBaseForOwner(ctx context.Context, arg GetKnowledge
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerUserID,
+		&i.Visibility,
+		&i.Department,
+		&i.Members,
+		&i.ApplicationShared,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listKnowledgeBases = `-- name: ListKnowledgeBases :many
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -219,6 +239,11 @@ func (q *Queries) ListKnowledgeBases(ctx context.Context, arg ListKnowledgeBases
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OwnerUserID,
+			&i.Visibility,
+			&i.Department,
+			&i.Members,
+			&i.ApplicationShared,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +256,7 @@ func (q *Queries) ListKnowledgeBases(ctx context.Context, arg ListKnowledgeBases
 }
 
 const listKnowledgeBasesForOwner = `-- name: ListKnowledgeBasesForOwner :many
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id FROM knowledge_bases
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases
 WHERE owner_user_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -263,6 +288,11 @@ func (q *Queries) ListKnowledgeBasesForOwner(ctx context.Context, arg ListKnowle
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OwnerUserID,
+			&i.Visibility,
+			&i.Department,
+			&i.Members,
+			&i.ApplicationShared,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
