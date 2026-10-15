@@ -1,12 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  KnowledgeBases,
-  KnowledgeDocuments,
-  KnowledgeSearch,
-  VersionPreview,
-} from "./knowledge-pages";
+import { KnowledgeApplications } from "./knowledge-applications";
+import { KnowledgeBases } from "./knowledge-bases";
+import { KnowledgeDocuments } from "./knowledge-documents";
+import { KnowledgeSearch } from "./knowledge-search";
+import { VersionPreview } from "./version-preview";
 import { knowledge } from "@/lib/api/knowledge";
 vi.mock("@/lib/api/knowledge", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/knowledge")>()),
@@ -18,7 +17,13 @@ vi.mock("@/lib/api/knowledge", async (importOriginal) => ({
     search: vi.fn(),
     upload: vi.fn(),
     retry: vi.fn(),
+    applications: vi.fn(),
+    saveApplication: vi.fn(),
+    audit: vi.fn(),
   },
+}));
+vi.mock("@/components/hub/governance-pages", () => ({
+  AdminGate: ({ children }: { children: React.ReactNode }) => children,
 }));
 function mount(node: React.ReactNode) {
   return render(
@@ -62,14 +67,46 @@ describe("knowledge pages", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
-      expect(knowledge.saveBase).toHaveBeenCalledWith(
-        "",
-        expect.objectContaining({
-          name: "财务制度",
-          visibility: "private",
-          application_shared: false,
-        }),
-      ),
+      expect(knowledge.saveBase).toHaveBeenCalledWith("", {
+        name: "财务制度",
+        description: "",
+        visibility: "private",
+        application_shared: false,
+      }),
+    );
+  });
+  it("lets an admin remove a grant whose knowledge base is no longer shared", async () => {
+    vi.mocked(knowledge.applications).mockResolvedValue([
+      {
+        id: "app",
+        name: "报销助手",
+        enabled: true,
+        knowledge_base_ids: ["kb", "gone"],
+        credential_prefix: "",
+      },
+    ]);
+    vi.mocked(knowledge.audit).mockResolvedValue([]);
+    vi.mocked(knowledge.saveApplication).mockImplementation(async (id, body) => ({ ...body, id, credential_prefix: "" }));
+    mount(<KnowledgeApplications />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "编辑授权 / 禁用" }),
+    );
+    const unshared = await screen.findByRole("checkbox", {
+      name: /财务制度（已取消共享或已删除）/,
+    });
+    expect(unshared).toBeChecked();
+    fireEvent.click(unshared);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /gone（已取消共享或已删除）/ }),
+    );
+    expect(screen.queryByText(/已取消共享或已删除/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存授权" }));
+    await waitFor(() =>
+      expect(knowledge.saveApplication).toHaveBeenCalledWith("app", {
+        name: "报销助手",
+        enabled: true,
+        knowledge_base_ids: [],
+      }),
     );
   });
   it("keeps the old retrievable version visible after an update fails", async () => {

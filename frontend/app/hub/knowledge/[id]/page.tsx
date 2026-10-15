@@ -1,4 +1,4 @@
-import { KnowledgeDocuments } from "@/components/knowledge/knowledge-pages";
+import { KnowledgeDocuments } from "@/components/knowledge/knowledge-documents";
 export default async function Page({
   params,
 }: {
