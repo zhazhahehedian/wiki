@@ -317,7 +317,7 @@ it("omits disabled parameters and transmits explicit zero values with system ins
   await user.clear(screen.getByLabelText("最大 Tokens", { exact: true }));
   await user.type(
     screen.getByLabelText("最大 Tokens", { exact: true }),
-    "262144",
+    "131072",
   );
   await user.type(screen.getByLabelText("系统提示词"), "Answer briefly");
   await user.click(screen.getByRole("button", { name: "关闭参数" }));
@@ -325,7 +325,7 @@ it("omits disabled parameters and transmits explicit zero values with system ins
   await user.click(screen.getByRole("button", { name: "发送消息" }));
   await waitFor(() => expect(streamModelChat).toHaveBeenCalledTimes(2));
   const payload = vi.mocked(streamModelChat).mock.calls[1][0];
-  expect(payload).toMatchObject({ frequency_penalty: 0, max_tokens: 262144 });
+  expect(payload).toMatchObject({ frequency_penalty: 0, max_tokens: 131072 });
   expect(payload.messages[0]).toEqual({
     role: "system",
     content: "Answer briefly",

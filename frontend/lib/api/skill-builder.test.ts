@@ -18,7 +18,7 @@ it("uses session/CSRF and propagates cancellation for both generation and save",
     model: "model",
     messages: [{ role: "user" as const, content: "周报" }],
     material: "",
-    max_tokens: 65536,
+    max_tokens: 8192,
   };
   await generateSkill(input, controller.signal);
   let [url, options] = fetch.mock.calls[0];

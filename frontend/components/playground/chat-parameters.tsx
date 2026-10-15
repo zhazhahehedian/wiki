@@ -239,7 +239,7 @@ export function ChatParameterSettings({
               {protocol === "anthropic" && (
                 <p className="text-[11px] leading-5 text-zinc-500">
                   Claude 不发送惩罚参数；未启用最大 Tokens 时使用
-                  65,536。部分模型不接受采样参数，遇到参数错误可关闭温度与 Top P。
+                  8,192。部分模型不接受采样参数，遇到参数错误可关闭温度与 Top P。
                 </p>
               )}
               <div className="space-y-2">

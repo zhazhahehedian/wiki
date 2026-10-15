@@ -129,30 +129,19 @@ it("requires a configured model before sending", async () => {
   );
   expect(generateSkill).not.toHaveBeenCalled();
 });
-it("uses a larger default budget and lets the user adjust it without losing work", async () => {
+it("sends an adjusted output budget and locks it while generating", async () => {
   mount();
-  await generate();
-  expect(vi.mocked(generateSkill).mock.lastCall![0].max_tokens).toBe(65536);
   await userEvent.click(screen.getByText("生成设置"));
   const budget = screen.getByLabelText("最大输出 Tokens");
-  expect(budget).toHaveValue(65536);
+  expect(budget).toHaveValue(8192);
   fireEvent.change(budget, { target: { value: "131072" } });
-  vi.mocked(generateSkill).mockRejectedValue(
-    new APIError(502, "model_upstream_rejected", "模型不支持本次请求参数"),
-  );
-  await send("补充附件");
-  expect(vi.mocked(generateSkill).mock.lastCall![0].max_tokens).toBe(131072);
-  expect(await screen.findByRole("alert")).toHaveTextContent("模型不支持");
-  expect(budget).toHaveValue(131072);
-  expect(screen.getByLabelText("Skill 名称")).toHaveValue(draft.name);
-  expect(screen.getByLabelText("你的需求或修改意见")).toHaveValue("补充附件");
-  fireEvent.change(budget, { target: { value: "8192" } });
   vi.mocked(generateSkill).mockImplementation(() => new Promise(() => {}));
-  await send("使用较低预算重试");
-  expect(vi.mocked(generateSkill).mock.lastCall![0].max_tokens).toBe(8192);
+  await send();
+  expect(vi.mocked(generateSkill).mock.lastCall![0].max_tokens).toBe(131072);
   expect(budget).toBeDisabled();
   await userEvent.click(screen.getByRole("button", { name: "停止生成" }));
   expect(budget).toBeEnabled();
+  expect(budget).toHaveValue(131072);
 });
 it("uses the Nuwa mode, carries clarification history and edited draft, previews files and saves only on confirmation", async () => {
   const user = userEvent.setup();

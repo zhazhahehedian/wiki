@@ -1,4 +1,4 @@
-import { KnowledgeSearch } from "@/components/knowledge/knowledge-pages";
+import { KnowledgeSearch } from "@/components/knowledge/knowledge-search";
 export default function Page() {
   return <KnowledgeSearch />;
 }

@@ -1,13 +1,12 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { playgroundApi, type ModelProtocol } from "@/lib/api/playground";
 import { Eye, EyeOff, KeyRound, Settings2, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -263,7 +262,6 @@ function ConnectionForm({ onDone }: { onDone: () => void }) {
         <Select
           id="model-protocol"
           value={protocol}
-          className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm"
           onValueChange={(value) => {
             const next = value as ModelProtocol;
             resetDiscovery();
@@ -431,7 +429,6 @@ function ConnectionForm({ onDone }: { onDone: () => void }) {
           value={selected}
           onValueChange={(value) => setDefaultModel(value)}
           disabled={!models.length}
-          className="h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-sm disabled:text-zinc-400"
           placeholder="先选择或填写模型"
           options={models.map((model) => ({ value: model, label: model }))}
         />

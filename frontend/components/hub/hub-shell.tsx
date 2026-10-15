@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Boxes,
   LayoutDashboard,
+  BookOpen,
   Library,
   FlaskConical,
   Send,
@@ -36,7 +37,7 @@ import { cn } from "@/lib/utils";
 const navigation = [
   { href: "/hub", label: "仪表盘", icon: LayoutDashboard },
   { href: "/hub/registry", label: "能力市场", icon: Library },
-  { href: "/hub/knowledge", label: "知识服务", icon: Library },
+  { href: "/hub/knowledge", label: "知识服务", icon: BookOpen },
   { href: "/hub/playground", label: "游乐场", icon: FlaskConical },
   { href: "/hub/publications", label: "我的发布", icon: Send },
   { href: "/hub/settings", label: "设置", icon: Settings },

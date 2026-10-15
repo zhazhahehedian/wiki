@@ -1,10 +1,9 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { Select } from "@/components/ui/select";
 import {
   actOnCapability,
   type CapabilityDetail,
