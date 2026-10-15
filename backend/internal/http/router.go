@@ -11,20 +11,10 @@ import (
 
 type Handlers struct {
 	Knowledge    *KnowledgeHandler
-	KB           *KBHandler
-	Doc          *DocumentHandler
-	Chunk        *ChunkHandler
-	Chat         *ChatHandler
 	Auth         *AuthHandler
-	Feishu       *FeishuHandler
 	Playground   *PlaygroundHandler
 	Registry     *RegistryHandler
 	SkillBuilder *SkillBuilderHandler
-}
-
-// NewRouter retains the legacy composition for migration regression tests.
-func NewRouter(h Handlers) http.Handler {
-	return newRouter(h, true)
 }
 
 // NewPlatformRouter exposes only the active Capability Hub surface.
@@ -33,13 +23,13 @@ func NewPlatformRouter(auth *AuthHandler, playground ...*PlaygroundHandler) http
 	if len(playground) > 0 {
 		h.Playground = playground[0]
 	}
-	return newRouter(h, false)
+	return newRouter(h)
 }
 
 // NewCapabilityHubRouter composes active modules without exposing legacy routes.
-func NewCapabilityHubRouter(h Handlers) http.Handler { return newRouter(h, false) }
+func NewCapabilityHubRouter(h Handlers) http.Handler { return newRouter(h) }
 
-func newRouter(h Handlers, legacy bool) http.Handler {
+func newRouter(h Handlers) http.Handler {
 	if h.Auth == nil {
 		panic("http router requires an auth handler")
 	}
@@ -131,34 +121,6 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 			if h.SkillBuilder != nil {
 				r.Post("/skill-builder/drafts", h.SkillBuilder.Save)
 			}
-
-			if !legacy {
-				return
-			}
-
-			r.Post("/kbs", h.KB.Create)
-			r.Get("/kbs", h.KB.List)
-			r.Get("/kbs/{id}", h.KB.Get)
-			r.Delete("/kbs/{id}", h.KB.Delete)
-
-			r.Post("/kbs/{id}/docs", h.Doc.Upload)
-			r.Post("/kbs/{kbID}/feishu-imports", h.Feishu.Import)
-			r.Get("/kbs/{id}/docs", h.Doc.ListByKB)
-			r.Get("/docs/{id}", h.Doc.Get)
-			r.Delete("/docs/{id}", h.Doc.Delete)
-
-			r.Get("/docs/{id}/chunks", h.Chunk.ListByDoc)
-
-			r.Post("/docs/{id}/reingest", h.Doc.Reingest)
-			r.Post("/docs/{docID}/sync", h.Feishu.Sync)
-			r.Post("/kbs/{id}/reingest", h.Doc.ReingestKB)
-
-			r.Get("/kbs/{kbID}/conversations", h.Chat.ListConversations)
-			r.Post("/kbs/{kbID}/conversations", h.Chat.CreateConversation)
-			r.Patch("/conversations/{conversationID}", h.Chat.UpdateConversation)
-			r.Get("/conversations/{conversationID}/messages", h.Chat.ListMessages)
-			r.Post("/conversations/{conversationID}/messages/stream", h.Chat.StreamMessage)
-			r.Get("/kbs/{kbID}/chunks/{chunkID}/neighbors", h.Chunk.Neighbors)
 		})
 	})
 

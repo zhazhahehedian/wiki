@@ -1,6 +1,6 @@
 package repo
 
-// Like the existing vectorstore, pgvector operations use pgx directly because
+// pgvector operations use pgx directly because
 // sqlc does not model runtime embedding dimensions. Business SQL stays in queries.
 import (
 	"context"

@@ -21,35 +21,6 @@ type Config struct {
 	S3Region       string
 	S3UsePathStyle bool
 
-	LLMBaseURL string
-	LLMAPIKey  string
-	LLMModel   string
-
-	EmbeddingBaseURL string
-	EmbeddingAPIKey  string
-	EmbeddingModel   string
-	EmbeddingDim     int
-
-	TokenizerEncoding string
-	ChunkSize         int
-	ChunkOverlap      int
-	EmbedBatchSize    int
-	UploadMaxBytes    int64
-	RiverMaxWorkers   int
-
-	FeishuSyncJobTimeout      time.Duration
-	IngestionJobTimeout       time.Duration
-	FeishuReconcileJobTimeout time.Duration
-	FeishuReconcileInterval   time.Duration
-	FeishuSyncLease           time.Duration
-	RiverRescueStuckJobsAfter time.Duration
-	FeishuReconcileBatchSize  int
-	FeishuReconcileMaxBatches int
-
-	RAGTopK            int
-	RAGMinScore        float32
-	RAGHistoryMessages int
-
 	FeishuEnabled      bool
 	FeishuAppID        string
 	FeishuAppSecret    string
@@ -62,24 +33,11 @@ type Config struct {
 	FrontendOrigin      string
 
 	BootstrapAdminFeishuOpenID string
-	BootstrapOwnerFeishuOpenID string
 }
 
-// Load is retained for legacy tools and migration regression coverage.
-func Load() (*Config, error) { return load(true) }
-
-// LoadPlatform ignores retired KB/RAG runtime settings.
-func LoadPlatform() (*Config, error) { return load(false) }
-
-func load(legacy bool) (*Config, error) {
-	dim := 0
-	var err error
-	if legacy {
-		dim, err = strconv.Atoi(getEnv("EMBEDDING_DIM", "1024"))
-		if err != nil {
-			return nil, fmt.Errorf("invalid EMBEDDING_DIM: %w", err)
-		}
-	}
+// LoadPlatform loads the Capability Hub server configuration. Knowledge
+// embedding settings are read by the knowledge wiring itself.
+func LoadPlatform() (*Config, error) {
 	usePathStyle, _ := strconv.ParseBool(getEnv("S3_USE_PATH_STYLE", "true"))
 
 	sessionCookieSecure, err := strconv.ParseBool(getEnv("SESSION_COOKIE_SECURE", "false"))
@@ -92,54 +50,6 @@ func load(legacy bool) (*Config, error) {
 	}
 	if sessionTTL <= 0 {
 		return nil, fmt.Errorf("invalid SESSION_TTL: must be positive")
-	}
-	var feishuSyncJobTimeout, ingestionJobTimeout, feishuReconcileJobTimeout time.Duration
-	var feishuReconcileInterval, feishuSyncLease, riverRescueStuckJobsAfter time.Duration
-	var feishuReconcileBatchSize, feishuReconcileMaxBatches int
-	if legacy {
-		feishuSyncJobTimeout, err = positiveDurationEnv("FEISHU_SYNC_JOB_TIMEOUT", "10m")
-		if err != nil {
-			return nil, err
-		}
-		ingestionJobTimeout, err = positiveDurationEnv("INGESTION_JOB_TIMEOUT", "20m")
-		if err != nil {
-			return nil, err
-		}
-		feishuReconcileJobTimeout, err = positiveDurationEnv("FEISHU_RECONCILE_JOB_TIMEOUT", "2m")
-		if err != nil {
-			return nil, err
-		}
-		feishuReconcileInterval, err = positiveDurationEnv("FEISHU_RECONCILE_INTERVAL", "5m")
-		if err != nil {
-			return nil, err
-		}
-		feishuSyncLease, err = positiveDurationEnv("FEISHU_SYNC_LEASE", "45m")
-		if err != nil {
-			return nil, err
-		}
-		riverRescueStuckJobsAfter, err = positiveDurationEnv("RIVER_RESCUE_STUCK_JOBS_AFTER", "30m")
-		if err != nil {
-			return nil, err
-		}
-		feishuReconcileBatchSize, err = boundedPositiveIntEnv("FEISHU_RECONCILE_BATCH_SIZE", "100", 500)
-		if err != nil {
-			return nil, err
-		}
-		feishuReconcileMaxBatches, err = boundedPositiveIntEnv("FEISHU_RECONCILE_MAX_BATCHES", "10", 20)
-		if err != nil {
-			return nil, err
-		}
-		if feishuReconcileInterval >= feishuSyncLease {
-			return nil, fmt.Errorf("invalid FEISHU_RECONCILE_INTERVAL: must be less than FEISHU_SYNC_LEASE")
-		}
-		if feishuSyncLease <= feishuSyncJobTimeout+ingestionJobTimeout {
-			return nil, fmt.Errorf("invalid FEISHU_SYNC_LEASE: must exceed FEISHU_SYNC_JOB_TIMEOUT plus INGESTION_JOB_TIMEOUT")
-		}
-		maxWorkerTimeout := max(feishuSyncJobTimeout, ingestionJobTimeout, feishuReconcileJobTimeout)
-		if riverRescueStuckJobsAfter <= maxWorkerTimeout {
-			return nil, fmt.Errorf("invalid RIVER_RESCUE_STUCK_JOBS_AFTER: must exceed every worker timeout")
-		}
-
 	}
 
 	feishuValues := map[string]string{
@@ -189,22 +99,6 @@ func load(legacy bool) (*Config, error) {
 		S3Bucket:         mustEnv("S3_BUCKET"),
 		S3Region:         getEnv("S3_REGION", "us-east-1"),
 		S3UsePathStyle:   usePathStyle,
-		LLMBaseURL:       getEnv("LLM_BASE_URL", ""),
-		LLMAPIKey:        getEnv("LLM_API_KEY", ""),
-		LLMModel:         getEnv("LLM_MODEL", ""),
-		EmbeddingBaseURL: getEnv("EMBEDDING_BASE_URL", ""),
-		EmbeddingAPIKey:  getEnv("EMBEDDING_API_KEY", ""),
-		EmbeddingModel:   getEnv("EMBEDDING_MODEL", ""),
-		EmbeddingDim:     dim,
-
-		FeishuSyncJobTimeout:      feishuSyncJobTimeout,
-		IngestionJobTimeout:       ingestionJobTimeout,
-		FeishuReconcileJobTimeout: feishuReconcileJobTimeout,
-		FeishuReconcileInterval:   feishuReconcileInterval,
-		FeishuSyncLease:           feishuSyncLease,
-		RiverRescueStuckJobsAfter: riverRescueStuckJobsAfter,
-		FeishuReconcileBatchSize:  feishuReconcileBatchSize,
-		FeishuReconcileMaxBatches: feishuReconcileMaxBatches,
 
 		FeishuEnabled:      feishuEnabled,
 		FeishuAppID:        feishuValues["FEISHU_APP_ID"],
@@ -218,52 +112,8 @@ func load(legacy bool) (*Config, error) {
 		FrontendOrigin:      feishuValues["FRONTEND_ORIGIN"],
 
 		BootstrapAdminFeishuOpenID: getEnv("BOOTSTRAP_ADMIN_FEISHU_OPEN_ID", ""),
-		BootstrapOwnerFeishuOpenID: getEnv("BOOTSTRAP_OWNER_FEISHU_OPEN_ID", ""),
-	}
-
-	if legacy {
-		cfg.TokenizerEncoding = getEnv("TOKENIZER_ENCODING", "cl100k_base")
-		cfg.ChunkSize, _ = strconv.Atoi(getEnv("CHUNK_SIZE", "400"))
-		cfg.ChunkOverlap, _ = strconv.Atoi(getEnv("CHUNK_OVERLAP", "60"))
-		cfg.EmbedBatchSize, _ = strconv.Atoi(getEnv("EMBED_BATCH_SIZE", "64"))
-		maxMB, _ := strconv.ParseInt(getEnv("UPLOAD_MAX_MB", "50"), 10, 64)
-		cfg.UploadMaxBytes = maxMB * 1024 * 1024
-		cfg.RiverMaxWorkers, _ = strconv.Atoi(getEnv("RIVER_MAX_WORKERS", "4"))
-		cfg.RAGTopK, _ = strconv.Atoi(getEnv("RAG_TOP_K", "8"))
-		minScore, _ := strconv.ParseFloat(getEnv("RAG_MIN_SCORE", "0.0"), 32)
-		cfg.RAGMinScore = float32(minScore)
-		cfg.RAGHistoryMessages, _ = strconv.Atoi(getEnv("RAG_HISTORY_MESSAGES", "10"))
-		if cfg.RAGTopK < 1 {
-			cfg.RAGTopK = 8
-		}
-		if cfg.RAGHistoryMessages < 0 {
-			cfg.RAGHistoryMessages = 10
-		}
-
 	}
 	return cfg, nil
-}
-
-func positiveDurationEnv(key, fallback string) (time.Duration, error) {
-	value, err := time.ParseDuration(getEnv(key, fallback))
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s: %w", key, err)
-	}
-	if value <= 0 {
-		return 0, fmt.Errorf("invalid %s: must be positive", key)
-	}
-	return value, nil
-}
-
-func boundedPositiveIntEnv(key, fallback string, upperBound int) (int, error) {
-	value, err := strconv.Atoi(getEnv(key, fallback))
-	if err != nil {
-		return 0, fmt.Errorf("invalid %s: %w", key, err)
-	}
-	if value < 1 || value > upperBound {
-		return 0, fmt.Errorf("invalid %s: must be between 1 and %d", key, upperBound)
-	}
-	return value, nil
 }
 
 func getEnv(key, fallback string) string {

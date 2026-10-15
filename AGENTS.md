@@ -14,7 +14,7 @@ External Skills mentioned in plans are optional workflow aids. Use an applicable
 
 ## Project Structure and Style
 
-`backend/` contains the Go service. Entrypoints are `cmd/server`, `cmd/migrate`, and `cmd/evalretrieval`; contracts live in `internal/domain/ports`, with implementations in service, HTTP, repo, infra, agent, and worker packages. Use `gofmt`, lowercase package names, adjacent `*_test.go` tests, and `testdata/` fixtures. `internal/repo/generated` is sqlc output: never hand-edit it.
+`backend/` contains the Go service. Entrypoints are `cmd/server`, `cmd/migrate`, and `cmd/evalknowledge`; contracts live in `internal/domain/ports`, with implementations in HTTP, repo, infra, knowledge, registry, playground, skillbuilder, auth, and service (Feishu login) packages. Legacy it-wiki chat/RAG/ingestion code was removed; see git history at `c18e34e`. Use `gofmt`, lowercase package names, adjacent `*_test.go` tests, and `testdata/` fixtures. `internal/repo/generated` is sqlc output: never hand-edit it.
 
 `frontend/` contains the Next.js app. Routes are in `app/`, shared Base UI/shadcn primitives in `components/ui`, feature components in feature folders, and API/hooks/schema helpers in `lib/`. TypeScript is strict; use `@/*` imports, PascalCase components, and camelCase functions. Inspect existing component exports and props before changing a primitive; check affected consumers of shared components. Use a project-compatible shadcn CLI only when adding components is needed.
 
@@ -28,7 +28,7 @@ External Skills mentioned in plans are optional workflow aids. Use an applicable
 
 ## Database Changes
 
-Schema changes require a new goose migration in `backend/internal/repo/migrations`; query-only changes do not. Update SQL in `internal/repo/queries` when needed. Regenerate sqlc output when its inputs change, and adjust affected consumers. Commit legitimate generated changes with their inputs when committing the task. Existing vectorstore/raw pgx boundaries are documented in project decisions; do not move SQL into services or introduce a second ORM casually.
+Schema changes require a new goose migration in `backend/internal/repo/migrations`; query-only changes do not. Update SQL in `internal/repo/queries` when needed. Regenerate sqlc output when its inputs change, and adjust affected consumers. Commit legitimate generated changes with their inputs when committing the task. Existing raw pgx vector boundaries (`internal/repo/knowledge_vectors.go`) are documented in project decisions; do not move SQL into services or introduce a second ORM casually.
 
 Verify migrations against a disposable database, including rollback when applicable. Do not directly alter production schema. K1 restores embedding/pgvector usage: preserve embedding dimension validation and the accepted dimension-change migration policy, and verify index versions and data ownership before reuse. D12 supersedes knowledge-table retirement; retain existing knowledge data and use incremental migrations for the new authorization and indexing boundaries.
 

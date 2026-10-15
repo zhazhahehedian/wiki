@@ -52,3 +52,17 @@ func TestOAuthIdentityQueryPersistsEncryptedTokenColumns(t *testing.T) {
 		t.Fatalf("UpsertOAuthIdentity persists plaintext token columns: %s", query)
 	}
 }
+
+func queryNamed(t *testing.T, sql, name string) string {
+	t.Helper()
+	startMarker := "-- name: " + name + " "
+	start := strings.Index(sql, startMarker)
+	if start == -1 {
+		t.Fatalf("query %s not found", name)
+	}
+	rest := sql[start+len(startMarker):]
+	if next := strings.Index(rest, "-- name: "); next >= 0 {
+		rest = rest[:next]
+	}
+	return rest
+}
