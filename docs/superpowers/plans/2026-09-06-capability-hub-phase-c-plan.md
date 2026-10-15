@@ -73,7 +73,7 @@
 | API/缓存 | frontend/lib/api/registry.ts、frontend/lib/api/auth.ts |
 | Skill 创建助手 | backend/internal/skillbuilder、frontend/components/skill-builder |
 
-运行前提、验证证据和新 session 启动提示见 [接力交接](2026-09-06-capability-hub-handoff.md)。
+当前接力入口见 [知识服务交接](2026-09-19-knowledge-service-handoff.md)。
 
 ## 本轮交付与验证入口
 

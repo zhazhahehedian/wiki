@@ -1,10 +1,14 @@
 # 能力中心（Capability Hub）
 
-公司内部 MCP / Skill 能力注册、治理、发现与凭证分发平台，由 it-wiki 转向改造。平台不做知识库或 MCP 运行时网关。
+公司内部「能力市场＋知识服务平台」，由 it-wiki 转向改造。平台不做 MCP 运行时网关，也不负责对话或回答生成。
 
-阶段 A 的平台骨架与 UI 已实现：复用飞书认证、session/CSRF、数据库和对象存储基础设施，提供工作台、注册中心、游乐场、我的发布及设置入口。游乐场的「接口配置」和设置页支持用户填写 API 地址、API Key、模型 ID 列表与默认模型；可选择 OpenAI 兼容或 Claude（Anthropic）协议，自动获取并勾选模型，也可手动填写。配置按账号加密保存到后端，支持流式对话、停止与重新生成，对话仅保留在页面内存。阶段 B 注册中心已支持 MCP/Skill 草稿创建编辑、版本历史、卡片/表格、搜索筛选和附件上传下载；阶段 C 已支持审核/驳回/下线、不可变发布版本、独立上线快照、可信部门与审计。草稿由 Owner/Admin 管理，消费者只能浏览授权上线内容；凭证分发与机器 discovery 仍待实施。注册中心新增「对话创建 Skill」：支持通用流程与女娲方法适配、需求追问、文本素材、可编辑预览及保存草稿。云 PostgreSQL/MinIO 已连通并完成隔离集成测试；真实飞书登录、回调与会话已验证；真实模型调用另行验收。
+- **注册与治理**：MCP / Skill 草稿、版本、审核 / 驳回 / 下线、不可变发布快照、可信部门与审计；消费者只看到授权上线内容。
+- **内部市场**：浏览授权上线的 Skill，下载安装，或复制为自己的草稿。
+- **对话创建 Skill**：通用流程或女娲方法，生成后编辑预览并保存为草稿。
+- **模型游乐场**：用户自配 OpenAI 兼容 / Anthropic 接口，配置加密保存，流式对话不持久化。
+- **知识服务（K1）**：知识库与文档管理、解析预览、异步索引、授权检索，以及供业务系统调用的检索 API，见 [knowledge-api.md](docs/knowledge-api.md)。
 
-设计见 [能力中心 spec](docs/superpowers/specs/2026-09-04-capability-hub-design.md)，实施与验证见 [阶段 A 计划](docs/superpowers/plans/2026-09-05-capability-hub-phase-a-plan.md)及[游乐场后端联调记录](docs/superpowers/plans/2026-09-05-playground-backend-plan.md)。
+凭证保险箱、机器 discovery、健康检查与飞书云文档同步待实施。进度与资料索引见 [CLAUDE.md](CLAUDE.md)，设计见 [能力中心 spec](docs/superpowers/specs/2026-09-04-capability-hub-design.md) 与 [知识服务设计](docs/superpowers/specs/2026-09-19-knowledge-service-design.md)。
 
 ## 对话创建 Skill
 
@@ -63,14 +67,8 @@ pnpm build
 
 standalone 构建在 Linux/WSL 验证；Windows 可能在最终 symlink-copy 阶段因权限报 EPERM。测试中的模拟 OAuth 不替代真实飞书授权验收。认证部署与排错见 [飞书集成部署与排错](docs/deploy-debug-feishu.md)，其中 KB 导入/同步部分仅供遗留维护。
 
-## 结构与阶段
+## 结构
 
-- `backend/`：Go/chi、pgx/sqlc、goose、River、MinIO 与认证基础设施；遗留 KB/RAG 代码暂留，已从生产路由和启动装配中移除。
-- `frontend/`：Next.js 15、React 19、Tailwind v4、Base UI/shadcn；白色侧栏、白灰内容与低饱和蓝主操作，参考用户提供的 micu/new-api 游乐场交互。
-- `docs/`：产品设计和实施计划。项目事实与按任务读取的索引见 [CLAUDE.md](CLAUDE.md)。
-
-A 平台骨架与提前实施的 F 游乐场代码已完成，真实 OAuth 已通过，模型验收另行记录；B 注册中心 Owner 草稿闭环已实现并通过隔离云服务和浏览器验证，记录见[阶段 B 计划](docs/superpowers/plans/2026-09-06-capability-hub-phase-b-plan.md)；C 治理已实现并通过隔离云服务和多角色浏览器验证，记录见[阶段 C 计划](docs/superpowers/plans/2026-09-06-capability-hub-phase-c-plan.md)。D 凭证与发现、E 健康检查仍待实施。原 [it-wiki 设计](docs/superpowers/specs/2026-05-19-it-wiki-agent-design.md) 仅供遗留维护和迁移参考。
-
-## 本次推送功能
-
-按功能划分的提交、清理项、验证结果及运行态前置条件见 [2026-09-06 推送说明](docs/releases/2026-09-06-capability-hub.md)。游乐场现支持输入工具栏选择模型、参数独立启用、系统提示词，以及 OpenAI/Claude 协议差异处理；界面截图见 [UI 验证记录](docs/verification/2026-09-06-ui-refresh/README.md)。
+- `backend/`：Go/chi、pgx/sqlc、goose、River、PostgreSQL + pgvector、MinIO；`internal/knowledge` 为知识服务。遗留 KB/RAG 代码暂留，未接入生产路由。
+- `frontend/`：Next.js 15、React 19、Tailwind v4、Base UI/shadcn。
+- `docs/`：产品设计、实施计划、验证记录与发布说明（`docs/releases/`）。

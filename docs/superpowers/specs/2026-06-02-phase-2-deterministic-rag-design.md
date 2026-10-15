@@ -431,8 +431,3 @@ cd frontend && pnpm build
 - Disconnecting or stopping a stream cancels backend work.
 - No Agent, tool-call, hybrid-search, or query-planning behavior is present in Phase 2.
 
----
-
-## 12. Next Step
-
-After this spec is reviewed, use the `writing-plans` workflow to create the Phase 2 implementation plan in `docs/superpowers/plans/`.

@@ -1,6 +1,6 @@
 # IT-Wiki · 阶段 1 实施决策（spec 补充）
 
-> 本文档是 [2026-05-19-it-wiki-agent-design.md](2026-05-19-it-wiki-agent-design.md) 的补充，锁定阶段 1 实施层的 6 个开放决策。
+> 本文档是原 it-wiki 总体设计（已删除）的补充，锁定阶段 1 实施层的 6 个开放决策。
 > 原 spec §4 / §5.1 / §7 优先级高于本文档；冲突时**以原 spec 为准**，并同步修订本文档。
 >
 > 日期：2026-05-20
@@ -188,12 +188,3 @@ type Parser interface {
 | D5 | Tokenizer: tiktoken-go + cl100k_base，预留 `TOKENIZER_ENCODING` env |
 | D6 | HTTP: 裸 JSON + 错误信封 + limit/offset 分页 + RFC3339 + 小写 UUID |
 
----
-
-## 下一步
-
-用 `writing-plans` skill 生成阶段 1 实施计划，落到 `docs/superpowers/plans/2026-05-20-phase-1-ingestion-plan.md`。
-
----
-
-_本文档于 2026-05-20 在 brainstorming session 中锁定。如阶段 1 实施过程中决策需要调整，请回到 brainstorming 更新本文件。_
