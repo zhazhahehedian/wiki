@@ -4,24 +4,19 @@
 
 ## 做到哪
 
-- K1 已实现：`backend/internal/knowledge`、repo 的 knowledge SQL / 向量边界、`internal/http/knowledge_handler.go`、`cmd/server/knowledge.go` 中独立的 River knowledge 队列，以及 `/hub/knowledge` 下的管理、预览、检索、应用页面。旧聊天和 legacy 路由未接回。
-- 2026-09-22 按用户要求提前加入问题改写、关键词＋向量混合召回（RRF）和重排，模型不可用时降级并在响应中标明。
-- 迁移 0016（权限、应用凭证摘要、版本与片段表）、0017（固定向量维度，读取 `EMBEDDING_DIM`）只在隔离库验证过；业务库仍为 15。
-- 内部能力市场、Skill 模板复用、游乐场改动同样未提交。
+- K1 已实现：`backend/internal/knowledge`、repo 的 knowledge SQL / 向量边界、`internal/http/knowledge_handler.go`、`cmd/server/knowledge.go` 中独立的 River knowledge 队列，以及 `/hub/knowledge` 下的管理、预览、检索、应用页面。未配置 `EMBEDDING_*` 时知识模块不装配，`/api/v1/knowledge/*` 返回 404。
+- 检索：初始授权＋重排前、返回前各复核一次；只有关键词命中、未经模型重排确认的片段不返回；审计与响应一致。知识写操作改用行级锁，片段一次批量写入。
+- 迁移 0016/0017（0017 读取 `EMBEDDING_DIM`）只在隔离库验证过；业务库仍为 15。
+- 2026-10-16 已提交到本地 main（未推送）：市场与 K1 功能、文档精简、review 问题修复与简化、旧 it-wiki 前后端代码删除。旧飞书导入/同步与 RAG 实现可在提交 `c18e34e` 中查阅。
 - 验证记录：[K1](../../verification/2026-09-19-knowledge-service/README.md)、[检索优化](../../verification/2026-09-22-knowledge-retrieval/README.md)、[市场](../../verification/2026-09-19-skill-market/README.md)。embedding 均为 fixture。
 
 ## 下一步
 
-1. **修 2026-10-16 review 发现的问题**
-   - 默认输出上限 `playground.DefaultOutputTokens = 65536` 超过多数模型上限，改回 4096–8192；`MaxOutputTokens` 降到合理值；OpenAI 兼容网关是否认 `max_completion_tokens` 需确认。
-   - `knowledge_repository.go` 的全局 `pg_advisory_xact_lock` 串行了所有知识写操作，去掉，片段改用批量写入。
-   - 检索 handler 先写审计再做最终复核，审计可能与响应不符；删掉 handler 里那次复核（service 已做）。
-   - 关键词召回结果不经过 `minScore`，可能造成无答案误召回。
-   - 前端：应用授权了已取消共享的库后无法保存；文档列表无条件 3 秒轮询；市场详情发布者显示 open_id；可见范围切换后仍提交旧成员 / 部门。
-2. **简化**：检索每次请求多轮重复权限复核（每库 4 次查询）、不可能为 nil 的判空、跨层重复校验、游乐场上游错误码分类与多层超时、`knowledge-pages.tsx` 拆分并改用 `useMutation`、删除锁定实现细节的测试。
-3. ~~**删除旧 it-wiki 代码**~~（已完成，分支 `cleanup-backend`）：已删 `internal/agent`、`worker`、`eval`、`cmd/evalretrieval`、`docs/eval/`、`service` 中除飞书登录外的部分、http 下 chat/kb/document/chunk/feishu 导入处理器、legacy 路由、llm/parser/splitter/tokenizer/vectorstore、飞书 sheet/bitable loader 及只被它们使用的 SQL；表与迁移保留。`infra/feishu` 的 OAuth、client、docx/wiki loader、URL 解析保留供 K2。旧飞书导入/同步实现见 git 提交 `c18e34e`。
+1. **跑隔离库集成测试**（需要用户授权创建/删除远程测试库）：2026-10-16 改动的批量写入 SQL、行级锁、`KnowledgeBaseReadiness` 尚未在真实 PostgreSQL 上执行过。
+2. **待决定**：OpenAI 兼容协议目前总是发送 `max_completion_tokens`、不发送 `max_tokens`，只认 `max_tokens` 的网关（DeepSeek、Ollama、旧版 vLLM 等）会忽略输出上限。
+3. **小缺口**：市场详情接口 `/catalog/{slug}` 未返回 `publisher_name`，前端回退显示 open_id。
 4. **真实验收**：在根 `.env` 配置平台 `EMBEDDING_BASE_URL/API_KEY/MODEL`（不借用个人游乐场密钥），用 `go run ./cmd/evalknowledge` 跑 baseline 集，再加 `KNOWLEDGE_EVAL_SUITE=optimization KNOWLEDGE_EVAL_REQUIRE_OPTIMIZER=1` 跑优化集；补浏览器文件选择上传与真实账号检查。
-5. 业务库迁移到 16/17、提交、推送、部署都需要用户单独授权。
+5. 推送、业务库迁移到 16/17、部署都需要用户单独授权。
 
 遗留问题：Skill 自定义复杂输入在真实模型下的 503 原因未定位。
 
