@@ -19,5 +19,5 @@
 
 - 最终代码：36 个 Vitest 文件、157 个用例通过；typecheck、生产 build（含 lint 和类型检查）通过。
 - 模拟浏览器检查：认证慢响应、输入保留、401 跳转；390–3840px 布局、移动导航；延迟路由脚本/目录响应下的加载反馈，以及七个菜单的跳转和直接访问。
-- 证据：[认证与导航](../verification/2026-09-06-navigation-fix/README.md)、[窗口布局](../verification/2026-09-06-responsive-layout/README.md)、[路由加载](../verification/2026-09-06-route-loading/README.md)。
+- 证据：认证与导航、窗口布局、路由加载截图已被后续布局记录（如[游乐场布局](../verification/2026-09-07-playground-layout/README.md)）替代并删除，可从 Git 历史查阅。
 - 本批次不修改后端或 schema；没有运行数据库迁移或重新宣称真实公司模型、真实多账号接入验收完成。

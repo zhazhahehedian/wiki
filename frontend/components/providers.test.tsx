@@ -74,7 +74,7 @@ describe("Providers authentication boundary", () => {
       error: { code: "unauthenticated", message: "login required" },
     }), { status: 401 })));
 
-    await expect(apiFetch("/api/v1/kbs")).rejects.toMatchObject({ status: 401 });
+    await expect(apiFetch("/api/v1/capabilities")).rejects.toMatchObject({ status: 401 });
 
     expect(queryClient?.getQueryData(authQueryKey)).toBeUndefined();
     expect(removeQueries).toHaveBeenCalledOnce();
@@ -97,7 +97,7 @@ describe("Providers authentication boundary", () => {
       error: { code: "unauthenticated", message: "login required" },
     }), { status: 401 })));
 
-    await expect(apiFetch("/api/v1/kbs")).rejects.toMatchObject({ status: 401 });
+    await expect(apiFetch("/api/v1/capabilities")).rejects.toMatchObject({ status: 401 });
 
     expect(queryClient?.getQueryData(authQueryKey)).toEqual({ id: "post-unmount" });
   });

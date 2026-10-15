@@ -6,5 +6,5 @@ vi.mock("next/navigation", () => ({ redirect: (path: string) => redirect(path) }
 it("routes the root and legacy bookmarks to Capability Hub", () => {
   Home();
   RetiredKnowledgeBasePage();
-  expect(redirect.mock.calls).toEqual([["/hub"], ["/hub"]]);
+  expect(redirect.mock.calls).toEqual([["/hub"], ["/hub/knowledge"]]);
 });
