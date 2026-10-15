@@ -43,10 +43,7 @@ func skillBuilderError(w http.ResponseWriter, r *http.Request, e error) {
 	case errors.Is(e, skillbuilder.ErrInvalid):
 		WriteError(w, r, NewAPIError(400, "invalid_skill_builder_request", "请检查需求、模型、对话轮数和素材大小"))
 	case errors.As(e, &output):
-		log.Printf("skill generation rejected request_id=%s reason=%s response_bytes=%d", middleware.GetReqID(r.Context()), output.Reason, output.ResponseBytes)
-		WriteError(w, r, WithDetails(NewAPIError(502, "invalid_skill_generation", output.Message), map[string]any{"reason": output.Reason, "response_bytes": output.ResponseBytes}))
-	case errors.Is(e, skillbuilder.ErrOutput):
-		WriteError(w, r, NewAPIError(502, "invalid_skill_generation", "模型未返回完整有效的草案，原草案已保留；请重试或换一个模型"))
+		WriteError(w, r, WithDetails(NewAPIError(502, "invalid_skill_generation", output.Message), map[string]any{"reason": output.Reason}))
 	case errors.Is(e, playground.ErrNotConfigured), errors.Is(e, playground.ErrInvalid), errors.Is(e, playground.ErrUpstream):
 		playgroundError(w, r, e)
 	default:
@@ -65,24 +62,8 @@ func (h *SkillBuilderHandler) Turn(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	reply, e := h.service.Turn(r.Context(), user, input)
-	// Compare preset, custom and reference-heavy requests without persisting
-	// conversation text, reference material, generated content or credentials.
-	historyBytes := 0
-	for _, message := range input.Messages {
-		historyBytes += len(message.Content)
-	}
-	draftBytes := 0
-	if input.Draft != nil {
-		draft, _ := json.Marshal(input.Draft)
-		draftBytes = len(draft)
-	}
-	budget := skillbuilder.DefaultOutputTokens
-	if input.MaxTokens != nil {
-		budget = *input.MaxTokens
-	}
-	if e == nil || errors.Is(e, playground.ErrUpstream) || errors.Is(e, skillbuilder.ErrOutput) {
-		log.Printf("skill generation finished request_id=%s success=%t model=%q history_messages=%d history_bytes=%d reference_bytes=%d draft_bytes=%d max_tokens=%d duration=%s", middleware.GetReqID(r.Context()), e == nil, input.Model, len(input.Messages), historyBytes, len(input.Material), draftBytes, budget, time.Since(started))
-	}
+	// Never log conversation text, material, generated content or credentials.
+	log.Printf("skill generation finished request_id=%s model=%q success=%t duration=%s", middleware.GetReqID(r.Context()), input.Model, e == nil, time.Since(started))
 	if e != nil {
 		skillBuilderError(w, r, e)
 		return

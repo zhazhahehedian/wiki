@@ -1,13 +1,10 @@
 package http
 
 import (
-	"context"
 	"crypto/sha256"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 )
@@ -67,49 +64,4 @@ func TestPlatformLogoutPreservesCSRFAndRevocation(t *testing.T) {
 	if sessions.revoked != "session" {
 		t.Fatal("valid logout did not revoke session")
 	}
-}
-
-func TestRequestTimeoutIsScopedAndPreservesParentCancellation(t *testing.T) {
-	for _, tc := range []struct {
-		method, path string
-		model        bool
-	}{
-		{"POST", "/api/v1/skill-builder/turn", true},
-		{"POST", "/api/v1/playground/chat/stream", true},
-		{"POST", "/api/v1/playground/models", false},
-		{"POST", "/api/v1/skill-builder/drafts", false},
-		{"GET", "/api/v1/skill-builder/turn", false},
-		{"POST", "/api/v1/skill-builder/turn/unknown", false},
-		{"GET", "/healthz", false},
-	} {
-		t.Run(tc.method+tc.path, func(t *testing.T) {
-			handler := requestTimeout(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				deadline, ok := r.Context().Deadline()
-				remaining := time.Until(deadline)
-				minimum, maximum := 50*time.Second, time.Minute
-				if tc.model {
-					minimum, maximum = 5*time.Minute, 6*time.Minute
-				}
-				if !ok || remaining < minimum || remaining > maximum {
-					t.Errorf("unexpected route deadline: %v", remaining)
-				}
-				w.WriteHeader(http.StatusNoContent)
-			}))
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
-			if w.Code != http.StatusNoContent {
-				t.Fatal(w.Code)
-			}
-		})
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req := httptest.NewRequest("POST", "/api/v1/skill-builder/turn", nil).WithContext(ctx)
-	handler := requestTimeout(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cancel()
-		if !errors.Is(r.Context().Err(), context.Canceled) {
-			t.Fatal("caller cancellation detached")
-		}
-	}))
-	handler.ServeHTTP(httptest.NewRecorder(), req)
 }

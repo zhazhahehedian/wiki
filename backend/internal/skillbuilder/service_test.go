@@ -124,7 +124,7 @@ func TestClarificationAndDraftGeneration(t *testing.T) {
 	if model.user != "alice" || model.input.Model != "test-model" || model.input.Messages[0].Role != "system" || !strings.Contains(model.input.Messages[0].Content, "女娲") || !strings.Contains(model.input.Messages[1].Content, "reference_material") {
 		t.Fatal("wrong owner or trusted prompt composition")
 	}
-	if model.input.MaxTokens == nil || *model.input.MaxTokens != DefaultOutputTokens {
+	if model.input.MaxTokens == nil || *model.input.MaxTokens != playground.DefaultOutputTokens {
 		t.Fatal("unbounded generation")
 	}
 	if model.input.Temperature != nil || model.input.TopP != nil {
@@ -132,19 +132,14 @@ func TestClarificationAndDraftGeneration(t *testing.T) {
 	}
 }
 
-func TestGenerationOutputBudgetCanBeAdjustedForTheModel(t *testing.T) {
-	for _, tokens := range []int{1, 8192, 65536, 128000, 131072, 262144, playground.MaxOutputTokens, 0, -1, playground.MaxOutputTokens + 1} {
-		model := &fakeModel{output: `{"message":"已整理需求","draft":null}`}
-		r := request()
-		r.MaxTokens = &tokens
-		_, err := New(model, nil).Turn(context.Background(), "alice", r)
-		if tokens < 1 || tokens > playground.MaxOutputTokens {
-			if !errors.Is(err, ErrInvalid) || model.calls != 0 {
-				t.Fatalf("invalid budget %d reached provider: %v", tokens, err)
-			}
-		} else if err != nil || model.input.MaxTokens == nil || *model.input.MaxTokens != tokens {
-			t.Fatalf("budget %d was not passed to provider: %v", tokens, err)
-		}
+// The range itself is validated by playground.Stream.
+func TestGenerationOutputBudgetIsPassedToTheModel(t *testing.T) {
+	tokens := playground.MaxOutputTokens
+	model := &fakeModel{output: `{"message":"已整理需求","draft":null}`}
+	r := request()
+	r.MaxTokens = &tokens
+	if _, err := New(model, nil).Turn(context.Background(), "alice", r); err != nil || model.input.MaxTokens == nil || *model.input.MaxTokens != tokens {
+		t.Fatalf("budget was not passed to provider: %v", err)
 	}
 }
 func TestInvalidRequestNeverCallsModel(t *testing.T) {

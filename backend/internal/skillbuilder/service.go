@@ -27,7 +27,6 @@ var (
 const MaxArtifactBytes = 128 * 1024
 const MaxResponseBytes = 192 * 1024
 const MaxMaterialBytes = 48 * 1024
-const DefaultOutputTokens = playground.DefaultOutputTokens
 
 type InvalidError struct{ Message string }
 
@@ -94,12 +93,10 @@ func (s *Service) Turn(ctx context.Context, user string, r Request) (Reply, erro
 	if r.Model == "" || len(r.Model) > 200 || len(r.Messages) == 0 || len(r.Messages) > 24 || len(r.Material) > MaxMaterialBytes {
 		return Reply{}, ErrInvalid
 	}
-	tokens := DefaultOutputTokens
+	// playground.Stream validates the range before contacting the provider.
+	tokens := playground.DefaultOutputTokens
 	if r.MaxTokens != nil {
 		tokens = *r.MaxTokens
-	}
-	if tokens < 1 || tokens > playground.MaxOutputTokens {
-		return Reply{}, invalid(fmt.Sprintf("最大输出 Tokens 需为 1–%d 的整数，并且不超过所选模型支持的范围", playground.MaxOutputTokens))
 	}
 	messages := []playground.Message{{Role: "system", Content: prompt + contract}}
 	size := len(r.Material)
@@ -147,7 +144,7 @@ func (s *Service) Turn(ctx context.Context, user string, r Request) (Reply, erro
 			return ctx.Err()
 		}
 		if output.Len()+len(delta) > MaxResponseBytes {
-			return outputError("response_too_large", "模型返回内容超过平台大小上限（192 KiB），请减少正文或附件后重试", output.Len()+len(delta))
+			return outputError("response_too_large", "模型返回内容超过平台大小上限（192 KiB），请减少正文或附件后重试")
 		}
 		output.WriteString(delta)
 		return nil
@@ -156,7 +153,7 @@ func (s *Service) Turn(ctx context.Context, user string, r Request) (Reply, erro
 		return Reply{}, ctx.Err()
 	}
 	if errors.Is(e, playground.ErrOutputLimit) {
-		return Reply{}, outputError("token_limit", fmt.Sprintf("模型达到本轮输出上限，内容被截断（本次请求 %d tokens）；可提高“最大输出 Tokens”，或减少正文与附件", tokens), output.Len())
+		return Reply{}, outputError("token_limit", fmt.Sprintf("模型达到本轮输出上限，内容被截断（本次请求 %d tokens）；可提高“最大输出 Tokens”，或减少正文与附件", tokens))
 	}
 	if e != nil {
 		return Reply{}, e

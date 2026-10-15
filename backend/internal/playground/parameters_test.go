@@ -67,7 +67,7 @@ func TestOptionalChatParametersReachProvider(t *testing.T) {
 }
 
 func TestInvalidChatParametersNeverReachProvider(t *testing.T) {
-	low, high, tooHigh, temp, tokens := -0.1, 1.1, 2.1, 0.7, MaxOutputTokens+1
+	low, high, tooHigh, temp, tokens, noTokens := -0.1, 1.1, 2.1, 0.7, MaxOutputTokens+1, 0
 	for _, tc := range []struct {
 		name, protocol string
 		input          ChatRequest
@@ -76,7 +76,8 @@ func TestInvalidChatParametersNeverReachProvider(t *testing.T) {
 		{"top p above one", ProtocolOpenAI, ChatRequest{TopP: &high}},
 		{"frequency out of range", ProtocolOpenAI, ChatRequest{FrequencyPenalty: &tooHigh}},
 		{"presence out of range", ProtocolOpenAI, ChatRequest{PresencePenalty: &tooHigh}},
-		{"output limit", ProtocolOpenAI, ChatRequest{MaxTokens: &tokens}},
+		{"output above limit", ProtocolOpenAI, ChatRequest{MaxTokens: &tokens}},
+		{"output below one", ProtocolAnthropic, ChatRequest{MaxTokens: &noTokens}},
 		{"claude temperature", ProtocolAnthropic, ChatRequest{Temperature: &high}},
 		{"claude mixed sampling", ProtocolAnthropic, ChatRequest{Temperature: &temp, TopP: &temp}},
 		{"claude frequency", ProtocolAnthropic, ChatRequest{FrequencyPenalty: &temp}},

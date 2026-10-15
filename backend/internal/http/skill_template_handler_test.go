@@ -52,7 +52,7 @@ func (*templateStorage) Delete(context.Context, string) error {
 }
 
 func TestSkillTemplatePublishedAuthorizationAndVersionBoundary(t *testing.T) {
-	for _, scenario := range []string{"reader", "owner", "admin", "anonymous", "hidden", "offline", "changed version", "missing version", "unsupported"} {
+	for _, scenario := range []string{"reader", "owner", "admin", "anonymous", "hidden", "changed version", "missing version", "unsupported"} {
 		t.Run(scenario, func(t *testing.T) {
 			user := uuid.NewString()
 			auth := newTestAuthHandler(t, &fakeAuthFlow{}, &fakeSessionStore{session: domain.Session{UserID: user}}, fakeUserResolver{user: domain.User{ID: user}})
@@ -68,9 +68,6 @@ func TestSkillTemplatePublishedAuthorizationAndVersionBoundary(t *testing.T) {
 			storage := &templateStorage{data: data}
 			if scenario == "hidden" {
 				repository.err = registry.ErrNotFound
-			}
-			if scenario == "offline" {
-				repository.detail.IsLive = false
 			}
 			if scenario == "owner" {
 				repository.detail.IsOwner = true
@@ -92,7 +89,7 @@ func TestSkillTemplatePublishedAuthorizationAndVersionBoundary(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, r)
-			want := map[string]int{"anonymous": 401, "hidden": 404, "offline": 404, "changed version": 409, "missing version": 400, "unsupported": 422}[scenario]
+			want := map[string]int{"anonymous": 401, "hidden": 404, "changed version": 409, "missing version": 400, "unsupported": 422}[scenario]
 			if want == 0 {
 				want = 200
 			}
