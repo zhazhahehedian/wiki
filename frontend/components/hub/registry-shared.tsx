@@ -50,6 +50,11 @@ export function RegistryError({
       className="rounded-xl border border-red-100 bg-red-50 p-4 text-sm text-red-700"
     >
       {error instanceof APIError ? error.message : "请求失败，请稍后重试。"}
+      {error instanceof APIError && error.requestId && (
+        <span className="ml-2 break-all text-xs">
+          请求编号：{error.requestId}
+        </span>
+      )}
       {retry && (
         <button onClick={retry} className="ml-3 underline">
           重新加载

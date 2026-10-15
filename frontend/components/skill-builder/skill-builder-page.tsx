@@ -1,7 +1,5 @@
 "use client";
 
-import { Select } from "@/components/ui/select";
-
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
@@ -20,6 +18,7 @@ import {
 } from "lucide-react";
 import { GenerationProgress } from "./generation-progress";
 import { useModelConnection } from "@/components/playground/playground-provider";
+import { Select } from "@/components/ui/select";
 import {
   Field,
   fieldClass,
@@ -28,12 +27,14 @@ import {
   RegistryError,
 } from "@/components/hub/registry-shared";
 import { APIError } from "@/lib/api/client";
-import { MAX_OUTPUT_TOKENS } from "@/lib/api/playground";
+import {
+  DEFAULT_OUTPUT_TOKENS,
+  MAX_OUTPUT_TOKENS,
+} from "@/lib/api/playground";
 import {
   generateSkill,
   saveGeneratedSkill,
   skillMarkdown,
-  DEFAULT_SKILL_OUTPUT_TOKENS,
   type BuilderMessage,
   type SkillDraft,
   type SkillTemplate,
@@ -56,14 +57,12 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
   } = useModelConnection();
   const [mode, setMode] = useState<"task" | "perspective">("task");
   const [model, setModel] = useState("");
-  const [maxTokens, setMaxTokens] = useState(
-    String(DEFAULT_SKILL_OUTPUT_TOKENS),
-  );
+  const [maxTokens, setMaxTokens] = useState(String(DEFAULT_OUTPUT_TOKENS));
   const [messages, setMessages] = useState<BuilderMessage[]>([]);
   const [input, setInput] = useState("");
   const [material, setMaterial] = useState("");
-  const [draft, setDraft] = useState<SkillDraft | null>(() =>
-    template ? structuredClone(template.draft) : null,
+  const [draft, setDraft] = useState<SkillDraft | null>(
+    template?.draft ?? null,
   );
   const [source, setSource] = useState(template?.source);
   const [preview, setPreview] = useState(false);
@@ -145,15 +144,6 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
       setNotice("参考素材最多 48 KiB，请精简后重试。");
       return;
     }
-    const outputTokens = Number(maxTokens);
-    if (
-      !Number.isInteger(outputTokens) ||
-      outputTokens < 1 ||
-      outputTokens > MAX_OUTPUT_TOKENS
-    ) {
-      setNotice(`最大输出 Tokens 需为 1–${MAX_OUTPUT_TOKENS} 的整数。`);
-      return;
-    }
     const controller = new AbortController();
     active.current = controller;
     generating.current = true;
@@ -166,7 +156,7 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
           model: activeModel,
           messages: history,
           material,
-          max_tokens: outputTokens,
+          max_tokens: Number(maxTokens),
           ...(draft ? { draft } : {}),
         },
         controller.signal,
@@ -286,16 +276,13 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
       <p className="rounded-xl border border-zinc-100 bg-zinc-50/60 px-4 py-3 text-xs leading-6 text-zinc-700">
         生成后可以编辑并保存为自己的草稿。对话、素材和未保存内容仅在本页保留；离开页面前请保存。
       </p>
-      {!!error && <RegistryError error={error} />}
       {!!error && (
-        <p className="text-sm leading-6 text-zinc-500">
-          需求、参考素材和已有草案均已保留，可直接重试。
-          {error instanceof APIError && error.requestId && (
-            <span className="ml-2 break-all text-xs">
-              请求编号：{error.requestId}
-            </span>
-          )}
-        </p>
+        <>
+          <RegistryError error={error} />
+          <p className="text-sm leading-6 text-zinc-500">
+            需求、参考素材和已有草案均已保留，可直接重试。
+          </p>
+        </>
       )}
       {error instanceof APIError && error.status === 409 && (
         <p className="text-sm text-amber-700">
@@ -368,8 +355,8 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
                 />
               </Field>
               <p className="text-xs leading-5 text-zinc-500">
-                默认 65,536，可自定义到
-                1,048,576。推理模型的思考也可能占用此预算；实际支持范围以所选模型和中转服务为准。
+                默认 8,192，可自定义到
+                131,072。推理模型的思考也可能占用此预算；实际支持范围以所选模型和中转服务为准。
               </p>
             </fieldset>
           </details>
@@ -517,13 +504,9 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
             <div className="flex justify-end">
               {busy === "generate" ? (
                 <button
+                  key="stop"
                   type="button"
-                  onClick={(event) => {
-                    // React reuses this node for the submit button after stopping.
-                    // Cancel its native action so the same click cannot resubmit.
-                    event.preventDefault();
-                    stop();
-                  }}
+                  onClick={stop}
                   className={secondaryClass}
                 >
                   <Square className="size-4" />
@@ -531,6 +514,7 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
                 </button>
               ) : (
                 <button
+                  key="send"
                   disabled={
                     !!busy ||
                     loading ||

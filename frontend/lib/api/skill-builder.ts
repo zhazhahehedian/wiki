@@ -1,7 +1,5 @@
 import { apiFetch } from "@/lib/api/client";
 import type { CapabilityDetail } from "@/lib/api/registry";
-import { DEFAULT_OUTPUT_TOKENS } from "./playground";
-export const DEFAULT_SKILL_OUTPUT_TOKENS = DEFAULT_OUTPUT_TOKENS;
 export interface SkillFile {
   path: string;
   content: string;

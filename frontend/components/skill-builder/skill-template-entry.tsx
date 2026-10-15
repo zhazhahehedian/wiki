@@ -19,7 +19,6 @@ export function SkillTemplateEntry({
   const query = useQuery({
     queryKey: ["skill-template", slug, version],
     queryFn: ({ signal }) => getSkillTemplate(slug, version, signal),
-    staleTime: 0,
     gcTime: 0,
     retry: false,
     refetchOnWindowFocus: false,

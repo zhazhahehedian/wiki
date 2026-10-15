@@ -7,8 +7,8 @@ import {
 
 export type ModelProtocol = "openai" | "anthropic";
 // Keep aligned with playground.MaxOutputTokens; providers may accept less.
-export const MAX_OUTPUT_TOKENS = 1048576;
-export const DEFAULT_OUTPUT_TOKENS = 65536;
+export const MAX_OUTPUT_TOKENS = 131072;
+export const DEFAULT_OUTPUT_TOKENS = 8192;
 export interface ModelConnection {
   protocol: ModelProtocol;
   baseUrl: string;
