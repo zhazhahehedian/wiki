@@ -171,7 +171,11 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 		}
 		objects = mc
 	}
-	repository := repo.NewKnowledgeRepository(pool)
+	var rc *river.Client[pgx.Tx]
+	repository := repo.NewKnowledgeRepository(pool, func(ctx context.Context, tx pgx.Tx, id string) error {
+		_, e := rc.InsertTx(ctx, tx, k.Job{VersionID: id}, nil)
+		return e
+	})
 	embedding := &knowledgeFixtureEmbedder{}
 	service := k.New(repository, objects, embedding, 0.5)
 	defer func() {
@@ -196,13 +200,9 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	}()
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &k.Worker{Service: service})
-	rc, e := river.NewClient(riverpgxv5.New(pool), &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{"knowledge": {MaxWorkers: 1}}})
+	rc, e = river.NewClient(riverpgxv5.New(pool), &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{k.Queue: {MaxWorkers: 1}}})
 	if e != nil {
 		t.Fatal(e)
-	}
-	repository.Enqueue = func(ctx context.Context, tx pgx.Tx, id string) error {
-		_, e := rc.InsertTx(ctx, tx, k.Job{VersionID: id}, &river.InsertOpts{Queue: "knowledge", MaxAttempts: 3})
-		return e
 	}
 	owner := k.Principal{UserID: alice}
 	administrator := k.Principal{UserID: admin}
@@ -217,7 +217,7 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	if e != nil {
 		t.Fatal("upload failed", e)
 	}
-	if _, e = service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销"}); !errors.Is(e, k.ErrNotReady) {
+	if _, _, e = service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销"}); !errors.Is(e, k.ErrNotReady) {
 		t.Fatal("pending must not be empty success", e)
 	}
 	if e = rc.Start(ctx); e != nil {
@@ -246,23 +246,26 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 		t.Fatal("River did not publish version")
 	}
 	t.Log("real PostgreSQL + River pipeline passed; embedding is a fixture")
-	matches, e := service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销材料"})
+	matches, _, e := service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销材料"})
 	if e != nil || len(matches) == 0 || matches[0].VersionID != doc.ActiveVersion || matches[0].Locator.Line == 0 {
 		t.Fatal("retrieval/reference", matches, e)
 	}
 	old := doc.ActiveVersion
-	// The fixture embedding has no dimension for 发票. Only the new lexical
-	// channel can recover this evidence; this exercises real scoped PostgreSQL SQL.
-	info := k.RetrievalInfo{}
-	lexicalMatches, err := service.SearchDetailed(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "发票"}, &info)
-	if err != nil || len(lexicalMatches) == 0 || lexicalMatches[0].VersionID != old || info.Strategy != "hybrid_rrf" {
-		t.Fatal("lexical recall failed", err, info)
+	// The fixture embedding has no dimension for 发票, so only the lexical
+	// channel finds this evidence (real scoped PostgreSQL SQL). Without a model
+	// relevance judgment, keyword-only candidates are not returned.
+	lexicalMatches, info, err := service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "发票"})
+	if err != nil || len(lexicalMatches) != 0 || info.Strategy != "hybrid_rrf" {
+		t.Fatal("keyword-only candidate returned without relevance judgment", err, info)
+	}
+	if direct, err := repository.LexicalSearch(ctx, []string{kb.ID}, k.SearchTerms("发票"), 20); err != nil || len(direct) == 0 || direct[0].VersionID != old {
+		t.Fatal("lexical recall failed", err)
 	}
 	outside, err := repository.LexicalSearch(ctx, []string{legacy}, k.SearchTerms("发票"), 20)
 	if err != nil || len(outside) != 0 {
 		t.Fatal("lexical candidate scope leaked", err)
 	}
-	missing, err := service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "火星移民签证"})
+	missing, _, err := service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "火星移民签证"})
 	if err != nil || len(missing) != 0 {
 		t.Fatal("unrelated query unexpectedly recalled", err)
 	}
@@ -304,8 +307,8 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	optimized, err := service.SearchDetailed(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "发票"}, &info)
-	if err != nil || len(optimized) == 0 || info.Rerank != "model" || optimizerCalls != 2 {
+	optimized, info, err := service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "发票"})
+	if err != nil || len(optimized) == 0 || optimized[0].VersionID != old || info.Rerank != "model" || optimizerCalls != 2 {
 		t.Fatal("optimizer integration", info, err)
 	}
 	service.Optimizer = nil
@@ -493,7 +496,7 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	if _, e = service.Search(ctx, principal, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销"}); !errors.Is(e, k.ErrUnauthenticated) {
+	if _, _, e = service.Search(ctx, principal, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销"}); !errors.Is(e, k.ErrUnauthenticated) {
 		t.Fatal("in-flight revocation leaked", e)
 	}
 	call(credential.Token, string(input), 401)
@@ -518,7 +521,7 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	matches, e = service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销"})
+	matches, _, e = service.Search(ctx, owner, k.SearchRequest{KBIDs: []string{kb.ID}, Query: "报销"})
 	if e != nil || len(matches) != 0 {
 		t.Fatal("deleted content leaked", e)
 	}

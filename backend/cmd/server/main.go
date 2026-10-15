@@ -96,16 +96,20 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	workerCtx, workerCancel := context.WithCancel(context.Background())
-	defer workerCancel()
-	if err := knowledgeWorker.Start(workerCtx); err != nil {
-		return fmt.Errorf("knowledge worker: %w", err)
+	if knowledgeWorker == nil {
+		fmt.Println("[server] knowledge service disabled: EMBEDDING_* not configured")
+	} else {
+		workerCtx, workerCancel := context.WithCancel(context.Background())
+		defer workerCancel()
+		if err := knowledgeWorker.Start(workerCtx); err != nil {
+			return fmt.Errorf("knowledge worker: %w", err)
+		}
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = knowledgeWorker.Stop(ctx)
+		}()
 	}
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_ = knowledgeWorker.Stop(ctx)
-	}()
 	router := httpx.NewCapabilityHubRouter(httpx.Handlers{
 		Knowledge:    knowledgeHandler,
 		Auth:         authHandler,

@@ -142,6 +142,8 @@ type Repository interface {
 	Fail(context.Context, string, string) error
 	Authorize(context.Context, Principal, []string) ([]KB, error)
 	Search(context.Context, []string, []float32, int, float32) ([]Match, error)
+	LexicalSearch(context.Context, []string, []string, int) ([]Match, error)
+	AuthorizeManage(context.Context, Principal, string) error
 	Recheck(context.Context, Principal, []string, []Match) ([]Match, error)
 	Authenticate(context.Context, []byte) (Principal, error)
 	Applications(context.Context, Principal) ([]Application, error)

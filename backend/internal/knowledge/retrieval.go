@@ -2,7 +2,7 @@ package knowledge
 
 import (
 	"context"
-	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -12,12 +12,10 @@ import (
 
 // QueryOptimizer only sees a standalone question and already authorized chunks.
 // It cannot introduce documents, alter citations or produce an answer.
+// Rerank returns one relevance score in [0,1] per input match, in input order.
 type QueryOptimizer interface {
 	Rewrite(context.Context, string) (string, error)
 	Rerank(context.Context, string, []Match) ([]float32, error)
-}
-type LexicalRepository interface {
-	LexicalSearch(context.Context, []string, []string, int) ([]Match, error)
 }
 type RetrievalInfo struct {
 	Strategy string   `json:"strategy"`
@@ -102,8 +100,8 @@ func validRewrite(original, rewritten string) bool {
 	}
 	return true
 }
-func (s *Service) retrieve(ctx context.Context, p Principal, in SearchRequest, info *RetrievalInfo) ([]Match, error) {
-	*info = RetrievalInfo{Strategy: "vector", Rewrite: "not_configured", Rerank: "local", Warnings: []string{}}
+func (s *Service) retrieve(ctx context.Context, p Principal, in SearchRequest) ([]Match, RetrievalInfo, error) {
+	info := RetrievalInfo{Strategy: "hybrid_rrf", Rewrite: "not_configured", Rerank: "local", Warnings: []string{}}
 	queries := []string{in.Query}
 	if s.Optimizer != nil {
 		c, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -123,94 +121,95 @@ func (s *Service) retrieve(ctx context.Context, p Principal, in SearchRequest, i
 		}
 	}
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, info, ctx.Err()
+	}
+	unavailable := func() ([]Match, RetrievalInfo, error) {
+		if ctx.Err() != nil {
+			return nil, info, ctx.Err()
+		}
+		return nil, info, ErrUnavailable
 	}
 	// Original query embedding remains an independent mandatory path. Optional
 	// rewritten-query failure must not discard a usable original query result.
 	lists := [][]Match{}
+	relevant := map[string]bool{} // chunks that passed the vector minScore threshold
 	candidateK := max(20, in.TopK*3)
 	for i, q := range queries {
 		c, cancel := context.WithTimeout(ctx, 8*time.Second)
 		vectors, err := s.embed.Embed(c, []string{q})
 		cancel()
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, info, ctx.Err()
 		}
 		if err != nil || len(vectors) != 1 || !validVector(vectors[0], s.embed.Dim()) {
 			if i == 0 {
-				return nil, ErrUnavailable
+				return nil, info, ErrUnavailable
 			}
 			info.Warnings = append(info.Warnings, "rewrite_embedding_unavailable")
 			continue
 		}
 		matches, err := s.Repo.Search(ctx, in.KBIDs, vectors[0], candidateK, s.minScore)
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, ErrUnavailable
+			return unavailable()
+		}
+		for _, m := range matches {
+			relevant[m.ChunkID] = true
 		}
 		lists = append(lists, matches)
 	}
-	if lexical, ok := s.Repo.(LexicalRepository); ok {
-		info.Strategy = "hybrid_rrf"
-		// Original-question lexical recall avoids speculative rewrite keywords
-		// opening a second low-confidence path for no-answer questions.
-		matches, err := lexical.LexicalSearch(ctx, in.KBIDs, SearchTerms(in.Query), candidateK)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, ErrUnavailable
-		}
-		lists = append(lists, matches)
+	// Original-question lexical recall avoids speculative rewrite keywords
+	// opening a second low-confidence path for no-answer questions.
+	lexical, err := s.Repo.LexicalSearch(ctx, in.KBIDs, SearchTerms(in.Query), candidateK)
+	if err != nil {
+		return unavailable()
 	}
+	lists = append(lists, lexical)
 	matches := fuse(in.Query, lists)
-	if len(matches) > candidateK {
-		matches = matches[:candidateK]
-	}
+	judged := false // a model relevance score replaced the vector threshold
 	if s.Optimizer != nil && len(matches) > 0 {
+		if len(matches) > candidateK {
+			matches = matches[:candidateK]
+		}
 		// Revoke/delete/version checks before sending content to a ranking provider.
-		var err error
-		matches, err = s.Repo.Recheck(ctx, p, in.KBIDs, matches)
-		if err != nil {
-			return nil, err
+		if matches, err = s.Repo.Recheck(ctx, p, in.KBIDs, matches); err != nil {
+			return nil, info, err
 		}
-		if len(matches) == 0 {
-			return s.Repo.Recheck(ctx, p, in.KBIDs, matches)
-		}
-		c, cancel := context.WithTimeout(ctx, 5*time.Second)
-		scores, e := s.Optimizer.Rerank(c, in.Query, matches)
-		cancel()
-		valid := e == nil && len(scores) == len(matches)
-		for _, score := range scores {
-			if math.IsNaN(float64(score)) || math.IsInf(float64(score), 0) || score < 0 || score > 1 {
-				valid = false
-			}
-		}
-		if valid {
-			info.Rerank = "model"
-			out := []Match{}
-			for i, m := range matches {
-				if scores[i] >= 0.5 {
-					m.Score = scores[i]
-					out = append(out, m)
+		if len(matches) > 0 {
+			c, cancel := context.WithTimeout(ctx, 5*time.Second)
+			scores, e := s.Optimizer.Rerank(c, in.Query, matches)
+			cancel()
+			if e == nil && len(scores) == len(matches) {
+				judged = true
+				info.Rerank = "model"
+				out := []Match{}
+				for i, m := range matches {
+					if scores[i] >= 0.5 {
+						m.Score = scores[i]
+						out = append(out, m)
+					}
 				}
+				matches = out
+				sort.SliceStable(matches, func(i, j int) bool { return matches[i].Score > matches[j].Score })
+			} else {
+				info.Rerank = "fallback"
+				info.Warnings = append(info.Warnings, "rerank_unavailable_or_invalid")
 			}
-			matches = out
-			sort.SliceStable(matches, func(i, j int) bool { return matches[i].Score > matches[j].Score })
-		} else {
-			info.Rerank = "fallback"
-			info.Warnings = append(info.Warnings, "rerank_unavailable_or_invalid")
 		}
+	}
+	// Keyword overlap alone is not evidence of an answer: without a model
+	// judgment, only chunks that met the vector threshold may be returned.
+	// Lexical matches still contribute to their ranking through fusion.
+	if !judged {
+		matches = slices.DeleteFunc(matches, func(m Match) bool { return !relevant[m.ChunkID] })
 	}
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, info, ctx.Err()
 	}
 	if len(matches) > in.TopK {
 		matches = matches[:in.TopK]
 	}
-	return s.Repo.Recheck(ctx, p, in.KBIDs, matches)
+	matches, err = s.Repo.Recheck(ctx, p, in.KBIDs, matches)
+	return matches, info, err
 }
 func fuse(query string, lists [][]Match) []Match {
 	type entry struct {

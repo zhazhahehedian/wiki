@@ -76,6 +76,7 @@ type Querier interface {
 	KnowledgeApplications(ctx context.Context) ([]KnowledgeApplication, error)
 	KnowledgeAudit(ctx context.Context, arg KnowledgeAuditParams) error
 	KnowledgeAuditEntries(ctx context.Context) ([]KnowledgeAuditEntriesRow, error)
+	KnowledgeBaseReadiness(ctx context.Context, kbID uuid.UUID) (KnowledgeBaseReadinessRow, error)
 	KnowledgeClearGrants(ctx context.Context, applicationID uuid.UUID) error
 	KnowledgeCreateDocument(ctx context.Context, arg KnowledgeCreateDocumentParams) (Document, error)
 	KnowledgeCreateVersion(ctx context.Context, arg KnowledgeCreateVersionParams) error
@@ -95,12 +96,16 @@ type Querier interface {
 	KnowledgeIssue(ctx context.Context, arg KnowledgeIssueParams) error
 	KnowledgeLatestCredential(ctx context.Context, applicationID uuid.UUID) (KnowledgeLatestCredentialRow, error)
 	KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, error)
+	KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	KnowledgeLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
 	KnowledgeLockDocument(ctx context.Context, id uuid.UUID) (Document, error)
 	KnowledgePreview(ctx context.Context, arg KnowledgePreviewParams) error
+	KnowledgeRetryDocument(ctx context.Context, arg KnowledgeRetryDocumentParams) (int64, error)
 	KnowledgeRevoke(ctx context.Context, applicationID uuid.UUID) error
 	KnowledgeRevokeBaseGrants(ctx context.Context, kbID uuid.UUID) error
 	KnowledgeSaveApplication(ctx context.Context, arg KnowledgeSaveApplicationParams) (KnowledgeApplication, error)
 	KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBaseParams) (KnowledgeBase, error)
+	KnowledgeShareLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
 	KnowledgeStageVersion(ctx context.Context, arg KnowledgeStageVersionParams) error
 	KnowledgeVersion(ctx context.Context, id uuid.UUID) (KnowledgeVersionRow, error)
 	KnowledgeVersionFail(ctx context.Context, arg KnowledgeVersionFailParams) error

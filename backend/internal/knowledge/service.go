@@ -55,9 +55,6 @@ func (s *Service) SaveKB(ctx context.Context, p Principal, id string, in KB) (KB
 			return KB{}, ErrInvalid
 		}
 	}
-	if s.embed == nil {
-		return KB{}, ErrUnavailable
-	}
 	return s.Repo.SaveKB(ctx, p, id, in, s.embed.Model(), s.embed.Dim())
 }
 func (s *Service) Upload(ctx context.Context, p Principal, kbID, docID, name string, data []byte) (Document, error) {
@@ -65,22 +62,15 @@ func (s *Service) Upload(ctx context.Context, p Principal, kbID, docID, name str
 	if !Supported(name) || len(name) > 240 || len(data) == 0 || len(data) > MaxUpload {
 		return Document{}, ErrInvalid
 	}
-	if s.embed == nil {
-		return Document{}, ErrUnavailable
-	}
 	// Authorize management before any object writes (readiness is irrelevant).
-	bases, e := s.Repo.ListKB(ctx, p)
+	// The canonical ID keeps the object key free of caller-chosen spelling.
+	id, e := uuid.Parse(kbID)
 	if e != nil {
-		return Document{}, e
-	}
-	ok := false
-	for _, b := range bases {
-		if b.ID == kbID && b.Manage {
-			ok = true
-		}
-	}
-	if !ok {
 		return Document{}, ErrForbidden
+	}
+	kbID = id.String()
+	if e = s.Repo.AuthorizeManage(ctx, p, kbID); e != nil {
+		return Document{}, e
 	}
 	sum := sha256.Sum256(data)
 	v := Version{ID: uuid.NewString(), Title: name, Model: s.embed.Model(), Dim: s.embed.Dim(), Checksum: hex.EncodeToString(sum[:])}
@@ -118,7 +108,7 @@ func (s *Service) Process(ctx context.Context, id string) error {
 		}
 		return nil
 	}
-	if s.embed == nil || v.Model != s.embed.Model() || v.Dim != s.embed.Dim() {
+	if v.Model != s.embed.Model() || v.Dim != s.embed.Dim() {
 		return fail("embedding_configuration_changed", false)
 	}
 	r, e := s.storage.Get(ctx, v.ObjectKey)
@@ -248,41 +238,38 @@ func (s *Service) acquire(p Principal) (func(), error) {
 	l.requests++
 	return func() { s.mu.Lock(); l.active--; s.mu.Unlock() }, nil
 }
-func (s *Service) Search(ctx context.Context, p Principal, in SearchRequest) ([]Match, error) {
-	return s.SearchDetailed(ctx, p, in, &RetrievalInfo{})
-}
-func (s *Service) SearchDetailed(ctx context.Context, p Principal, in SearchRequest, info *RetrievalInfo) ([]Match, error) {
-	*info = RetrievalInfo{Strategy: "none", Rewrite: "skipped", Rerank: "skipped", Warnings: []string{}}
+
+// Search returns authorized matches and how they were retrieved. Nothing is
+// embedded or sent to a model before the principal is authorized for every base.
+func (s *Service) Search(ctx context.Context, p Principal, in SearchRequest) ([]Match, RetrievalInfo, error) {
+	info := RetrievalInfo{Strategy: "none", Rewrite: "skipped", Rerank: "skipped", Warnings: []string{}}
 	if e := ValidateSearch(&in); e != nil {
-		return nil, e
+		return nil, info, e
 	}
 	release, e := s.acquire(p)
 	if e != nil {
-		return nil, e
+		return nil, info, e
 	}
 	defer release()
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	bases, e := s.Repo.Authorize(ctx, p, in.KBIDs)
 	if e != nil {
-		return nil, e
+		return nil, info, e
 	}
 	ready := false
 	for _, b := range bases {
 		ready = ready || b.HasActive
 	}
 	if !ready {
-		return s.Repo.Recheck(ctx, p, in.KBIDs, []Match{})
-	}
-	if s.embed == nil {
-		return nil, ErrUnavailable
+		return []Match{}, info, nil
 	}
 	for _, b := range bases {
 		if b.HasActive && (b.Model != s.embed.Model() || b.Dim != s.embed.Dim()) {
-			return nil, ErrNotReady
+			return nil, info, ErrNotReady
 		}
 	}
-	return s.retrieve(ctx, p, in, info)
+	return s.retrieve(ctx, p, in)
 }
 func (s *Service) Authenticate(ctx context.Context, token string) (Principal, error) {
 	if !strings.HasPrefix(token, "kh_") || len(token) != 46 {

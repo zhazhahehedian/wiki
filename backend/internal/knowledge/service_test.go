@@ -24,6 +24,9 @@ func (r *searchRepo) Authorize(context.Context, Principal, []string) ([]KB, erro
 func (r *searchRepo) Search(context.Context, []string, []float32, int, float32) ([]Match, error) {
 	return r.matches, nil
 }
+func (r *searchRepo) LexicalSearch(context.Context, []string, []string, int) ([]Match, error) {
+	return nil, nil
+}
 func (r *searchRepo) Recheck(context.Context, Principal, []string, []Match) ([]Match, error) {
 	return r.matches, r.revoke
 }
@@ -32,12 +35,14 @@ type testEmbed struct {
 	calls     atomic.Int32
 	wait      bool
 	malformed bool
+	texts     []string // embedded inputs, for sequential tests
 }
 
 func (*testEmbed) Model() string { return "test" }
 func (*testEmbed) Dim() int      { return 2 }
 func (e *testEmbed) Embed(ctx context.Context, s []string) ([][]float32, error) {
 	e.calls.Add(1)
+	e.texts = append(e.texts, s...)
 	if e.wait {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -52,17 +57,17 @@ func TestSearchAuthorizationAndRecheck(t *testing.T) {
 	r := &searchRepo{deny: ErrForbidden}
 	e := &testEmbed{}
 	s := New(r, nil, e, 0.5)
-	if _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, req); !errors.Is(err, ErrForbidden) || e.calls.Load() != 0 {
+	if _, _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, req); !errors.Is(err, ErrForbidden) || e.calls.Load() != 0 {
 		t.Fatal("unauthorized question sent to embedding")
 	}
 	r.deny = nil
 	r.revoke = ErrUnauthenticated
-	if _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, req); !errors.Is(err, ErrUnauthenticated) {
+	if _, _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, req); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatal("revocation ignored")
 	}
 	r.revoke = nil
 	e.malformed = true
-	if _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, req); !errors.Is(err, ErrUnavailable) {
+	if _, _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, req); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("invalid provider vector accepted")
 	}
 }
@@ -73,7 +78,7 @@ func TestSearchCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	_, err := s.Search(ctx, Principal{UserID: "u"}, SearchRequest{KBIDs: []string{"00000000-0000-0000-0000-000000000001"}, Query: "question"})
+	_, _, err := s.Search(ctx, Principal{UserID: "u"}, SearchRequest{KBIDs: []string{"00000000-0000-0000-0000-000000000001"}, Query: "question"})
 	if !errors.Is(err, context.Canceled) || time.Since(start) > time.Second {
 		t.Fatal("cancellation not propagated", err)
 	}

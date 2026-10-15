@@ -176,6 +176,23 @@ func (q *Queries) KnowledgeAuditEntries(ctx context.Context) ([]KnowledgeAuditEn
 	return items, nil
 }
 
+const knowledgeBaseReadiness = `-- name: KnowledgeBaseReadiness :one
+SELECT EXISTS(SELECT 1 FROM documents d WHERE d.kb_id=$1 AND d.deleted_at IS NULL)::boolean AS has_documents,
+EXISTS(SELECT 1 FROM documents a WHERE a.kb_id=$1 AND a.deleted_at IS NULL AND a.active_version_id IS NOT NULL)::boolean AS has_active
+`
+
+type KnowledgeBaseReadinessRow struct {
+	HasDocuments bool `json:"has_documents"`
+	HasActive    bool `json:"has_active"`
+}
+
+func (q *Queries) KnowledgeBaseReadiness(ctx context.Context, kbID uuid.UUID) (KnowledgeBaseReadinessRow, error) {
+	row := q.db.QueryRow(ctx, knowledgeBaseReadiness, kbID)
+	var i KnowledgeBaseReadinessRow
+	err := row.Scan(&i.HasDocuments, &i.HasActive)
+	return i, err
+}
+
 const knowledgeClearGrants = `-- name: KnowledgeClearGrants :exec
 DELETE FROM knowledge_grants WHERE application_id=$1
 `
@@ -620,6 +637,43 @@ func (q *Queries) KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, erro
 	return items, nil
 }
 
+const knowledgeLockApplication = `-- name: KnowledgeLockApplication :one
+SELECT id FROM knowledge_applications WHERE id=$1 FOR UPDATE
+`
+
+func (q *Queries) KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, knowledgeLockApplication, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const knowledgeLockBase = `-- name: KnowledgeLockBase :one
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+`
+
+func (q *Queries) KnowledgeLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
+	row := q.db.QueryRow(ctx, knowledgeLockBase, id)
+	var i KnowledgeBase
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.OwnerID,
+		&i.EmbedModel,
+		&i.EmbedDim,
+		&i.Settings,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.Visibility,
+		&i.Department,
+		&i.Members,
+		&i.ApplicationShared,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const knowledgeLockDocument = `-- name: KnowledgeLockDocument :one
 SELECT id, kb_id, source_type, source_ref, title, mime_type, bytes, checksum, status, error_message, metadata, created_at, updated_at, content_ref, source_url, remote_revision, oauth_account_id, pending_content_ref, pending_checksum, pending_remote_revision, sync_status, last_sync_error, last_synced_at, pending_title, pending_bytes, pending_metadata, active_version_id, pending_version_id, deleted_at FROM documents WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
 `
@@ -673,6 +727,24 @@ type KnowledgePreviewParams struct {
 func (q *Queries) KnowledgePreview(ctx context.Context, arg KnowledgePreviewParams) error {
 	_, err := q.db.Exec(ctx, knowledgePreview, arg.ID, arg.Preview)
 	return err
+}
+
+const knowledgeRetryDocument = `-- name: KnowledgeRetryDocument :execrows
+UPDATE documents SET status='pending',error_message=NULL,updated_at=now()
+WHERE id=$1 AND pending_version_id=$2 AND status='failed' AND deleted_at IS NULL
+`
+
+type KnowledgeRetryDocumentParams struct {
+	ID               uuid.UUID   `json:"id"`
+	PendingVersionID pgtype.UUID `json:"pending_version_id"`
+}
+
+func (q *Queries) KnowledgeRetryDocument(ctx context.Context, arg KnowledgeRetryDocumentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, knowledgeRetryDocument, arg.ID, arg.PendingVersionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const knowledgeRevoke = `-- name: KnowledgeRevoke :exec
@@ -750,6 +822,33 @@ func (q *Queries) KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBasePa
 		arg.Members,
 		arg.ApplicationShared,
 	)
+	var i KnowledgeBase
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.OwnerID,
+		&i.EmbedModel,
+		&i.EmbedDim,
+		&i.Settings,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerUserID,
+		&i.Visibility,
+		&i.Department,
+		&i.Members,
+		&i.ApplicationShared,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const knowledgeShareLockBase = `-- name: KnowledgeShareLockBase :one
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR SHARE
+`
+
+func (q *Queries) KnowledgeShareLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
+	row := q.db.QueryRow(ctx, knowledgeShareLockBase, id)
 	var i KnowledgeBase
 	err := row.Scan(
 		&i.ID,
