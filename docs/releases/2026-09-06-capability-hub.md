@@ -35,6 +35,6 @@
 
 ## 验证与启用边界
 
-合并前后端全量测试与 server 构建、sqlc 生成一致性检查、前端 155 项测试、lint、typecheck、生产构建、Makefile 帮助和 diff 检查均通过。阶段性的隔离 PostgreSQL/MinIO、模拟多角色和浏览器证据见 [阶段 B](../verification/2026-09-06-phase-b/README.md)、[阶段 C](../verification/2026-09-06-phase-c/README.md)、[Skill 创建](../verification/2026-09-06-skill-builder/README.md)与 [UI](../verification/2026-09-06-ui-refresh/README.md)。本次清理没有新增 schema，未重复运行需显式 opt-in 的云服务集成。
+合并前后端全量测试与 server 构建、sqlc 生成一致性检查、前端 155 项测试、lint、typecheck、生产构建、Makefile 帮助和 diff 检查均通过。阶段性的隔离 PostgreSQL/MinIO、模拟多角色和浏览器证据见 [阶段 B](../verification/2026-09-06-phase-b/README.md)、[阶段 C](../verification/2026-09-06-phase-c/README.md)与 [Skill 创建](../verification/2026-09-06-skill-builder/README.md)；早期 UI 截图已被后续布局记录替代并删除，可从 Git 历史查阅。本次清理没有新增 schema，未重复运行需显式 opt-in 的云服务集成。
 
 真实飞书登录已在前序联调中验证；公司模型调用按用户要求暂缓，当前推送不冒充模型验收。合并不等于部署：现有开发数据库/常驻服务未在本批次升级，首次启用需核对迁移、OAuth 加密配置与 Admin bootstrap。凭证分发、机器 discovery 和健康检查仍待实施。

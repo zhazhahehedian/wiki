@@ -13,7 +13,7 @@ import {
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { MarkdownContent } from "@/components/chat/markdown-content";
+import { MarkdownContent } from "@/components/common/markdown-content";
 import {
   streamModelChat,
   type ChatMessage,
