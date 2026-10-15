@@ -59,6 +59,8 @@ func (t *guardedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 // Public destinations are resolved, checked and dialed by IP (DNS rebinding
 // protection). Only explicit operator-trusted origins can use private addresses
 // or the system proxy. Redirects never receive a user's Authorization header.
+// Callers bound each request with a context deadline; the transport only limits
+// waiting for response headers.
 func NewHTTPClient(allowedOrigins string) (*http.Client, error) {
 	origins := map[string]bool{}
 	for _, raw := range strings.Split(allowedOrigins, ",") {
@@ -101,5 +103,5 @@ func NewHTTPClient(allowedOrigins string) (*http.Client, error) {
 	trusted := transport.Clone()
 	trusted.Proxy = http.ProxyFromEnvironment
 	trusted.DialContext = dialer.DialContext
-	return &http.Client{Transport: &guardedTransport{transport, trusted, origins}, Timeout: StreamTimeout + time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
+	return &http.Client{Transport: &guardedTransport{transport, trusted, origins}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }

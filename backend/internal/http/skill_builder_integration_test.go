@@ -46,8 +46,8 @@ func verifySkillBuilderIntegration(t *testing.T, pool *pgxpool.Pool, registrySer
 			Temperature         *float64             `json:"temperature"`
 		}
 		if json.NewDecoder(r.Body).Decode(&input) != nil || input.Temperature != nil ||
-			(anthropic && (input.MaxTokens != skillbuilder.DefaultOutputTokens || input.MaxCompletionTokens != 0)) ||
-			(!anthropic && (input.MaxCompletionTokens != skillbuilder.DefaultOutputTokens || input.MaxTokens != 0)) {
+			(anthropic && (input.MaxTokens != playground.DefaultOutputTokens || input.MaxCompletionTokens != 0)) ||
+			(!anthropic && (input.MaxCompletionTokens != playground.DefaultOutputTokens || input.MaxTokens != 0)) {
 			t.Error("invalid model request")
 			w.WriteHeader(400)
 			return

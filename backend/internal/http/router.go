@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/zenith-wang/it-wiki/backend/internal/playground"
 )
 
 type Handlers struct {
@@ -50,7 +49,6 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(SanitizedAccessLogger)
 	r.Use(middleware.Recoverer)
-	r.Use(requestTimeout)
 	r.Use(func(next http.Handler) http.Handler {
 		return CORS(next, h.Auth.FrontendOrigin())
 	})
@@ -59,6 +57,19 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 	r.Get("/api/healthz", healthz)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// Model streams are bounded by playground.StreamTimeout inside the
+		// service; every other API route keeps the default request timeout.
+		r.Group(func(r chi.Router) {
+			r.Use(h.Auth.Middleware)
+			if h.Playground != nil {
+				r.Post("/playground/chat/stream", h.Playground.Stream)
+			}
+			if h.SkillBuilder != nil {
+				r.Post("/skill-builder/turn", h.SkillBuilder.Turn)
+			}
+		})
+		r = r.With(middleware.Timeout(time.Minute))
+
 		if h.Knowledge != nil {
 			r.Post("/knowledge/search", h.Knowledge.MachineSearch)
 		}
@@ -95,7 +106,6 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 				r.Put("/playground/connection", h.Playground.Save)
 				r.Delete("/playground/connection", h.Playground.Delete)
 				r.Post("/playground/models", h.Playground.Models)
-				r.Post("/playground/chat/stream", h.Playground.Stream)
 			}
 
 			if h.Registry != nil {
@@ -119,7 +129,6 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 			}
 
 			if h.SkillBuilder != nil {
-				r.Post("/skill-builder/turn", h.SkillBuilder.Turn)
 				r.Post("/skill-builder/drafts", h.SkillBuilder.Save)
 			}
 
@@ -154,20 +163,6 @@ func newRouter(h Handlers, legacy bool) http.Handler {
 	})
 
 	return r
-}
-
-func requestTimeout(next http.Handler) http.Handler {
-	standard := middleware.Timeout(time.Minute)(next)
-	// Leave room for auth/config reads and for the model's own timeout to return
-	// a structured error. A nested timeout cannot extend a 60-second parent.
-	model := middleware.Timeout(playground.StreamTimeout + time.Minute)(next)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/skill-builder/turn" || r.URL.Path == "/api/v1/playground/chat/stream") {
-			model.ServeHTTP(w, r)
-			return
-		}
-		standard.ServeHTTP(w, r)
-	})
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {

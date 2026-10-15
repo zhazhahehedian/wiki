@@ -23,27 +23,26 @@ var (
 	ErrConflict      = errors.New("configuration changed; reload before saving")
 	ErrUpstream      = errors.New("model service failed or returned an invalid stream")
 	ErrTimeout       = fmt.Errorf("model response timed out: %w", ErrUpstream)
-	ErrInterrupted   = fmt.Errorf("model stream ended before completion: %w", ErrUpstream)
 	ErrOutputLimit   = fmt.Errorf("model reached its output token limit: %w", ErrUpstream)
 )
 
-// Long model replies and structured Skill drafts need more than a short HTTP
-// request budget. Discovery keeps its separate 20-second deadline.
+// StreamTimeout is the single deadline for a chat or Skill generation stream.
+// The HTTP router does not add another one; discovery keeps its own 20 seconds.
 const StreamTimeout = 5 * time.Minute
 
 // Platform request ceiling, not a claim about any configured model's capacity.
-const MaxOutputTokens = 1048576
-const DefaultOutputTokens = 65536
+// The default stays below the output limits most providers accept.
+const MaxOutputTokens = 131072
+const DefaultOutputTokens = 8192
 
-type UpstreamHTTPError struct {
-	StatusCode int
-	Reason     string
-}
+// UpstreamHTTPError keeps only the provider status; bodies may contain secrets.
+type UpstreamHTTPError struct{ StatusCode int }
 
 func (e *UpstreamHTTPError) Error() string { return fmt.Sprintf("model HTTP status %d", e.StatusCode) }
 func (e *UpstreamHTTPError) Unwrap() error { return ErrUpstream }
 
-func streamReadError(ctx context.Context, err error) error {
+// streamError separates caller cancellation and timeouts from other failures.
+func streamError(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return context.Canceled
 	}
@@ -51,7 +50,7 @@ func streamReadError(ctx context.Context, err error) error {
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
 		return ErrTimeout
 	}
-	return ErrInterrupted
+	return ErrUpstream
 }
 
 type Connection struct {
@@ -78,13 +77,14 @@ type Store interface {
 	Delete(context.Context, string) error
 }
 type Service struct {
-	store     Store
-	protector ports.TokenProtector
-	client    *http.Client
+	store         Store
+	protector     ports.TokenProtector
+	client        *http.Client
+	streamTimeout time.Duration
 }
 
 func New(store Store, protector ports.TokenProtector, client *http.Client) *Service {
-	return &Service{store, protector, client}
+	return &Service{store, protector, client, StreamTimeout}
 }
 func (s *Service) Get(ctx context.Context, user string) (Connection, error) {
 	c, e := s.store.Get(ctx, user)
@@ -219,7 +219,7 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 	if err != nil {
 		return ErrInvalid
 	}
-	ctx, cancel := context.WithTimeout(ctx, StreamTimeout)
+	ctx, cancel := context.WithTimeout(ctx, s.streamTimeout)
 	defer cancel()
 	path := "/chat/completions"
 	if protocolName(c.Protocol) == ProtocolAnthropic {
@@ -234,19 +234,11 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 	req.Header.Set("Accept", "text/event-stream")
 	response, err := s.client.Do(req)
 	if err != nil {
-		if cause := streamReadError(ctx, err); !errors.Is(cause, ErrInterrupted) {
-			return cause
-		}
-		return ErrUpstream
+		return streamError(ctx, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		// Some gateways never finish their error body. Limit diagnostic collection
-		// separately so a known rejection does not consume the generation budget.
-		timer := time.AfterFunc(2*time.Second, cancel)
-		err := readUpstreamError(response)
-		timer.Stop()
-		return err
+		return &UpstreamHTTPError{StatusCode: response.StatusCode}
 	}
 	if !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		return ErrUpstream
@@ -314,7 +306,7 @@ func (s *Service) Stream(ctx context.Context, user string, r ChatRequest, emit f
 		}
 	}
 	if scanner.Err() != nil || !finished {
-		return streamReadError(ctx, scanner.Err())
+		return streamError(ctx, scanner.Err())
 	}
 	return nil
 }

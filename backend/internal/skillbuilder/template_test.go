@@ -18,8 +18,13 @@ func TestTemplatePreservesTextAndAttachmentsAndCreatesNewIdentity(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if copy.Slug == original.Slug || !strings.HasPrefix(copy.Slug, original.Slug+"-copy-") || strings.TrimSpace(copy.Instructions) != strings.TrimSpace(original.Instructions) || copy.Description != original.Description || len(copy.Files) != len(original.Files) {
+	if copy.Slug == original.Slug || !strings.HasPrefix(copy.Slug, original.Slug+"-copy-") || copy.Instructions != original.Instructions || copy.Description != original.Description || len(copy.Files) != len(original.Files) {
 		t.Fatalf("incomplete copy: %+v", copy)
+	}
+	copiedFiles, _ := Files(copy)
+	copyOfCopy, err := Template(registry.Detail{Capability: registry.Capability{Type: "skill", Slug: copy.Slug, Name: copy.Name}}, copiedFiles)
+	if err != nil || copyOfCopy.Instructions != original.Instructions {
+		t.Fatalf("repeated copies changed the body: %q %v", copyOfCopy.Instructions, err)
 	}
 	for i, file := range original.Files {
 		if copy.Files[i] != file {

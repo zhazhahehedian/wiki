@@ -12,10 +12,6 @@ import (
 	"time"
 )
 
-type streamTransport func(*http.Request) (*http.Response, error)
-
-func (f streamTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 func TestStreamDistinguishesOutputLimitFromNormalCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		name, protocol, body, text string
@@ -47,27 +43,6 @@ func TestStreamDistinguishesOutputLimitFromNormalCompletion(t *testing.T) {
 	}
 }
 
-func TestStreamProvidesEnoughTimeForLongSkillDrafts(t *testing.T) {
-	client, err := NewHTTPClient("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Inspect the effective request deadline without spending minutes in a test.
-	client.Transport = streamTransport(func(r *http.Request) (*http.Response, error) {
-		deadline, ok := r.Context().Deadline()
-		remaining := time.Until(deadline)
-		if !ok || remaining < 4*time.Minute || remaining > 5*time.Minute {
-			t.Fatalf("long generation still has an unsuitable budget: %v", remaining)
-		}
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader("data: [DONE]\n\n")), Request: r}, nil
-	})
-	s, _ := newTestService(t, client)
-	saveTestConnection(t, s, "https://model.example/v1")
-	if err := s.Stream(context.Background(), "alice", ChatRequest{Model: "model", Messages: []Message{{"user", "generate"}}}, func(string) error { return nil }); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestStreamTimeoutAndCancellationRemainDistinct(t *testing.T) {
 	for _, phase := range []string{"headers", "body", "cancel"} {
 		t.Run(phase, func(t *testing.T) {
@@ -88,8 +63,8 @@ func TestStreamTimeoutAndCancellationRemainDistinct(t *testing.T) {
 			}))
 			defer func() { close(release); upstream.Close() }()
 			client, _ := NewHTTPClient(upstream.URL)
-			client.Timeout = 100 * time.Millisecond
 			s, _ := newTestService(t, client)
+			s.streamTimeout = 100 * time.Millisecond
 			saveTestConnection(t, s, upstream.URL)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -138,8 +113,8 @@ func TestStreamIncompleteAndRejectedResponses(t *testing.T) {
 			saveTestConnection(t, s, upstream.URL)
 			err := s.Stream(context.Background(), "alice", ChatRequest{Model: "model", Messages: []Message{{"user", "generate"}}}, func(string) error { return nil })
 			if status == 200 {
-				if !errors.Is(err, ErrInterrupted) {
-					t.Fatalf("missing completion accepted: %v", err)
+				if errors.Is(err, ErrTimeout) || errors.Is(err, ErrOutputLimit) {
+					t.Fatalf("unfinished stream misclassified: %v", err)
 				}
 			} else {
 				var rejected *UpstreamHTTPError

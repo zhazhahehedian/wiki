@@ -27,11 +27,5 @@ func (h *RegistryHandler) SkillTemplate(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, r, NewAPIError(422, "skill_template_unsupported", "此 Skill 包含创建助手暂不支持的文件、额外文件头或内容大小，无法完整复制；请下载原包使用，或整理为文本 Skill 后上传"))
 		return
 	}
-	version := ""
-	for _, v := range d.Versions {
-		if v.ID == versionID {
-			version = v.Version
-		}
-	}
-	WriteJSON(w, 200, map[string]any{"draft": draft, "source": map[string]string{"slug": d.Slug, "name": d.Name, "version_id": versionID, "version": version}})
+	WriteJSON(w, 200, map[string]any{"draft": draft, "source": map[string]string{"slug": d.Slug, "name": d.Name, "version_id": versionID, "version": d.Versions[0].Version}})
 }
