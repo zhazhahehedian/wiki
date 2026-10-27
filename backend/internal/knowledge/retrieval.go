@@ -108,7 +108,8 @@ func (s *Service) retrieve(ctx context.Context, p Principal, in SearchRequest) (
 		q, err := s.Optimizer.Rewrite(c, in.Query)
 		cancel()
 		q = strings.TrimSpace(q)
-		if err == nil && validRewrite(in.Query, q) {
+		withinBudget := s.embeddingInputLimit() <= 0 || len(q) <= s.embeddingInputLimit()
+		if err == nil && withinBudget && validRewrite(in.Query, q) {
 			info.Rewrite = "applied"
 			if q != in.Query {
 				queries = append(queries, q)

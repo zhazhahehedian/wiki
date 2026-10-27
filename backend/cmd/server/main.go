@@ -15,9 +15,12 @@ import (
 	"github.com/riverqueue/river/rivermigrate"
 	authstore "github.com/zenith-wang/it-wiki/backend/internal/auth"
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/directory"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
+	"github.com/zenith-wang/it-wiki/backend/internal/infra/feishu"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/storage"
 	"github.com/zenith-wang/it-wiki/backend/internal/playground"
+	"github.com/zenith-wang/it-wiki/backend/internal/publishing"
 	"github.com/zenith-wang/it-wiki/backend/internal/registry"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/migrations"
@@ -74,7 +77,7 @@ func run() error {
 	}
 	fmt.Printf("[main] minio bucket %q ready\n", cfg.S3Bucket)
 
-	authHandler, err := buildAuthHandler(cfg, pool)
+	authHandler, authService, err := buildAuthRuntime(cfg, pool, stdhttp.DefaultClient)
 	if err != nil {
 		return fmt.Errorf("build auth runtime: %w", err)
 	}
@@ -92,9 +95,20 @@ func run() error {
 		return fmt.Errorf("bootstrap platform admin: %w", err)
 	}
 	registryService := registry.New(registryRepo, mc)
+	var directoryHandler *httpx.DirectoryHandler
+	var directoryService *directory.Service
+	if authService != nil {
+		accounts := repo.NewAuthRepository(pool)
+		directoryService = directory.New(accounts, authService, feishu.NewClient(feishu.ClientConfig{Timeout: 8 * time.Second, MaxRetries: 1}, nil), accounts)
+		registryService.WithDirectory(directoryService)
+		directoryHandler = httpx.NewDirectoryHandler(directoryService)
+	}
 	knowledgeHandler, knowledgeWorker, err := buildKnowledge(pool, mc)
 	if err != nil {
 		return err
+	}
+	if knowledgeHandler != nil && directoryService != nil {
+		knowledgeHandler.WithDirectory(directoryService)
 	}
 	if knowledgeWorker == nil {
 		fmt.Println("[server] knowledge service disabled: EMBEDDING_* not configured")
@@ -115,6 +129,8 @@ func run() error {
 		Auth:         authHandler,
 		Playground:   httpx.NewPlaygroundHandler(modelService),
 		Registry:     httpx.NewRegistryHandler(registryService),
+		Directory:    directoryHandler,
+		Publishing:   httpx.NewPublishingHandler(publishing.New(repo.NewPublishingRepository(pool))),
 		SkillBuilder: httpx.NewSkillBuilderHandler(skillbuilder.New(modelService, registryService)),
 	})
 

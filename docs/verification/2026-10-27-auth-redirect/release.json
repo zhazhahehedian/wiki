@@ -1,0 +1,10 @@
+{
+  "updated_at": "2026-10-27T02:28:24.216803+00:00",
+  "backend_image": "capability-hub-backend:20261027-auth-redirect",
+  "frontend_unchanged": true,
+  "goose_version": 17,
+  "oauth_success_destination": "/hub",
+  "config_backup": "/opt/capability-hub/shared/deploy.env.before-auth-redirect",
+  "real_login_before_fix": "confirmed by user",
+  "real_login_after_fix": "pending user retry"
+}

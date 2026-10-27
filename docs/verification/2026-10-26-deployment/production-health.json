@@ -1,0 +1,55 @@
+{
+  "checked_at": "2026-10-27T00:20:20.6043311+08:00",
+  "base_url": "https://hub.sn0w.icu",
+  "checks": [
+    {
+      "path": "/",
+      "method": "GET",
+      "status": 307,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/login",
+      "method": "GET",
+      "status": 200,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/healthz",
+      "method": "GET",
+      "status": 200,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/api/healthz",
+      "method": "GET",
+      "status": 200,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/api/v1/auth/me",
+      "method": "GET",
+      "status": 401,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/api/v1/catalog",
+      "method": "GET",
+      "status": 401,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/api/v1/knowledge/bases",
+      "method": "GET",
+      "status": 401,
+      "tls_verify_result": 0
+    },
+    {
+      "path": "/api/v1/knowledge/search",
+      "method": "POST",
+      "status": 401,
+      "tls_verify_result": 0
+    }
+  ],
+  "company_oauth_acceptance": "pending company application configuration"
+}

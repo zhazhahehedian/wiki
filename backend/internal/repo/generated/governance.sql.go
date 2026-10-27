@@ -30,7 +30,7 @@ func (q *Queries) BootstrapPlatformAdmin(ctx context.Context, openID string) err
 }
 
 const getCapability = `-- name: GetCapability :one
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities WHERE slug=$1
+SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id FROM capabilities WHERE slug=$1
 `
 
 func (q *Queries) GetCapability(ctx context.Context, slug string) (Capability, error) {
@@ -54,22 +54,28 @@ func (q *Queries) GetCapability(ctx context.Context, slug string) (Capability, e
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
 
 const governanceIdentity = `-- name: GovernanceIdentity :one
 SELECT a.provider_user_id AS open_id, COALESCE(p.is_admin, false)::boolean AS is_admin,
-    COALESCE(p.department, '')::text AS department, COALESCE(p.revision, 0)::bigint AS revision
+    COALESCE(p.department, '')::text AS department, COALESCE(p.revision, 0)::bigint AS revision,
+    CASE WHEN m.expires_at>now() AND NOT a.reauth_required
+        AND a.scopes @> ARRAY['contact:contact.base:readonly','contact:department.base:readonly','contact:user.base:readonly','contact:user.department:readonly']::text[]
+        THEN m.department_ids ELSE '{}'::text[] END AS department_ids
 FROM oauth_accounts a LEFT JOIN platform_profiles p ON p.open_id=a.provider_user_id
+LEFT JOIN feishu_memberships m ON m.account_id=a.id
 WHERE a.user_id=$1 AND a.provider='feishu'
 `
 
 type GovernanceIdentityRow struct {
-	OpenID     string `json:"open_id"`
-	IsAdmin    bool   `json:"is_admin"`
-	Department string `json:"department"`
-	Revision   int64  `json:"revision"`
+	OpenID        string   `json:"open_id"`
+	IsAdmin       bool     `json:"is_admin"`
+	Department    string   `json:"department"`
+	Revision      int64    `json:"revision"`
+	DepartmentIds []string `json:"department_ids"`
 }
 
 func (q *Queries) GovernanceIdentity(ctx context.Context, userID uuid.UUID) (GovernanceIdentityRow, error) {
@@ -80,6 +86,7 @@ func (q *Queries) GovernanceIdentity(ctx context.Context, userID uuid.UUID) (Gov
 		&i.IsAdmin,
 		&i.Department,
 		&i.Revision,
+		&i.DepartmentIds,
 	)
 	return i, err
 }
@@ -122,32 +129,35 @@ func (q *Queries) IsPlatformAdmin(ctx context.Context, openID string) (bool, err
 }
 
 const listCatalogCapabilities = `-- name: ListCatalogCapabilities :many
-SELECT c.id, c.slug, c.type, c.name, c.description, c.owner_open_id, c.department, c.status, c.visibility, c.current_version_id, c.draft_version_id, c.revision, c.created_at, c.updated_at, c.is_live, c.published_metadata, c.review_reason, v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name
+SELECT c.id, c.slug, c.type, c.name, c.description, c.owner_open_id, c.department, c.status, c.visibility, c.current_version_id, c.draft_version_id, c.revision, c.created_at, c.updated_at, c.is_live, c.published_metadata, c.review_reason, c.department_id, v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name
 FROM capabilities c JOIN capability_versions v ON v.id=c.current_version_id
 LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=c.owner_open_id
 LEFT JOIN users u ON u.id=a.user_id
 WHERE c.is_live
 AND ($1::boolean OR c.owner_open_id=$2
     OR published_metadata->>'visibility'='org'
-    OR (published_metadata->>'visibility'='department' AND $3::text<>'' AND published_metadata->>'department'=$3)
+    OR (published_metadata->>'visibility'='department' AND (
+        (COALESCE(published_metadata->>'department_id','')<>'' AND published_metadata->>'department_id'=ANY($3::text[]))
+        OR (COALESCE(published_metadata->>'department_id','')='' AND $4::text<>'' AND published_metadata->>'department'=$4)))
     OR (published_metadata->>'visibility'='allowlist' AND (published_metadata->'allowlist') @> to_jsonb(ARRAY[$2::text])))
-AND ($4::text='' OR c.type=$4)
-AND ($5::text='' OR $5='published')
-AND ($6::text='' OR published_metadata->>'department'=$6)
-AND ($7::text='' OR strpos(lower((published_metadata->>'name') || ' ' || (published_metadata->>'description') || ' ' || slug),lower($7))>0)
-ORDER BY c.updated_at DESC,c.id LIMIT $9 OFFSET $8
+AND ($5::text='' OR c.type=$5)
+AND ($6::text='' OR $6='published')
+AND ($7::text='' OR published_metadata->>'department'=$7)
+AND ($8::text='' OR strpos(lower((published_metadata->>'name') || ' ' || (published_metadata->>'description') || ' ' || slug),lower($8))>0)
+ORDER BY c.updated_at DESC,c.id LIMIT $10 OFFSET $9
 `
 
 type ListCatalogCapabilitiesParams struct {
-	IsAdmin          bool   `json:"is_admin"`
-	OpenID           string `json:"open_id"`
-	Department       string `json:"department"`
-	FilterType       string `json:"filter_type"`
-	FilterStatus     string `json:"filter_status"`
-	FilterDepartment string `json:"filter_department"`
-	Search           string `json:"search"`
-	PageOffset       int32  `json:"page_offset"`
-	PageLimit        int32  `json:"page_limit"`
+	IsAdmin          bool     `json:"is_admin"`
+	OpenID           string   `json:"open_id"`
+	DepartmentIds    []string `json:"department_ids"`
+	Department       string   `json:"department"`
+	FilterType       string   `json:"filter_type"`
+	FilterStatus     string   `json:"filter_status"`
+	FilterDepartment string   `json:"filter_department"`
+	Search           string   `json:"search"`
+	PageOffset       int32    `json:"page_offset"`
+	PageLimit        int32    `json:"page_limit"`
 }
 
 type ListCatalogCapabilitiesRow struct {
@@ -160,6 +170,7 @@ func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCa
 	rows, err := q.db.Query(ctx, listCatalogCapabilities,
 		arg.IsAdmin,
 		arg.OpenID,
+		arg.DepartmentIds,
 		arg.Department,
 		arg.FilterType,
 		arg.FilterStatus,
@@ -193,6 +204,7 @@ func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCa
 			&i.Capability.IsLive,
 			&i.Capability.PublishedMetadata,
 			&i.Capability.ReviewReason,
+			&i.Capability.DepartmentID,
 			&i.PublishedVersion,
 			&i.PublisherName,
 		); err != nil {
@@ -308,7 +320,7 @@ func (q *Queries) ListPlatformProfiles(ctx context.Context, arg ListPlatformProf
 }
 
 const listReviewCapabilities = `-- name: ListReviewCapabilities :many
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities WHERE status='in_review'
+SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id FROM capabilities WHERE status='in_review'
 AND ($1::text='' OR type=$1)
 AND ($2::text='' OR department=$2)
 AND ($3::text='' OR strpos(lower(name || ' ' || description || ' ' || slug),lower($3))>0)
@@ -356,6 +368,7 @@ func (q *Queries) ListReviewCapabilities(ctx context.Context, arg ListReviewCapa
 			&i.IsLive,
 			&i.PublishedMetadata,
 			&i.ReviewReason,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -377,7 +390,7 @@ func (q *Queries) LockAdminBootstrap(ctx context.Context) error {
 }
 
 const lockCapability = `-- name: LockCapability :one
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities WHERE slug=$1 FOR UPDATE
+SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id FROM capabilities WHERE slug=$1 FOR UPDATE
 `
 
 func (q *Queries) LockCapability(ctx context.Context, slug string) (Capability, error) {
@@ -401,6 +414,7 @@ func (q *Queries) LockCapability(ctx context.Context, slug string) (Capability, 
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
@@ -417,7 +431,7 @@ func (q *Queries) MarkVersionPublished(ctx context.Context, id uuid.UUID) error 
 const setCapabilityGovernance = `-- name: SetCapabilityGovernance :one
 UPDATE capabilities SET status=$2, is_live=$3, current_version_id=$4, draft_version_id=$5,
     published_metadata=$6, review_reason=$7, revision=revision+1, updated_at=now()
-WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason
+WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id
 `
 
 type SetCapabilityGovernanceParams struct {
@@ -459,22 +473,29 @@ func (q *Queries) SetCapabilityGovernance(ctx context.Context, arg SetCapability
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
 
 const setCapabilityVisibility = `-- name: SetCapabilityVisibility :one
-UPDATE capabilities SET visibility=$2,department=$3 WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason
+UPDATE capabilities SET visibility=$2,department=$3,department_id=$4 WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id
 `
 
 type SetCapabilityVisibilityParams struct {
-	ID         uuid.UUID `json:"id"`
-	Visibility string    `json:"visibility"`
-	Department string    `json:"department"`
+	ID           uuid.UUID `json:"id"`
+	Visibility   string    `json:"visibility"`
+	Department   string    `json:"department"`
+	DepartmentID string    `json:"department_id"`
 }
 
 func (q *Queries) SetCapabilityVisibility(ctx context.Context, arg SetCapabilityVisibilityParams) (Capability, error) {
-	row := q.db.QueryRow(ctx, setCapabilityVisibility, arg.ID, arg.Visibility, arg.Department)
+	row := q.db.QueryRow(ctx, setCapabilityVisibility,
+		arg.ID,
+		arg.Visibility,
+		arg.Department,
+		arg.DepartmentID,
+	)
 	var i Capability
 	err := row.Scan(
 		&i.ID,
@@ -494,6 +515,7 @@ func (q *Queries) SetCapabilityVisibility(ctx context.Context, arg SetCapability
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }

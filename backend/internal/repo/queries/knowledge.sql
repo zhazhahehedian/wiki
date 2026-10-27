@@ -15,10 +15,10 @@ SELECT EXISTS(SELECT 1 FROM documents d WHERE d.kb_id=$1 AND d.deleted_at IS NUL
 EXISTS(SELECT 1 FROM documents a WHERE a.kb_id=$1 AND a.deleted_at IS NULL AND a.active_version_id IS NOT NULL)::boolean AS has_active;
 
 -- name: KnowledgeSaveBase :one
-INSERT INTO knowledge_bases(id,name,description,owner_user_id,embed_model,embed_dim,visibility,department,members,application_shared)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO knowledge_bases(id,name,description,owner_user_id,embed_model,embed_dim,visibility,department,members,application_shared,department_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,visibility=excluded.visibility,
-department=excluded.department,members=excluded.members,application_shared=excluded.application_shared,updated_at=now()
+department=excluded.department,department_id=excluded.department_id,members=excluded.members,application_shared=excluded.application_shared,updated_at=now()
 RETURNING *;
 
 -- name: KnowledgeDeleteBase :exec

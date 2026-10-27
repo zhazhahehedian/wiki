@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Select } from "@/components/ui/select";
+import { DirectoryPicker } from "./directory-picker";
 import {
   actOnCapability,
   type CapabilityDetail,
@@ -37,6 +38,7 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
   const [department, setDepartment] = useState(
     item.published?.department ?? item.department,
   );
+  const [departmentID, setDepartmentID] = useState(item.published?.department_id ?? item.department_id ?? "");
   const [allowlist, setAllowlist] = useState(
     (item.published?.allowlist ?? item.allowlist ?? []).join("\n"),
   );
@@ -79,6 +81,7 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
           ? {
               visibility,
               department,
+              department_id:departmentID,
               allowlist:
                 visibility === "allowlist"
                   ? allowlist.split(/\s+/).filter(Boolean)
@@ -176,22 +179,11 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
                 />
               </Field>
               <Field label="生效部门">
-                <input
-                  className={fieldClass}
-                  maxLength={120}
-                  required={visibility === "department"}
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                />
+                <DirectoryPicker kind="department" value={departmentID} label={department} onChange={(id,name)=>{setDepartmentID(id);setDepartment(name);}} />
               </Field>
               {visibility === "allowlist" && (
-                <Field label="生效名单 Open ID">
-                  <textarea
-                    className={fieldClass}
-                    required
-                    value={allowlist}
-                    onChange={(e) => setAllowlist(e.target.value)}
-                  />
+                <Field label="生效用户">
+                  <DirectoryPicker kind="users" value={allowlist.split(/\s+/).filter(Boolean)} onChange={ids=>setAllowlist(ids.join("\n"))} />
                 </Field>
               )}
             </>

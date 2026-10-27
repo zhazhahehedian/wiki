@@ -15,6 +15,8 @@ type Handlers struct {
 	Playground   *PlaygroundHandler
 	Registry     *RegistryHandler
 	SkillBuilder *SkillBuilderHandler
+	Directory    *DirectoryHandler
+	Publishing   *PublishingHandler
 }
 
 // NewPlatformRouter exposes only the active Capability Hub surface.
@@ -60,6 +62,26 @@ func newRouter(h Handlers) http.Handler {
 		})
 		r = r.With(middleware.Timeout(time.Minute))
 
+		if h.Publishing != nil && h.Registry != nil {
+			r.Route("/open/capabilities", func(r chi.Router) {
+				read := r.With(h.Publishing.Require("capabilities:read"))
+				write := r.With(h.Publishing.Require("capabilities:write"))
+				submit := r.With(h.Publishing.Require("capabilities:submit"))
+				if h.Directory != nil {
+					read = read.With(h.Directory.Membership)
+					write = write.With(h.Directory.Membership)
+					submit = submit.With(h.Directory.Membership)
+				}
+				read.Get("/", h.Registry.List)
+				read.Get("/{slug}", h.Registry.Get)
+				read.Get("/{slug}/versions/{versionID}/bundle", h.Registry.Download)
+				write.Post("/", h.Registry.Save)
+				write.Put("/{slug}", h.Registry.Save)
+				write.Post("/{slug}/new-draft", h.Registry.Action("new-draft"))
+				submit.Post("/{slug}/submit", h.Registry.Action("submit"))
+			})
+		}
+
 		if h.Knowledge != nil {
 			r.Post("/knowledge/search", h.Knowledge.MachineSearch)
 		}
@@ -71,8 +93,21 @@ func newRouter(h Handlers) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth.Middleware)
 			r.Get("/auth/me", h.Auth.Me)
+			if h.Directory != nil {
+				r.Get("/directory/departments", h.Directory.Departments)
+				r.Get("/directory/users", h.Directory.Users)
+			}
+			if h.Publishing != nil {
+				r.Get("/publishing/credentials", h.Publishing.Credentials)
+				r.Post("/publishing/credentials", h.Publishing.Credentials)
+				r.Delete("/publishing/credentials/{id}", h.Publishing.Credentials)
+			}
 			r.Post("/auth/logout", h.Auth.Logout)
 			if h.Knowledge != nil {
+				r := r
+				if h.Directory != nil {
+					r = r.With(h.Directory.Membership)
+				}
 				r.Get("/knowledge/bases", h.Knowledge.Bases)
 				r.Post("/knowledge/bases", h.Knowledge.Bases)
 				r.Put("/knowledge/bases/{id}", h.Knowledge.Bases)
@@ -99,6 +134,10 @@ func newRouter(h Handlers) http.Handler {
 			}
 
 			if h.Registry != nil {
+				r := r
+				if h.Directory != nil {
+					r = r.With(h.Directory.Membership)
+				}
 				r.Get("/catalog", h.Registry.Catalog)
 				r.Get("/catalog/{slug}", h.Registry.Published)
 				r.Get("/catalog/{slug}/template", h.Registry.SkillTemplate)

@@ -35,6 +35,20 @@ http://localhost:8080/api/v1/auth/feishu/callback
 
 ## 2. 环境变量
 
+### 切换到公司主体下的应用（2026-10-27 用户已确认真实登录成功）
+
+用户随后确认公司账号已正常登录，并提供平台设置页截图。公司登录已得到用户侧确认；管理员身份与单租户限制仍待核对。授权成功应直接进入工作台 `/hub`，不能再返回公开落地页 `/`；登录失败仍返回 `/login?error=...`。平台内部角色不因成为飞书应用管理员而自动升级。
+
+2026-10-27 10:24（北京时间）已按用户提供的公司应用凭证切换服务器配置，飞书应用凭证接口验证成功，后端重建后健康检查通过。原 OAuth 加密密钥保持不变；切换前有效本地会话为 0。原有账号、角色和资产未映射或转移。配置备份位于服务器 `shared/backend.env.before-company-feishu-20261027T022402Z`，不进入 Git。当前仍未配置单租户限制，需真实公司账号登录后核对 tenant key，再完成租户限制与管理员身份验收。应用凭证接口成功不等于网页 OAuth 权限、可用范围及回调已验收；落地页“登录接入中”提示暂保留。
+
+2026-10-26 部署时用户说明次日可能改用公司应用，真实公司账号登录验收因此留待切换后。正式入口为 `https://hub.sn0w.icu`，公司应用需登记回调 `https://hub.sn0w.icu/api/v1/auth/feishu/callback`，核对上述三项身份权限、应用发布状态及可用人员范围。
+
+在服务器 `/opt/capability-hub/shared/backend.env` 更新 `FEISHU_APP_ID`、`FEISHU_APP_SECRET` 和回调；如果只允许公司租户登录，填写经过核对的 `FEISHU_TENANT_KEY`。保留 `OAUTH_ENCRYPTION_KEY`，不要因更换应用而重新生成它。备份配置后使用部署 Compose 配置重建后端容器，前端同源地址无需重新构建。
+
+飞书 `open_id` 按应用隔离，不能默认新应用下的同一人员继承旧身份。切换前明确公司管理员与旧用户、资产的对应关系，核对旧应用会话失效和旧 token 的处理；不要按姓名、邮箱自动合并，也不要直接重置管理员 bootstrap。现有 `BOOTSTRAP_ADMIN_FEISHU_OPEN_ID` 只初始化未设置过管理员的安装，修改它不会转移已有管理员权限。任何账号映射、权限转移或数据归属调整，都需基于已核实身份单独执行。参考：[飞书用户标识说明](https://open.feishu.cn/document/platform-overveiw/basic-concepts/user-identity-introduction/introduction)。
+
+切换后验证真实登录、管理员权限、普通成员权限、原有资产归属及登出；切换前的 fixture/session 测试不等于公司应用验收。
+
 启用飞书时，下列必填变量必须成组配置；只配置其中一部分会导致启动失败。`FEISHU_TENANT_KEY` 可选，只在需要限制单一租户时填写：
 
 | 变量 | 说明 |
@@ -182,3 +196,7 @@ pnpm build
 ```
 
 E2E 覆盖 start → callback state/cookie → token/user info → local session → 带 credentials/CSRF/Origin 的 import/sync，以及第二用户的 cross-owner 拒绝。HTTP 边界明确断言 `202 Accepted` 返回时只记录 sync job、尚未访问 fake Feishu API；随后测试显式调用 in-memory `DrainNext` composition driver，才通过真实 `Auth.AccessToken`、URL resolver 和 Docx loader 访问 TLS fake Feishu API 并核对 canonical snapshot。这个 driver 只是已接受的 worker seam，不是 River、MinIO、ingestion 或 atomic promotion 的替身；这些边界由 worker/unit integration tests 覆盖，live stack 仍需人工验证。测试不会访问真实飞书，也不依赖 PostgreSQL 或 MinIO。完整 migration、PostgreSQL/pgvector、MinIO 和 River 运行态仍应在可用 Docker 环境中另行验证。
+
+## 2026-10-27 目录选择增补
+
+当前新增用户可见组织与人员选择，新增用户身份 scope、后台发布和重新授权步骤见 [飞书目录配置](feishu-directory-setup.md)。该功能不改变已有回调地址与登录修复；仅刷新旧 token 不能获得新 scope。本轮代码和迁移未部署，不能把隔离验证视为线上已可用。

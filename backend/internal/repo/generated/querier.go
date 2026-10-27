@@ -14,16 +14,19 @@ import (
 
 type Querier interface {
 	AddCapabilityAllowlist(ctx context.Context, arg AddCapabilityAllowlistParams) error
+	AuthenticatePublishingCredential(ctx context.Context, tokenHash []byte) (AuthenticatePublishingCredentialRow, error)
 	BootstrapPlatformAdmin(ctx context.Context, openID string) error
 	ClearCapabilityAllowlist(ctx context.Context, capabilityID uuid.UUID) error
 	CreateCapability(ctx context.Context, arg CreateCapabilityParams) (Capability, error)
 	CreateCapabilityVersion(ctx context.Context, arg CreateCapabilityVersionParams) (CapabilityVersion, error)
+	CreatePublishingCredential(ctx context.Context, arg CreatePublishingCredentialParams) (PublishingCredential, error)
 	CreateUserSession(ctx context.Context, arg CreateUserSessionParams) (UserSession, error)
 	DeleteExpiredUserSessions(ctx context.Context, expiresAt time.Time) (int64, error)
 	DeleteModelConnection(ctx context.Context, userID uuid.UUID) error
 	DeleteUserSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
 	GetAuthUser(ctx context.Context, id uuid.UUID) (User, error)
 	GetCapability(ctx context.Context, slug string) (Capability, error)
+	GetFeishuMembership(ctx context.Context, accountID uuid.UUID) (FeishuMembership, error)
 	GetModelConnection(ctx context.Context, userID uuid.UUID) (UserLlmKey, error)
 	GetOAuthAccount(ctx context.Context, id uuid.UUID) (OauthAccount, error)
 	GetOAuthAccountForUser(ctx context.Context, userID uuid.UUID) (OauthAccount, error)
@@ -77,6 +80,7 @@ type Querier interface {
 	ListGovernanceAudit(ctx context.Context, arg ListGovernanceAuditParams) ([]AuditLog, error)
 	ListOwnedCapabilities(ctx context.Context, arg ListOwnedCapabilitiesParams) ([]Capability, error)
 	ListPlatformProfiles(ctx context.Context, arg ListPlatformProfilesParams) ([]ListPlatformProfilesRow, error)
+	ListPublishingCredentials(ctx context.Context, userID uuid.UUID) ([]PublishingCredential, error)
 	ListReviewCapabilities(ctx context.Context, arg ListReviewCapabilitiesParams) ([]Capability, error)
 	LockAdminBootstrap(ctx context.Context) error
 	LockCapability(ctx context.Context, slug string) (Capability, error)
@@ -85,6 +89,8 @@ type Querier interface {
 	MarkVersionPublished(ctx context.Context, id uuid.UUID) error
 	RegistryBundleReferenced(ctx context.Context, skillBundleKey *string) (bool, error)
 	RegistryOwner(ctx context.Context, userID uuid.UUID) (string, error)
+	RevokePublishingCredential(ctx context.Context, arg RevokePublishingCredentialParams) (PublishingCredential, error)
+	SaveFeishuMembership(ctx context.Context, arg SaveFeishuMembershipParams) error
 	SaveModelConnection(ctx context.Context, arg SaveModelConnectionParams) (UserLlmKey, error)
 	SetCapabilityDraft(ctx context.Context, arg SetCapabilityDraftParams) (Capability, error)
 	SetCapabilityGovernance(ctx context.Context, arg SetCapabilityGovernanceParams) (Capability, error)

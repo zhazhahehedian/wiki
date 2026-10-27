@@ -36,18 +36,19 @@ func (q *Queries) ClearCapabilityAllowlist(ctx context.Context, capabilityID uui
 }
 
 const createCapability = `-- name: CreateCapability :one
-INSERT INTO capabilities (slug, type, name, description, owner_open_id, department, visibility)
-VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason
+INSERT INTO capabilities (slug, type, name, description, owner_open_id, department, visibility, department_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id
 `
 
 type CreateCapabilityParams struct {
-	Slug        string `json:"slug"`
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OwnerOpenID string `json:"owner_open_id"`
-	Department  string `json:"department"`
-	Visibility  string `json:"visibility"`
+	Slug         string `json:"slug"`
+	Type         string `json:"type"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	OwnerOpenID  string `json:"owner_open_id"`
+	Department   string `json:"department"`
+	Visibility   string `json:"visibility"`
+	DepartmentID string `json:"department_id"`
 }
 
 func (q *Queries) CreateCapability(ctx context.Context, arg CreateCapabilityParams) (Capability, error) {
@@ -59,6 +60,7 @@ func (q *Queries) CreateCapability(ctx context.Context, arg CreateCapabilityPara
 		arg.OwnerOpenID,
 		arg.Department,
 		arg.Visibility,
+		arg.DepartmentID,
 	)
 	var i Capability
 	err := row.Scan(
@@ -79,6 +81,7 @@ func (q *Queries) CreateCapability(ctx context.Context, arg CreateCapabilityPara
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
@@ -135,7 +138,7 @@ func (q *Queries) CreateCapabilityVersion(ctx context.Context, arg CreateCapabil
 }
 
 const getOwnedCapability = `-- name: GetOwnedCapability :one
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities WHERE slug = $1 AND owner_open_id = $2
+SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id FROM capabilities WHERE slug = $1 AND owner_open_id = $2
 `
 
 type GetOwnedCapabilityParams struct {
@@ -164,6 +167,7 @@ func (q *Queries) GetOwnedCapability(ctx context.Context, arg GetOwnedCapability
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
@@ -231,7 +235,7 @@ func (q *Queries) ListCapabilityVersions(ctx context.Context, capabilityID uuid.
 }
 
 const listOwnedCapabilities = `-- name: ListOwnedCapabilities :many
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities
+SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id FROM capabilities
 WHERE owner_open_id = $1
 AND ($2::text = '' OR type = $2)
 AND ($3::text = '' OR status = $3)
@@ -286,6 +290,7 @@ func (q *Queries) ListOwnedCapabilities(ctx context.Context, arg ListOwnedCapabi
 			&i.IsLive,
 			&i.PublishedMetadata,
 			&i.ReviewReason,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -298,7 +303,7 @@ func (q *Queries) ListOwnedCapabilities(ctx context.Context, arg ListOwnedCapabi
 }
 
 const lockOwnedCapability = `-- name: LockOwnedCapability :one
-SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason FROM capabilities WHERE slug = $1 AND owner_open_id = $2 FOR UPDATE
+SELECT id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id FROM capabilities WHERE slug = $1 AND owner_open_id = $2 FOR UPDATE
 `
 
 type LockOwnedCapabilityParams struct {
@@ -327,6 +332,7 @@ func (q *Queries) LockOwnedCapability(ctx context.Context, arg LockOwnedCapabili
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
@@ -354,7 +360,7 @@ func (q *Queries) RegistryOwner(ctx context.Context, userID uuid.UUID) (string, 
 }
 
 const setCapabilityDraft = `-- name: SetCapabilityDraft :one
-UPDATE capabilities SET draft_version_id=$2 WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason
+UPDATE capabilities SET draft_version_id=$2 WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id
 `
 
 type SetCapabilityDraftParams struct {
@@ -383,22 +389,24 @@ func (q *Queries) SetCapabilityDraft(ctx context.Context, arg SetCapabilityDraft
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }
 
 const updateCapability = `-- name: UpdateCapability :one
-UPDATE capabilities SET name=$2, description=$3, department=$4, visibility=$5,
+UPDATE capabilities SET name=$2, description=$3, department=$4, visibility=$5, department_id=$6,
     revision=revision+1, updated_at=now()
-WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason
+WHERE id=$1 RETURNING id, slug, type, name, description, owner_open_id, department, status, visibility, current_version_id, draft_version_id, revision, created_at, updated_at, is_live, published_metadata, review_reason, department_id
 `
 
 type UpdateCapabilityParams struct {
-	ID          uuid.UUID `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Department  string    `json:"department"`
-	Visibility  string    `json:"visibility"`
+	ID           uuid.UUID `json:"id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	Department   string    `json:"department"`
+	Visibility   string    `json:"visibility"`
+	DepartmentID string    `json:"department_id"`
 }
 
 func (q *Queries) UpdateCapability(ctx context.Context, arg UpdateCapabilityParams) (Capability, error) {
@@ -408,6 +416,7 @@ func (q *Queries) UpdateCapability(ctx context.Context, arg UpdateCapabilityPara
 		arg.Description,
 		arg.Department,
 		arg.Visibility,
+		arg.DepartmentID,
 	)
 	var i Capability
 	err := row.Scan(
@@ -428,6 +437,7 @@ func (q *Queries) UpdateCapability(ctx context.Context, arg UpdateCapabilityPara
 		&i.IsLive,
 		&i.PublishedMetadata,
 		&i.ReviewReason,
+		&i.DepartmentID,
 	)
 	return i, err
 }

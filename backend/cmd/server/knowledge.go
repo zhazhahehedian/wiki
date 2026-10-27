@@ -54,6 +54,20 @@ func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.Kno
 	if !configured {
 		return nil, nil, nil
 	}
+	var embedding ports.Embedder
+	embedConfig := embedder.Config{BaseURL: strings.TrimRight(base, "/"), APIKey: key, Model: model, Dim: dim}
+	switch os.Getenv("EMBEDDING_PROVIDER") {
+	case "", "openai":
+		embedding = embedder.New(embedConfig)
+	case "dashscope":
+		var err error
+		embedding, err = embedder.NewDashScope(embedConfig)
+		if err != nil {
+			return nil, nil, err
+		}
+	default:
+		return nil, nil, fmt.Errorf("unsupported EMBEDDING_PROVIDER")
+	}
 	var actual string
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -63,7 +77,6 @@ func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.Kno
 	if actual != fmt.Sprintf("vector(%d)", dim) {
 		return nil, nil, fmt.Errorf("knowledge embedding dimension differs from schema; explicit rebuild migration required")
 	}
-	embedding := embedder.New(embedder.Config{BaseURL: strings.TrimRight(base, "/"), APIKey: key, Model: model, Dim: dim})
 	// The worker needs the service and the repository needs the River client,
 	// so the client is captured by the enqueue closure after construction.
 	var rc *river.Client[pgx.Tx]

@@ -29,6 +29,10 @@ export default function Dashboard() {
           创建能力
         </Link>
       </div>
+      <Link href="/hub/guide" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-100 bg-blue-50/60 px-5 py-4 text-sm text-blue-900 hover:bg-blue-50">
+        <span><strong className="font-medium">第一次使用？</strong><span className="ml-2 text-blue-800/80">查看操作说明，了解能力复用、知识检索和模型配置。</span></span>
+        <span className="flex items-center gap-2 font-medium">查看操作说明<ArrowRight className="size-4" /></span>
+      </Link>
       <section aria-label="常用操作" className="grid gap-4 md:grid-cols-3">
         {[
           {

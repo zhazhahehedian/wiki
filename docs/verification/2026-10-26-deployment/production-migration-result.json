@@ -1,0 +1,16 @@
+{
+  "backup_directory": "/opt/capability-hub/backups/20261026T161702Z",
+  "goose_version": 17,
+  "vector_column": "vector(1024)",
+  "preserved_counts": {
+    "users": 1,
+    "capabilities": 1,
+    "capability_versions": 1,
+    "documents": 0,
+    "knowledge_bases": 0,
+    "chunks": 0,
+    "user_llm_keys": 1,
+    "oauth_accounts": 1
+  },
+  "existing_identity_capability_credential_hashes_unchanged": true
+}

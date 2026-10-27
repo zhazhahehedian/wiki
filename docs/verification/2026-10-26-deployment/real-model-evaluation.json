@@ -1,0 +1,222 @@
+[
+  {
+    "suite": "baseline",
+    "optimizer_model": "deepseek-flash",
+    "retrieval": [
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      }
+    ],
+    "mode": "isolated-real-provider-http",
+    "model": "tongyi-embedding-vision-plus-2026-03-06",
+    "top_k": 5,
+    "min_score": 0.5,
+    "recall_at_5": 1,
+    "citation_accuracy": 1,
+    "no_answer_false_positive_rate": 0,
+    "passed": true,
+    "cases": [
+      {
+        "id": "expense-materials",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d8dcf650-ee0e-4af6-aff5-1eb30f66a646"
+        ]
+      },
+      {
+        "id": "cross-paragraph",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d8dcf650-ee0e-4af6-aff5-1eb30f66a646"
+        ]
+      },
+      {
+        "id": "expense-deadline",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d8dcf650-ee0e-4af6-aff5-1eb30f66a646"
+        ]
+      },
+      {
+        "id": "domestic-table",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d9cdf2b3-dafa-467f-b1a6-c2baab13be67"
+        ]
+      },
+      {
+        "id": "similar-not-applicable",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d9cdf2b3-dafa-467f-b1a6-c2baab13be67"
+        ]
+      },
+      {
+        "id": "leave",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "b5f41cb3-3dbf-49c1-b555-15d981536706"
+        ]
+      },
+      {
+        "id": "no-answer",
+        "passed": true,
+        "matches": 0,
+        "versions": []
+      },
+      {
+        "id": "no-answer-technical",
+        "passed": true,
+        "matches": 0,
+        "versions": []
+      }
+    ]
+  },
+  {
+    "suite": "optimization",
+    "optimizer_model": "deepseek-flash",
+    "retrieval": [
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "applied",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      },
+      {
+        "strategy": "hybrid_rrf",
+        "rewrite": "unchanged",
+        "rerank": "model",
+        "warnings": []
+      }
+    ],
+    "mode": "isolated-real-provider-http",
+    "model": "tongyi-embedding-vision-plus-2026-03-06",
+    "top_k": 5,
+    "min_score": 0.5,
+    "recall_at_5": 1,
+    "citation_accuracy": 1,
+    "no_answer_false_positive_rate": 0,
+    "passed": true,
+    "cases": [
+      {
+        "id": "colloquial-materials",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d8dcf650-ee0e-4af6-aff5-1eb30f66a646"
+        ]
+      },
+      {
+        "id": "colloquial-domestic",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d9cdf2b3-dafa-467f-b1a6-c2baab13be67"
+        ]
+      },
+      {
+        "id": "negated-region",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "d9cdf2b3-dafa-467f-b1a6-c2baab13be67"
+        ]
+      },
+      {
+        "id": "exception-sick-leave",
+        "passed": true,
+        "matches": 1,
+        "versions": [
+          "b5f41cb3-3dbf-49c1-b555-15d981536706"
+        ]
+      },
+      {
+        "id": "similar-unanswered-benefit",
+        "passed": true,
+        "matches": 0,
+        "versions": []
+      },
+      {
+        "id": "unknown-exact-identifier",
+        "passed": true,
+        "matches": 0,
+        "versions": []
+      }
+    ]
+  }
+]

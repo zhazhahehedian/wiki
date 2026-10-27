@@ -25,6 +25,7 @@ type Capability struct {
 	Description      string    `json:"description"`
 	OwnerOpenID      string    `json:"owner_open_id"`
 	Department       string    `json:"department"`
+	DepartmentID     string    `json:"department_id"`
 	Status           string    `json:"status"`
 	IsLive           bool      `json:"is_live"`
 	ReviewReason     string    `json:"review_reason,omitempty"`
@@ -71,6 +72,7 @@ type SaveRequest struct {
 	Name          string   `json:"name"`
 	Description   string   `json:"description"`
 	Department    string   `json:"department"`
+	DepartmentID  string   `json:"department_id"`
 	Visibility    string   `json:"visibility"`
 	Allowlist     []string `json:"allowlist"`
 	Revision      int64    `json:"revision"`

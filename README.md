@@ -48,9 +48,9 @@ pnpm install --frozen-lockfile
 pnpm dev --port 3000
 ```
 
-访问 `http://localhost:3000`；API 默认 `http://localhost:8080`，健康检查 `/healthz`。前端 `/` 与旧 `/kbs/**` 重定向到 `/hub`，未登录会进入登录页；生产后端旧 KB/文档/会话 API 返回 404。真实访问需要可用的认证后端，UI 预览时使用的临时模拟身份服务不属于产品认证实现。
+访问 `http://localhost:3000` 查看公开落地页；`/guide` 提供操作指南，`/hub` 是需要登录的工作台，`/hub/api-docs` 提供发布 API 文档和凭证管理。API 默认 `http://localhost:8080`，健康检查 `/healthz`。旧 `/kbs/**` 重定向到 `/hub`，生产后端旧 KB/文档/会话 API 返回 404。真实访问需要可用的认证后端，UI 预览时使用的临时模拟身份服务不属于产品认证实现。
 
-本仓库不提供 Compose 编排；已清理引用缺失文件的 `up/down/logs/ps/restart/build/clean` 根目标。使用 `make help` 查看现有构建和检查命令，数据库与对象存储需单独准备。默认环境模板只保留当前平台配置及历史迁移所需的 `EMBEDDING_DIM`。
+服务器部署见 [deploy/README.md](deploy/README.md)：Compose 仅编排应用与 HTTPS 代理，数据库与对象存储需单独准备。本地开发仍使用上述命令；已清理引用缺失文件的 `up/down/logs/ps/restart/build/clean` 根目标。使用 `make help` 查看现有构建和检查命令。默认环境模板只保留当前平台配置及历史迁移所需的 `EMBEDDING_DIM`。
 
 ## 验证
 

@@ -50,8 +50,12 @@ export function HubSettings() {
             </dd>
           </div>
           <div className="flex justify-between gap-3 py-4">
-            <dt className="text-zinc-500">可信部门</dt>
+            <dt className="text-zinc-500">原有可信部门</dt>
             <dd>{governance.data?.department || "未设置（联系管理员核实）"}</dd>
+          </div>
+          <div className="flex flex-wrap justify-between gap-3 py-4">
+            <dt className="text-zinc-500">飞书部门 ID</dt>
+            <dd className="max-w-full break-all">{governance.data?.department_ids?.join("、") || "未取得有效部门信息，请确认通讯录授权"}</dd>
           </div>
         </dl>
       </section>

@@ -46,11 +46,13 @@ func (r *RegistryRepository) Owner(ctx context.Context, user string) (string, er
 func capability(c generated.Capability) registry.Capability {
 	result := registry.Capability{ID: c.ID.String(), Slug: c.Slug, Type: c.Type, Name: c.Name, Description: c.Description, OwnerOpenID: c.OwnerOpenID, Department: c.Department, Status: c.Status, Visibility: c.Visibility, IsLive: c.IsLive, ReviewReason: c.ReviewReason, Revision: c.Revision, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.CurrentVersionID.Valid {
+		// Current and draft metadata each retain their own department ID.
 		result.CurrentVersionID = uuid.UUID(c.CurrentVersionID.Bytes).String()
 	}
 	if c.DraftVersionID.Valid {
 		result.DraftVersionID = uuid.UUID(c.DraftVersionID.Bytes).String()
 	}
+	result.DepartmentID = c.DepartmentID
 	return result
 }
 func textValue(v *string) string {
@@ -138,7 +140,7 @@ func (r *RegistryRepository) Save(ctx context.Context, owner, slug string, input
 		if input.Revision != 0 {
 			return result, registry.ErrConflict
 		}
-		c, e = q.CreateCapability(ctx, generated.CreateCapabilityParams{Slug: input.Slug, Type: input.Type, Name: input.Name, Description: input.Description, OwnerOpenID: owner, Department: input.Department, Visibility: input.Visibility})
+		c, e = q.CreateCapability(ctx, generated.CreateCapabilityParams{Slug: input.Slug, Type: input.Type, Name: input.Name, Description: input.Description, OwnerOpenID: owner, Department: input.Department, DepartmentID: input.DepartmentID, Visibility: input.Visibility})
 	} else {
 		c, e = q.LockOwnedCapability(ctx, generated.LockOwnedCapabilityParams{Slug: slug, OwnerOpenID: owner})
 		if e != nil {
@@ -147,7 +149,7 @@ func (r *RegistryRepository) Save(ctx context.Context, owner, slug string, input
 		if c.Revision != input.Revision || c.Status != "draft" || c.Type != input.Type || c.Slug != input.Slug {
 			return result, registry.ErrConflict
 		}
-		c, e = q.UpdateCapability(ctx, generated.UpdateCapabilityParams{ID: c.ID, Name: input.Name, Description: input.Description, Department: input.Department, Visibility: input.Visibility})
+		c, e = q.UpdateCapability(ctx, generated.UpdateCapabilityParams{ID: c.ID, Name: input.Name, Description: input.Description, Department: input.Department, DepartmentID: input.DepartmentID, Visibility: input.Visibility})
 	}
 	if e != nil {
 		return result, e

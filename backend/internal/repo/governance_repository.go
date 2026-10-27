@@ -25,7 +25,7 @@ func identity(ctx context.Context, q *generated.Queries, user string) (registry.
 	if e != nil {
 		return registry.Identity{}, e
 	}
-	return registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, Department: row.Department, Revision: row.Revision}, nil
+	return registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, Department: row.Department, DepartmentIDs: row.DepartmentIds, Revision: row.Revision}, nil
 }
 func (r *RegistryRepository) Identity(ctx context.Context, user string) (registry.Identity, error) {
 	return identity(ctx, r.q, user)
@@ -53,6 +53,9 @@ func (r *RegistryRepository) BootstrapAdmin(ctx context.Context, openID string) 
 	return tx.Commit(ctx)
 }
 func writeAudit(ctx context.Context, q *generated.Queries, actor, action, targetType, target string, detail map[string]any) error {
+	if id := registry.CredentialID(ctx); id != "" {
+		detail["api_credential_id"] = id
+	}
 	raw, e := json.Marshal(detail)
 	if e != nil {
 		return e
@@ -76,6 +79,7 @@ func publishedCapability(c generated.Capability) (registry.Capability, error) {
 	out.Name = m.Name
 	out.Description = m.Description
 	out.Department = m.Department
+	out.DepartmentID = m.DepartmentID
 	out.Visibility = m.Visibility
 	out.Status = "published"
 	out.DraftVersionID = ""
@@ -137,7 +141,7 @@ func (r *RegistryRepository) Catalog(ctx context.Context, user string, f registr
 	if e != nil {
 		return registry.Page{}, e
 	}
-	rows, e := r.q.ListCatalogCapabilities(ctx, generated.ListCatalogCapabilitiesParams{IsAdmin: who.IsAdmin, OpenID: who.OpenID, Department: who.Department, FilterType: f.Type, FilterStatus: f.Status, FilterDepartment: f.Department, Search: f.Search, PageLimit: f.Limit + 1, PageOffset: f.Offset})
+	rows, e := r.q.ListCatalogCapabilities(ctx, generated.ListCatalogCapabilitiesParams{IsAdmin: who.IsAdmin, OpenID: who.OpenID, Department: who.Department, DepartmentIds: who.DepartmentIDs, FilterType: f.Type, FilterStatus: f.Status, FilterDepartment: f.Department, Search: f.Search, PageLimit: f.Limit + 1, PageOffset: f.Offset})
 	if e != nil {
 		return registry.Page{}, e
 	}
@@ -254,7 +258,7 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 		if e != nil {
 			return result, e
 		}
-		c.PublishedMetadata, e = json.Marshal(registry.PublishedMetadata{Name: c.Name, Description: c.Description, Department: c.Department, Visibility: c.Visibility, Allowlist: allowlist})
+		c.PublishedMetadata, e = json.Marshal(registry.PublishedMetadata{Name: c.Name, Description: c.Description, Department: c.Department, DepartmentID: c.DepartmentID, Visibility: c.Visibility, Allowlist: allowlist})
 		if e != nil {
 			return result, e
 		}
@@ -291,6 +295,7 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 		before["department"] = meta.Department
 		meta.Visibility = input.Visibility
 		meta.Department = input.Department
+		meta.DepartmentID = input.DepartmentID
 		meta.Allowlist = input.Allowlist
 		c.PublishedMetadata, e = json.Marshal(meta)
 		if e != nil {
@@ -299,12 +304,13 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 		// With no distinct draft, keep the next offline resubmission aligned
 		// with the admin override. A separate candidate remains a review proposal.
 		if !c.DraftVersionID.Valid || c.DraftVersionID == c.CurrentVersionID {
-			updated, e := q.SetCapabilityVisibility(ctx, generated.SetCapabilityVisibilityParams{ID: c.ID, Visibility: input.Visibility, Department: input.Department})
+			updated, e := q.SetCapabilityVisibility(ctx, generated.SetCapabilityVisibilityParams{ID: c.ID, Visibility: input.Visibility, Department: input.Department, DepartmentID: input.DepartmentID})
 			if e != nil {
 				return result, e
 			}
 			c.Visibility = updated.Visibility
 			c.Department = updated.Department
+			c.DepartmentID = updated.DepartmentID
 			if e = q.ClearCapabilityAllowlist(ctx, c.ID); e != nil {
 				return result, e
 			}

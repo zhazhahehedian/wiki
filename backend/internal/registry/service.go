@@ -23,11 +23,34 @@ var versionPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._+-]{0,63}$`)
 var toolPattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,128}$`)
 
 type Service struct {
-	repo    Repository
-	storage ports.ObjectStorage
+	repo      Repository
+	storage   ports.ObjectStorage
+	directory SelectionValidator
 }
 
-func New(repo Repository, storage ports.ObjectStorage) *Service { return &Service{repo, storage} }
+type SelectionValidator interface {
+	ValidateSelection(context.Context, string, string, []string) (string, error)
+}
+
+func New(repo Repository, storage ports.ObjectStorage) *Service {
+	return &Service{repo: repo, storage: storage}
+}
+func (s *Service) WithDirectory(d SelectionValidator) *Service { s.directory = d; return s }
+func (s *Service) validateDirectory(ctx context.Context, user string, r *SaveRequest) error {
+	if s.directory == nil {
+		return nil
+	}
+	// Existing string-only departments remain readable. New saves must select an ID.
+	if r.DepartmentID == "" && (r.Department != "" || r.Visibility == "department") {
+		return ErrInvalid
+	}
+	name, e := s.directory.ValidateSelection(ctx, user, r.DepartmentID, r.Allowlist)
+	if e != nil {
+		return e
+	}
+	r.Department = name
+	return nil
+}
 func (s *Service) List(ctx context.Context, user string, f Filter) (Page, error) {
 	if f.Limit < 1 || f.Limit > 100 || f.Offset < 0 || f.Offset > 100000 || len(f.Search) > 200 || utf8.RuneCountInString(f.Department) > 120 || (f.Type != "" && f.Type != "mcp" && f.Type != "skill") || (f.Status != "" && f.Status != "draft" && f.Status != "in_review" && f.Status != "published" && f.Status != "offline") {
 		return Page{}, ErrInvalid
@@ -95,6 +118,9 @@ func validate(r *SaveRequest) error {
 	return nil
 }
 func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, files []File) (Detail, error) {
+	if e := s.validateDirectory(ctx, user, &r); e != nil {
+		return Detail{}, e
+	}
 	if e := validate(&r); e != nil {
 		return Detail{}, e
 	}

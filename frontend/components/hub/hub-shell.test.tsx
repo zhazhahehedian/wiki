@@ -64,6 +64,12 @@ it("shows the new navigation with an active page and no legacy product links", (
     screen.queryByRole("link", { name: /知识库|审核队列|审计日志/ }),
   ).not.toBeInTheDocument();
 });
+it("makes the operation guide available to ordinary members and marks it active", () => {
+  mocks.pathname = "/hub/guide";
+  mount();
+  expect(screen.getByRole("link", { name: "操作说明" })).toHaveAttribute("href", "/hub/guide");
+  expect(screen.getByRole("link", { name: "操作说明" })).toHaveAttribute("aria-current", "page");
+});
 it.each(["loading", "expired", "unauthorized"])(
   "hides private content when %s",
   (state) => {

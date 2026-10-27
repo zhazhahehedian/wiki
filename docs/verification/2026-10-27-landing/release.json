@@ -1,0 +1,6 @@
+{
+  "frontend_image": "capability-hub-frontend:20261027-landing",
+  "backend_container_unchanged": true,
+  "release_directory": "/opt/capability-hub/releases/20261027-landing",
+  "rollback_env": "/opt/capability-hub/shared/deploy.env.before-landing"
+}

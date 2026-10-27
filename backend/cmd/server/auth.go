@@ -6,6 +6,7 @@ import (
 
 	authstore "github.com/zenith-wang/it-wiki/backend/internal/auth"
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/directory"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/feishu"
 	"github.com/zenith-wang/it-wiki/backend/internal/repo"
@@ -55,14 +56,31 @@ func buildAuthRuntime(cfg *config.Config, db generated.DBTX, httpClient *stdhttp
 		TenantKey: cfg.FeishuTenantKey, RequiredScopes: requiredFeishuScopes(), SessionTTL: cfg.SessionTTL,
 	}, oauthClient, protector, sessions, states, repository)
 
-	handler, err := httpx.NewAuthHandler(httpx.AuthHandlerConfig{
-		AppID: cfg.FeishuAppID, RedirectURL: cfg.FeishuRedirectURL,
-		Scopes:         requiredFeishuScopes(),
-		FrontendOrigin: cfg.FrontendOrigin, FrontendPath: "/",
-		CookieSecure: cfg.SessionCookieSecure, SessionTTL: cfg.SessionTTL,
-	}, authService, sessions, repository)
+	handler, err := httpx.NewAuthHandler(platformAuthHandlerConfig(cfg), authService, sessions, repository)
 	if err != nil {
 		return nil, nil, fmt.Errorf("auth http handler: %w", err)
 	}
 	return handler, authService, nil
+}
+
+func platformAuthHandlerConfig(cfg *config.Config) httpx.AuthHandlerConfig {
+	scopes := requiredFeishuScopes()
+	for _, scope := range directory.RequiredScopes {
+		found := false
+		for _, existing := range scopes {
+			if existing == scope {
+				found = true
+				break
+			}
+		}
+		if !found {
+			scopes = append(scopes, scope)
+		}
+	}
+	return httpx.AuthHandlerConfig{
+		AppID: cfg.FeishuAppID, RedirectURL: cfg.FeishuRedirectURL,
+		Scopes:         scopes,
+		FrontendOrigin: cfg.FrontendOrigin, FrontendPath: "/hub",
+		CookieSecure: cfg.SessionCookieSecure, SessionTTL: cfg.SessionTTL,
+	}
 }

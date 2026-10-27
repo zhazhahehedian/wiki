@@ -1,0 +1,14 @@
+{$SITE_DOMAIN} {
+    encode zstd gzip
+
+    @backend path /api/* /healthz
+    handle @backend {
+        reverse_proxy backend:8080 {
+            flush_interval -1
+        }
+    }
+
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

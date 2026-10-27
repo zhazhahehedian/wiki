@@ -15,6 +15,7 @@ import {
   LogOut,
   ShieldCheck,
   ScrollText,
+  BookOpenText,
   ChevronRight,
 } from "lucide-react";
 import { getGovernanceIdentity } from "@/lib/api/registry";
@@ -41,6 +42,8 @@ const navigation = [
   { href: "/hub/playground", label: "游乐场", icon: FlaskConical },
   { href: "/hub/publications", label: "我的发布", icon: Send },
   { href: "/hub/settings", label: "设置", icon: Settings },
+  { href: "/hub/guide", label: "操作说明", icon: BookOpenText },
+  { href: "/hub/api-docs", label: "接口文档", icon: BookOpenText },
 ];
 
 export function HubShell({ children }: { children: ReactNode }) {

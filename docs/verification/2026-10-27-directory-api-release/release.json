@@ -1,0 +1,50 @@
+{
+  "deployed_at": "2026-10-27T12:33:30Z",
+  "checked_at": "2026-10-27T12:48:45.194887+00:00",
+  "site": "https://hub.sn0w.icu",
+  "release": "20261027-directory-api-root",
+  "source_base_commit": "2690a0ff83cd48041f95fa28cbca1555ea4e8374",
+  "source_state": "working tree including uncommitted and untracked implementation; no commit or push",
+  "source_archive_sha256": "339b0a9a38c9b3c1e56c1f6f7de834c8d3f210852d015a900127c03a279e1a74",
+  "images": {
+    "backend": "sha256:448ec86a2fced8627b227d2a5bc20bfac5251fbf733a2534f745ba986ec2043d",
+    "frontend": "sha256:222ed503596779df824ef8e1664ff00c00198d5141f2aa3f9948b291c1864ead"
+  },
+  "current_release": "/opt/capability-hub/releases/20261027-directory-api-root",
+  "goose_version": 19,
+  "embedding_dimension": 1024,
+  "existing_rows_preserved": true,
+  "record_counts": {
+    "users": 7,
+    "chunks": 0,
+    "documents": 0,
+    "capabilities": 1,
+    "user_llm_keys": 1,
+    "oauth_accounts": 7,
+    "knowledge_bases": 1,
+    "capability_versions": 1
+  },
+  "backend_configuration_preserved": true,
+  "backup_directory": "/opt/capability-hub/backups/20261027-directory-api-final",
+  "backup_local_copy": ".cache/directory-api-deploy-20261027/final-backup",
+  "rollback_backend": "capability-hub-backend:20261027-auth-redirect",
+  "rollback_frontend": "capability-hub-frontend:20261027-guide",
+  "rollback_schema_compatibility": "previous backend migration command accepted isolated schema 19",
+  "isolated_upgrade_rollback_upgrade": "17 -> 19 -> 17 -> 19; existing row hashes unchanged",
+  "feishu_application_permissions": "published, confirmed by user",
+  "live_api_docs_and_session": "passed; existing session preserved and credential list loaded",
+  "live_directory": {
+    "reauthorization": "passed",
+    "root_restriction": "provider returned 40004 for root 0",
+    "verified_department_entries": 1,
+    "verified_direct_users": 9,
+    "directory_alerts": 0,
+    "entry_source": "own departments independently checked using current user token",
+    "membership_from_browsing": false
+  },
+  "production_business_write_acceptance": "not performed; full MCP/Skill and credential lifecycle tested in isolated database",
+  "initial_release": "20261027-directory-api",
+  "initial_source_archive_sha256": "26c3ff844fcfefd23d30e91feb6d79799226fcc0cff06e172d4137150cc15f10",
+  "root_visibility_fix_deployed_at": "2026-10-27T12:46:52Z",
+  "isolated_database_and_temporary_credentials_removed": true
+}

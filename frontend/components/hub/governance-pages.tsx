@@ -306,7 +306,7 @@ function Profiles() {
       <header>
         <h1 className="text-2xl font-semibold">部门授权</h1>
         <p className="mt-2 text-sm leading-6 text-zinc-500">
-          由管理员核实并维护已登录用户的部门。未设置部门的用户无法访问部门范围能力，变更会记录审计。
+          此页维护历史记录使用的可信部门名称，变更会记录审计。新的部门选择使用飞书部门 ID，并根据本人真实归属授权；此处手工填写不会赋予新的飞书部门权限。
         </p>
       </header>
       <form

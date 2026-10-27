@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { knowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 import { Select } from "@/components/ui/select";
+import { DirectoryPicker } from "@/components/hub/directory-picker";
 import {
   fieldClass,
   primaryClass,
@@ -22,6 +23,7 @@ const emptyBase = {
   description: "",
   visibility: "private",
   department: "",
+  department_id: "",
   application_shared: false,
 };
 
@@ -33,11 +35,11 @@ export function KnowledgeBases() {
   const [memberText, setMemberText] = useState("");
   const save = useMutation({
     mutationFn: () => {
-      const { department, ...body } = form;
+      const { department, department_id, ...body } = form;
       return knowledge.saveBase(editing ?? "", {
         ...body,
         // Department and members only apply to their own visibility mode.
-        ...(form.visibility === "department" ? { department } : {}),
+        ...(form.visibility === "department" ? { department,department_id } : {}),
         ...(form.visibility === "members"
           ? {
               members: memberText
@@ -67,6 +69,7 @@ export function KnowledgeBases() {
             description: b.description,
             visibility: b.visibility,
             department: b.department,
+            department_id: b.department_id ?? "",
             application_shared: b.application_shared,
           }
         : emptyBase,
@@ -151,27 +154,10 @@ export function KnowledgeBases() {
             />
           </label>
           {form.visibility === "department" && (
-            <label className="block">
-              部门名称
-              <input
-                required
-                className={fieldClass}
-                value={form.department}
-                onChange={(e) =>
-                  setForm({ ...form, department: e.target.value })
-                }
-              />
-            </label>
+            <div className="space-y-2"><p>可见部门</p><DirectoryPicker kind="department" value={form.department_id} label={form.department} onChange={(id,name)=>setForm({...form,department_id:id,department:name})} /></div>
           )}
           {form.visibility === "members" && (
-            <label className="block">
-              成员飞书 Open ID（逗号分隔）
-              <input
-                className={fieldClass}
-                value={memberText}
-                onChange={(e) => setMemberText(e.target.value)}
-              />
-            </label>
+            <div className="space-y-2"><p>可见成员</p><DirectoryPicker kind="users" max={100} value={memberText.split(",").filter(Boolean)} onChange={ids=>setMemberText(ids.join(","))} /></div>
           )}
           <label className="flex items-start gap-2">
             <input

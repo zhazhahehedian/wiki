@@ -13,11 +13,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	k "github.com/zenith-wang/it-wiki/backend/internal/knowledge"
+	"github.com/zenith-wang/it-wiki/backend/internal/registry"
 )
 
 type KnowledgeHandler struct{ service *k.Service }
 
-func NewKnowledgeHandler(s *k.Service) *KnowledgeHandler { return &KnowledgeHandler{s} }
+func NewKnowledgeHandler(s *k.Service) *KnowledgeHandler                { return &KnowledgeHandler{s} }
+func (h *KnowledgeHandler) WithDirectory(d registry.SelectionValidator) { h.service.Directory = d }
 
 // knowledgeFailure is the public form of a knowledge error; its code is also
 // the search audit status.
@@ -50,6 +52,9 @@ func classifyKnowledge(e error) knowledgeFailure {
 	return knowledgeFailure{503, "knowledge_unavailable", "知识服务依赖暂不可用，请稍后重试"}
 }
 func knowledgeError(w http.ResponseWriter, r *http.Request, e error) {
+	if directoryHTTPError(w, r, e) {
+		return
+	}
 	f := classifyKnowledge(e)
 	if f.status == 0 {
 		return // client went away; nothing to write

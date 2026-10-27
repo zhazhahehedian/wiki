@@ -46,7 +46,13 @@ score 为最终排序信号，不是答案正确率，也不再统一表示余�
 
 新增可选配置 `KNOWLEDGE_OPTIMIZER_BASE_URL`、`KNOWLEDGE_OPTIMIZER_API_KEY`、`KNOWLEDGE_OPTIMIZER_MODEL`，三项同时设置，使用 Chat Completions 兼容端点（base 通常以 `/v1` 结尾），要求 JSON 文本及 `finish_reason=stop`。平台运营方须选择能处理内部问题和授权文档的模型服务，配置独立于人员游乐场。问题与候选仅用于本次请求，不持久化、不写日志，不发会话历史、不启用工具。发送候选前再次复核授权与活动版本。
 
+`EMBEDDING_PROVIDER` 默认为 `openai`，可选 `dashscope`。DashScope 适配当前限定为 `tongyi-embedding-vision-plus-2026-03-06` 的纯文本输入，base 为 `https://dashscope.aliyuncs.com/api/v1`，显式发送 `parameters.dimension`（支持 64/128/256/512/1024/1152）。请求按最多 20 条拆批，严格校验条数、索引唯一性、模态和维度，不跟随重定向，不记录上游错误正文。
+
+该视觉模型每条文本上限为 1024 token。本实现用完整输入不超过 768 UTF-8 字节的保守预算预切片（包括章节标题和换行），不是精确 tokenizer；普通段落保留重叠及引用位置，超限表格/标题返回解析诊断，请拆分源文件。搜索原问题超限返回 `invalid_request`，改写超限按原问题降级。模型可处理图片不代表 K1 已支持图片摄入。DeepSeek 官方 `api.deepseek.com` 的 `deepseek-flash` 会发送 `thinking.type=disabled` 与 `response_format.type=json_object`；其他模型端点不附加这些提供商字段。参考：[百炼多模态接口](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
+
 改写预算 3 秒，单路 embedding 8 秒，重排 5 秒，总请求仍为 25 秒。响应上限 64 KiB，禁重定向和自动重试。模型缺配时使用原问题混合召回及基础重排；模型超时/格式错误时退回对应基础路径，保留原始查询。原始 embedding 或数据库故障仍返回错误，不伪装成无答案。
+
+含显式否定或限制词（当前为“不、未、无、禁止、仅”）的问题在改写请求前直接保留原文，`rewrite=unchanged`；这是确定性的原文保护，不代表该问题调用过改写模型。其余问题按上述预算调用模型并校验限定词，失败仍报告 `fallback`。原问题检索和语义重排不受这项预检查影响。
 
 成功响应新增 `retrieval`：`strategy` 为 `hybrid_rrf`（空库未执行为 `none`）；`rewrite` 为 `applied/unchanged/not_configured/fallback/skipped`；`rerank` 为 `model/local/fallback/skipped`；`warnings` 为安全诊断代码数组。人员测试页展示模型未配置和降级状态。调用方不得把 `fallback` 或 `not_configured` 当作模型优化验收通过。
 
@@ -75,7 +81,7 @@ score 为最终排序信号，不是答案正确率，也不再统一表示余�
 | `POST/DELETE /api/v1/knowledge/applications/{id}/credentials` | Admin 签发轮换 / 撤销；应用不存在返回 404 |
 | `GET /api/v1/knowledge/audit` | Admin 最近 100 次调用元数据 |
 
-知识库可见范围 `private/company/department/members`；部门从可信平台身份读取，成员使用飞书 Open ID。应用共享与人员可见范围独立，私有库不允许应用共享。关闭应用共享或删除库会在同一事务撤销该库的全部应用授权，重新开启共享后须由 Admin 再次显式授权。旧资料默认私有，未完成 K1 质量核验的旧索引不作为 K1 可检索版本；旧远程来源 ACL 未核验前不得共享给应用。
+知识库可见范围 `private/company/department/members`；新部门关联保存 `department_id`（飞书 open_department_id），`department` 为服务端查证的名称快照，成员保存飞书 Open ID。组织选择受当前登录人可见范围限制，部门访问权限来自本人真实部门归属，历史无 ID 的记录保留原可信平台部门名称规则。配置和重新授权见[飞书目录说明](feishu-directory-setup.md)。应用共享与人员可见范围独立，私有库不允许应用共享。关闭应用共享或删除库会在同一事务撤销该库的全部应用授权，重新开启共享后须由 Admin 再次显式授权。旧资料默认私有，未完成 K1 质量核验的旧索引不作为 K1 可检索版本；旧远程来源 ACL 未核验前不得共享给应用。
 
 ## 摄入和质量边界
 

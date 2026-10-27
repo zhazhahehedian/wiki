@@ -1,0 +1,72 @@
+name: capability-hub
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  backend:
+    image: capability-hub-backend:${RELEASE_TAG:-local}
+    build:
+      context: ../backend
+    env_file:
+      - path: ${BACKEND_ENV_FILE:?Set an absolute path to backend.env}
+        format: raw
+    environment:
+      PORT: "8080"
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks: [app, infrastructure]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    logging: *logging
+
+  frontend:
+    image: capability-hub-frontend:${FRONTEND_RELEASE_TAG:-${RELEASE_TAG:-local}}
+    build:
+      context: ../frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ""
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    restart: unless-stopped
+    networks: [app]
+    logging: *logging
+
+  edge:
+    image: caddy:2-alpine
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Set the public DNS name}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    restart: unless-stopped
+    networks: [app]
+    logging: *logging
+
+networks:
+  app:
+  infrastructure:
+    external: true
+    name: ${INFRA_NETWORK:-1panel-network}
+
+volumes:
+  caddy_data:
+  caddy_config:

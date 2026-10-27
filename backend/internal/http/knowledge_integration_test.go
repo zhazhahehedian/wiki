@@ -68,28 +68,32 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	if os.Getenv("KNOWLEDGE_TEST_DISPOSABLE") != "1" {
 		t.Skip("isolated database writes not requested")
 	}
-	f, e := os.Open("../../../.env")
-	if e != nil {
-		t.Fatal("configuration unavailable")
-	}
-	scan := bufio.NewScanner(f)
-	for scan.Scan() {
-		s := strings.TrimSpace(scan.Text())
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
+	rawDatabaseURL := os.Getenv("KNOWLEDGE_TEST_DATABASE_URL")
+	if rawDatabaseURL == "" {
+		f, e := os.Open("../../../.env")
+		if e != nil {
+			t.Fatal("configuration unavailable")
 		}
-		key, value, ok := strings.Cut(s, "=")
-		if ok {
-			t.Setenv(strings.TrimSpace(key), strings.Trim(strings.TrimSpace(value), "\"'"))
+		scan := bufio.NewScanner(f)
+		for scan.Scan() {
+			s := strings.TrimSpace(scan.Text())
+			if s == "" || strings.HasPrefix(s, "#") {
+				continue
+			}
+			key, value, ok := strings.Cut(s, "=")
+			if ok {
+				t.Setenv(strings.TrimSpace(key), strings.Trim(strings.TrimSpace(value), "\"'"))
+			}
 		}
+		f.Close()
+		rawDatabaseURL = os.Getenv("DATABASE_URL")
 	}
-	f.Close()
 	t.Setenv("HTTP_PROXY", "")
 	t.Setenv("HTTPS_PROXY", "")
 	t.Setenv("NO_PROXY", "*")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	u, e := url.Parse(os.Getenv("DATABASE_URL"))
+	u, e := url.Parse(rawDatabaseURL)
 	if e != nil {
 		t.Fatal("invalid database configuration")
 	}

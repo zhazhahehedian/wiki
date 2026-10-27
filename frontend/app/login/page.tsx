@@ -43,7 +43,7 @@ function LoginContent() {
 
   useEffect(() => {
     // Entering the app from login must wait for the current session check.
-    if (authenticated && !auth.isFetching) router.replace("/");
+    if (authenticated && !auth.isFetching) router.replace("/hub");
   }, [authenticated, auth.isFetching, router]);
 
   if (authFailed) {

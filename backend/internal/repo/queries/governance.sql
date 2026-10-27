@@ -1,7 +1,11 @@
 -- name: GovernanceIdentity :one
 SELECT a.provider_user_id AS open_id, COALESCE(p.is_admin, false)::boolean AS is_admin,
-    COALESCE(p.department, '')::text AS department, COALESCE(p.revision, 0)::bigint AS revision
+    COALESCE(p.department, '')::text AS department, COALESCE(p.revision, 0)::bigint AS revision,
+    CASE WHEN m.expires_at>now() AND NOT a.reauth_required
+        AND a.scopes @> ARRAY['contact:contact.base:readonly','contact:department.base:readonly','contact:user.base:readonly','contact:user.department:readonly']::text[]
+        THEN m.department_ids ELSE '{}'::text[] END AS department_ids
 FROM oauth_accounts a LEFT JOIN platform_profiles p ON p.open_id=a.provider_user_id
+LEFT JOIN feishu_memberships m ON m.account_id=a.id
 WHERE a.user_id=$1 AND a.provider='feishu';
 
 -- name: LockAdminBootstrap :exec
@@ -38,7 +42,9 @@ LEFT JOIN users u ON u.id=a.user_id
 WHERE c.is_live
 AND (sqlc.arg(is_admin)::boolean OR c.owner_open_id=sqlc.arg(open_id)
     OR published_metadata->>'visibility'='org'
-    OR (published_metadata->>'visibility'='department' AND sqlc.arg(department)::text<>'' AND published_metadata->>'department'=sqlc.arg(department))
+    OR (published_metadata->>'visibility'='department' AND (
+        (COALESCE(published_metadata->>'department_id','')<>'' AND published_metadata->>'department_id'=ANY(sqlc.arg(department_ids)::text[]))
+        OR (COALESCE(published_metadata->>'department_id','')='' AND sqlc.arg(department)::text<>'' AND published_metadata->>'department'=sqlc.arg(department))))
     OR (published_metadata->>'visibility'='allowlist' AND (published_metadata->'allowlist') @> to_jsonb(ARRAY[sqlc.arg(open_id)::text])))
 AND (sqlc.arg(filter_type)::text='' OR c.type=sqlc.arg(filter_type))
 AND (sqlc.arg(filter_status)::text='' OR sqlc.arg(filter_status)='published')
@@ -87,4 +93,4 @@ RETURNING *;
 SELECT EXISTS(SELECT 1 FROM platform_profiles WHERE open_id=$1 AND is_admin);
 
 -- name: SetCapabilityVisibility :one
-UPDATE capabilities SET visibility=$2,department=$3 WHERE id=$1 RETURNING *;
+UPDATE capabilities SET visibility=$2,department=$3,department_id=$4 WHERE id=$1 RETURNING *;

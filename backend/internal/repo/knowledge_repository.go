@@ -58,7 +58,7 @@ func (r *KnowledgeRepository) mutate(ctx context.Context, fn func(*generated.Que
 	return tx.Commit(ctx)
 }
 func base(b generated.KnowledgeBase, manage bool) k.KB {
-	return k.KB{ID: b.ID.String(), Name: b.Name, Description: b.Description, Visibility: b.Visibility, Department: b.Department, Members: b.Members, Manage: manage, ApplicationShared: b.ApplicationShared, Model: b.EmbedModel, Dim: int(b.EmbedDim)}
+	return k.KB{ID: b.ID.String(), Name: b.Name, Description: b.Description, Visibility: b.Visibility, Department: b.Department, DepartmentID: b.DepartmentID, Members: b.Members, Manage: manage, ApplicationShared: b.ApplicationShared, Model: b.EmbedModel, Dim: int(b.EmbedDim)}
 }
 
 // viewer is a principal's resolved authority, loaded once per operation.
@@ -97,7 +97,11 @@ func (v viewer) can(b generated.KnowledgeBase, manage bool) bool {
 	if v.who.IsAdmin || ks(b.OwnerUserID) == v.userID {
 		return true
 	}
-	return !manage && (b.Visibility == "company" || (b.Visibility == "department" && v.who.Department != "" && v.who.Department == b.Department) || (b.Visibility == "members" && slices.Contains(b.Members, v.who.OpenID)))
+	departmentMatch := b.DepartmentID != "" && slices.Contains(v.who.DepartmentIDs, b.DepartmentID)
+	if b.DepartmentID == "" {
+		departmentMatch = v.who.Department != "" && v.who.Department == b.Department
+	}
+	return !manage && (b.Visibility == "company" || (b.Visibility == "department" && departmentMatch) || (b.Visibility == "members" && slices.Contains(b.Members, v.who.OpenID)))
 }
 func access(ctx context.Context, q *generated.Queries, p k.Principal, b generated.KnowledgeBase, manage bool) error {
 	v, e := loadViewer(ctx, q, p)
@@ -192,7 +196,7 @@ func (r *KnowledgeRepository) SaveKB(ctx context.Context, p k.Principal, id stri
 		if in.Members == nil {
 			in.Members = []string{}
 		}
-		b, e := q.KnowledgeSaveBase(ctx, generated.KnowledgeSaveBaseParams{ID: ku(id), Name: in.Name, Description: in.Description, OwnerUserID: owner, EmbedModel: model, EmbedDim: int32(dim), Visibility: in.Visibility, Department: in.Department, Members: in.Members, ApplicationShared: in.ApplicationShared})
+		b, e := q.KnowledgeSaveBase(ctx, generated.KnowledgeSaveBaseParams{ID: ku(id), Name: in.Name, Description: in.Description, OwnerUserID: owner, EmbedModel: model, EmbedDim: int32(dim), Visibility: in.Visibility, Department: in.Department, DepartmentID: in.DepartmentID, Members: in.Members, ApplicationShared: in.ApplicationShared})
 		if e != nil {
 			return e
 		}

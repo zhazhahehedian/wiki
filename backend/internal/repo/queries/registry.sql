@@ -2,8 +2,8 @@
 SELECT provider_user_id FROM oauth_accounts WHERE user_id = $1 AND provider = 'feishu';
 
 -- name: CreateCapability :one
-INSERT INTO capabilities (slug, type, name, description, owner_open_id, department, visibility)
-VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
+INSERT INTO capabilities (slug, type, name, description, owner_open_id, department, visibility, department_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
 
 -- name: GetOwnedCapability :one
 SELECT * FROM capabilities WHERE slug = $1 AND owner_open_id = $2;
@@ -22,7 +22,7 @@ ORDER BY updated_at DESC, id
 LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
 -- name: UpdateCapability :one
-UPDATE capabilities SET name=$2, description=$3, department=$4, visibility=$5,
+UPDATE capabilities SET name=$2, description=$3, department=$4, visibility=$5, department_id=$6,
     revision=revision+1, updated_at=now()
 WHERE id=$1 RETURNING *;
 

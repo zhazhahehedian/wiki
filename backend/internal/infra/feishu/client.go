@@ -261,6 +261,12 @@ func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Va
 			continue
 		}
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			var providerError apiEnvelope
+			if len(body) <= maxAPIResponseBytes && decodeExactJSON(body, &providerError) == nil && providerError.Code != 0 {
+				if code := feishuErrorCode(providerError.Code); code != ports.SourceLoadAPIError {
+					return ports.NewSourceLoadError(code, nil)
+				}
+			}
 			return ports.NewSourceLoadError(httpErrorCode(resp.StatusCode), nil)
 		}
 		if len(body) > maxAPIResponseBytes {
@@ -314,7 +320,7 @@ func httpErrorCode(status int) ports.SourceLoadErrorCode {
 
 func feishuErrorCode(code int) ports.SourceLoadErrorCode {
 	switch code {
-	case 99991663, 99991668:
+	case 99991663, 99991668, 99991661, 99991664, 99991672, 41050, 40004:
 		return ports.SourceLoadForbidden
 	case 1770002, 1254045:
 		return ports.SourceLoadNotFound

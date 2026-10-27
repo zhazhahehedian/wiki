@@ -8,6 +8,7 @@ export interface Capability {
   description: string;
   owner_open_id: string;
   department: string;
+  department_id?: string;
   status: "draft" | "in_review" | "published" | "offline";
   visibility: "org" | "department" | "allowlist";
   is_live?: boolean;
@@ -52,6 +53,7 @@ export interface CapabilityInput {
   name: string;
   description: string;
   department: string;
+  department_id?: string;
   visibility: Capability["visibility"];
   allowlist: string[];
   revision: number;
@@ -114,6 +116,7 @@ export interface GovernanceIdentity {
   open_id: string;
   is_admin: boolean;
   department: string;
+  department_ids?: string[];
   revision: number;
   display_name?: string;
 }
@@ -121,6 +124,7 @@ export interface PublishedMetadata {
   name: string;
   description: string;
   department: string;
+  department_id?: string;
   visibility: Capability["visibility"];
   allowlist?: string[];
 }
@@ -138,6 +142,7 @@ export interface ActionInput {
   reason: string;
   visibility?: Capability["visibility"];
   department?: string;
+  department_id?: string;
   allowlist?: string[];
 }
 export interface AuditEntry {

@@ -494,7 +494,7 @@ func (q *Queries) KnowledgeDuplicateChecksum(ctx context.Context, arg KnowledgeD
 }
 
 const knowledgeGetBase = `-- name: KnowledgeGetBase :one
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at, department_id FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL
 `
 
 func (q *Queries) KnowledgeGetBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
@@ -516,6 +516,7 @@ func (q *Queries) KnowledgeGetBase(ctx context.Context, id uuid.UUID) (Knowledge
 		&i.Members,
 		&i.ApplicationShared,
 		&i.DeletedAt,
+		&i.DepartmentID,
 	)
 	return i, err
 }
@@ -598,7 +599,7 @@ func (q *Queries) KnowledgeLatestCredential(ctx context.Context, applicationID u
 }
 
 const knowledgeListBases = `-- name: KnowledgeListBases :many
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE deleted_at IS NULL ORDER BY created_at DESC
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at, department_id FROM knowledge_bases WHERE deleted_at IS NULL ORDER BY created_at DESC
 `
 
 func (q *Queries) KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, error) {
@@ -626,6 +627,7 @@ func (q *Queries) KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, erro
 			&i.Members,
 			&i.ApplicationShared,
 			&i.DeletedAt,
+			&i.DepartmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -648,7 +650,7 @@ func (q *Queries) KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (u
 }
 
 const knowledgeLockBase = `-- name: KnowledgeLockBase :one
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at, department_id FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR UPDATE
 `
 
 func (q *Queries) KnowledgeLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
@@ -670,6 +672,7 @@ func (q *Queries) KnowledgeLockBase(ctx context.Context, id uuid.UUID) (Knowledg
 		&i.Members,
 		&i.ApplicationShared,
 		&i.DeletedAt,
+		&i.DepartmentID,
 	)
 	return i, err
 }
@@ -789,11 +792,11 @@ func (q *Queries) KnowledgeSaveApplication(ctx context.Context, arg KnowledgeSav
 }
 
 const knowledgeSaveBase = `-- name: KnowledgeSaveBase :one
-INSERT INTO knowledge_bases(id,name,description,owner_user_id,embed_model,embed_dim,visibility,department,members,application_shared)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO knowledge_bases(id,name,description,owner_user_id,embed_model,embed_dim,visibility,department,members,application_shared,department_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,visibility=excluded.visibility,
-department=excluded.department,members=excluded.members,application_shared=excluded.application_shared,updated_at=now()
-RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at
+department=excluded.department,department_id=excluded.department_id,members=excluded.members,application_shared=excluded.application_shared,updated_at=now()
+RETURNING id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at, department_id
 `
 
 type KnowledgeSaveBaseParams struct {
@@ -807,6 +810,7 @@ type KnowledgeSaveBaseParams struct {
 	Department        string      `json:"department"`
 	Members           []string    `json:"members"`
 	ApplicationShared bool        `json:"application_shared"`
+	DepartmentID      string      `json:"department_id"`
 }
 
 func (q *Queries) KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBaseParams) (KnowledgeBase, error) {
@@ -821,6 +825,7 @@ func (q *Queries) KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBasePa
 		arg.Department,
 		arg.Members,
 		arg.ApplicationShared,
+		arg.DepartmentID,
 	)
 	var i KnowledgeBase
 	err := row.Scan(
@@ -839,12 +844,13 @@ func (q *Queries) KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBasePa
 		&i.Members,
 		&i.ApplicationShared,
 		&i.DeletedAt,
+		&i.DepartmentID,
 	)
 	return i, err
 }
 
 const knowledgeShareLockBase = `-- name: KnowledgeShareLockBase :one
-SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR SHARE
+SELECT id, name, description, owner_id, embed_model, embed_dim, settings, created_at, updated_at, owner_user_id, visibility, department, members, application_shared, deleted_at, department_id FROM knowledge_bases WHERE id=$1 AND deleted_at IS NULL FOR SHARE
 `
 
 func (q *Queries) KnowledgeShareLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error) {
@@ -866,6 +872,7 @@ func (q *Queries) KnowledgeShareLockBase(ctx context.Context, id uuid.UUID) (Kno
 		&i.Members,
 		&i.ApplicationShared,
 		&i.DeletedAt,
+		&i.DepartmentID,
 	)
 	return i, err
 }

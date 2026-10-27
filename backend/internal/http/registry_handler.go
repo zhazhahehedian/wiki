@@ -18,6 +18,9 @@ type RegistryHandler struct{ service *registry.Service }
 
 func NewRegistryHandler(s *registry.Service) *RegistryHandler { return &RegistryHandler{s} }
 func registryHTTPError(w http.ResponseWriter, r *http.Request, e error) {
+	if directoryHTTPError(w, r, e) {
+		return
+	}
 	if r.Context().Err() != nil {
 		return
 	}
@@ -85,6 +88,19 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, registry.MaxBundleBytes+512*1024)
+	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && media == "application/json" {
+		r.Body = http.MaxBytesReader(w, r.Body, 300*1024)
+		var input registry.SaveRequest
+		d := json.NewDecoder(r.Body)
+		d.DisallowUnknownFields()
+		var extra any
+		if d.Decode(&input) != nil || d.Decode(&extra) != io.EOF {
+			registryHTTPError(w, r, registry.ErrInvalid)
+			return
+		}
+		h.saveResult(w, r, user, input, nil)
+		return
+	}
 	reader, e := r.MultipartReader()
 	if e != nil {
 		registryHTTPError(w, r, registry.ErrInvalid)
@@ -142,6 +158,9 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 		registryHTTPError(w, r, registry.ErrInvalid)
 		return
 	}
+	h.saveResult(w, r, user, input, files)
+}
+func (h *RegistryHandler) saveResult(w http.ResponseWriter, r *http.Request, user string, input registry.SaveRequest, files []registry.File) {
 	slug := chi.URLParam(r, "slug")
 	detail, e := h.service.Save(r.Context(), user, slug, input, files)
 	if e != nil {

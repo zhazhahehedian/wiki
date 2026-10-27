@@ -42,6 +42,7 @@ type Capability struct {
 	IsLive            bool        `json:"is_live"`
 	PublishedMetadata []byte      `json:"published_metadata"`
 	ReviewReason      string      `json:"review_reason"`
+	DepartmentID      string      `json:"department_id"`
 }
 
 type CapabilityAllowlist struct {
@@ -109,6 +110,13 @@ type Document struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+type FeishuMembership struct {
+	AccountID     uuid.UUID `json:"account_id"`
+	DepartmentIds []string  `json:"department_ids"`
+	CheckedAt     time.Time `json:"checked_at"`
+	ExpiresAt     time.Time `json:"expires_at"`
+}
+
 type KnowledgeApplication struct {
 	ID        uuid.UUID `json:"id"`
 	Name      string    `json:"name"`
@@ -132,6 +140,7 @@ type KnowledgeBase struct {
 	Members           []string           `json:"members"`
 	ApplicationShared bool               `json:"application_shared"`
 	DeletedAt         pgtype.Timestamptz `json:"deleted_at"`
+	DepartmentID      string             `json:"department_id"`
 }
 
 type KnowledgeChunk struct {
@@ -226,6 +235,19 @@ type PlatformProfile struct {
 	Department string    `json:"department"`
 	Revision   int64     `json:"revision"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type PublishingCredential struct {
+	ID          uuid.UUID          `json:"id"`
+	AccountID   uuid.UUID          `json:"account_id"`
+	Name        string             `json:"name"`
+	TokenHash   []byte             `json:"token_hash"`
+	TokenPrefix string             `json:"token_prefix"`
+	Scopes      []string           `json:"scopes"`
+	ExpiresAt   time.Time          `json:"expires_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt   time.Time          `json:"created_at"`
 }
 
 type User struct {

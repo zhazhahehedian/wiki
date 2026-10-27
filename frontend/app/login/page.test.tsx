@@ -138,7 +138,7 @@ describe("LoginPage", () => {
     useAuth.mockReturnValue({ isLoading: false, isError: false, data: { id: "user-1" } });
     render(<LoginPage />);
 
-    expect(replace).toHaveBeenCalledWith("/");
+    expect(replace).toHaveBeenCalledWith("/hub");
     expect(screen.queryByRole("link", { name: "使用飞书登录" })).not.toBeInTheDocument();
   });
 });

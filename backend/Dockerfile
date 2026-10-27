@@ -13,6 +13,9 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath -ldflags="-s -w" \
     -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath -ldflags="-s -w" \
+    -o /out/migrate ./cmd/migrate
 
 # ---------- runtime ----------
 FROM alpine:3.20
@@ -22,6 +25,7 @@ RUN apk add --no-cache ca-certificates tzdata && \
 
 WORKDIR /app
 COPY --from=builder /out/server /app/server
+COPY --from=builder /out/migrate /app/migrate
 
 USER app
 EXPOSE 8080

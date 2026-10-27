@@ -97,6 +97,39 @@ func TestSearchInputAndVectors(t *testing.T) {
 	}
 }
 
+func TestEmbeddingByteBudgetPreservesTextAndLocations(t *testing.T) {
+	text := strings.Repeat("测试🙂abc。", 300)
+	p := Parse(context.Background(), "a.txt", []byte(text))
+	p.Blocks[0].Locator.Heading = "章节标题"
+	blocks, err := splitWithInputLimit(p, 768)
+	if err != nil || len(blocks) < 2 {
+		t.Fatal(err)
+	}
+	var reconstructed []rune
+	overlap := 0
+	for i, b := range blocks {
+		if len(b.Locator.Heading+"\n"+b.Content) > 768 || b.Locator.Line != 1 || b.Locator.Part != i+1 || b.Locator.Heading != "章节标题" {
+			t.Fatal("budget or citation lost", b.Locator)
+		}
+		r := []rune(b.Content)
+		reconstructed = append(reconstructed, r[overlap:]...)
+		overlap = min(120, len(r)/10)
+	}
+	if string(reconstructed) != text {
+		t.Fatal("source text lost")
+	}
+	for _, body := range []string{strings.Repeat("a | b\n", 200)} {
+		p := Parse(context.Background(), "a.txt", []byte(body))
+		if _, err := splitWithInputLimit(p, 128); err == nil {
+			t.Fatal("oversized table split unsafely")
+		}
+	}
+	p.Blocks[0].Locator.Heading = strings.Repeat("标题", 200)
+	if _, err := splitWithInputLimit(p, 768); err == nil {
+		t.Fatal("oversized heading accepted")
+	}
+}
+
 func pdfFixture(streams ...string) []byte {
 	objects := []string{"<< /Type /Catalog /Pages 2 0 R >>", "", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"}
 	kids := []string{}

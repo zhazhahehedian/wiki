@@ -23,7 +23,7 @@ External Skills mentioned in plans are optional workflow aids. Use an applicable
 - Backend, from `backend/`: `go test ./...`, `go build ./cmd/server`, `sqlc generate`, and `go run ./cmd/migrate up`. The Makefile exposes corresponding targets. Use the project migration entrypoint because the repository includes Go migrations.
 - Frontend, from `frontend/`: `pnpm install` when dependencies need installing, `pnpm dev`, `pnpm test`, `pnpm typecheck`, `pnpm build`, and `pnpm lint` (scripts are defined in `package.json`).
 - Root: `make backend-build`, `make backend-test`, `make frontend-test`, `make frontend-typecheck`, and `make frontend-build`. GNU Make and `awk` are needed for `make help`.
-- This checkout does not provide Compose orchestration. Provision PostgreSQL/MinIO separately and use the local development commands; obsolete targets referencing the missing Compose file have been removed.
+- `deploy/compose.yaml` orchestrates the production application and HTTPS proxy only; see `deploy/README.md`. Provision PostgreSQL/MinIO separately. Local development uses the commands above; obsolete root Compose targets remain removed.
 - Versions and package-manager requirements come from `backend/go.mod`, `frontend/package.json`, and the lockfile. Do not upgrade dependencies incidentally. For major upgrades, identify affected APIs and validate the relevant build and critical flows; explain compatibility evidence.
 
 ## Database Changes

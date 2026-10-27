@@ -1,0 +1,21 @@
+{
+  "checked_at": "2026-10-27T11:07:30.9251768+08:00",
+  "checks": [
+    {
+      "path": "/guide",
+      "status": 200
+    },
+    {
+      "path": "/",
+      "status": 200
+    },
+    {
+      "path": "/healthz",
+      "status": 200
+    },
+    {
+      "path": "/api/v1/catalog",
+      "status": 401
+    }
+  ]
+}

@@ -38,6 +38,26 @@ type testEmbed struct {
 	texts     []string // embedded inputs, for sequential tests
 }
 
+type limitedTestEmbed struct{ testEmbed }
+
+func (*limitedTestEmbed) MaxInputBytes() int { return 768 }
+
+func TestEmbeddingBudgetRejectsLongQueryAndFallsBackFromLongRewrite(t *testing.T) {
+	r := &searchRepo{}
+	e := &limitedTestEmbed{}
+	s := New(r, nil, e, 0.5)
+	in := SearchRequest{KBIDs: []string{"00000000-0000-0000-0000-000000000001"}, Query: strings.Repeat("中", 257)}
+	if _, _, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, in); err != ErrInvalid || e.calls.Load() != 0 {
+		t.Fatal("long query sent", err)
+	}
+	in.Query = "业务问题"
+	s.Optimizer = &fixtureOptimizer{rewrite: strings.Repeat("业务问题", 100)}
+	_, info, err := s.Search(context.Background(), Principal{ApplicationID: "a"}, in)
+	if err != nil || info.Rewrite != "fallback" || len(e.texts) != 1 || e.texts[0] != in.Query {
+		t.Fatal("oversized rewrite did not fall back", info, err, e.texts)
+	}
+}
+
 func (*testEmbed) Model() string { return "test" }
 func (*testEmbed) Dim() int      { return 2 }
 func (e *testEmbed) Embed(ctx context.Context, s []string) ([][]float32, error) {

@@ -14,6 +14,7 @@ import {
   type MCPTool,
 } from "@/lib/api/registry";
 import { APIError } from "@/lib/api/client";
+import { DirectoryPicker } from "./directory-picker";
 import {
   Field,
   fieldClass,
@@ -28,6 +29,7 @@ const blank: CapabilityInput = {
   name: "",
   description: "",
   department: "",
+  department_id: "",
   visibility: "org",
   allowlist: [],
   revision: 0,
@@ -49,6 +51,7 @@ function initial(detail?: CapabilityDetail): CapabilityInput {
     name: detail.name,
     description: detail.description,
     department: detail.department,
+    department_id: detail.department_id ?? "",
     visibility: detail.visibility,
     allowlist: detail.allowlist ?? [],
     revision: detail.revision,
@@ -261,14 +264,8 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                 />
               </Field>
               <Field label="部门">
-                <input
-                  required={form.visibility === "department"}
-                  maxLength={120}
-                  className={fieldClass}
-                  value={form.department}
-                  onChange={(e) => set("department", e.target.value)}
-                  placeholder="例如：研发平台"
-                />
+                <DirectoryPicker kind="department" value={form.department_id ?? ""} label={form.department} onChange={(id, name) => setForm(prev => ({...prev, department_id:id, department:name}))} />
+                {!form.department_id && form.department && <p className="text-xs text-amber-700">原部门：{form.department}。请重新选择对应的飞书部门。</p>}
               </Field>
             </div>
             <Field label="能力描述">
@@ -409,16 +406,10 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
             </div>
             {form.visibility === "allowlist" && (
               <Field
-                label="用户 Open ID"
-                hint="每行一个飞书 open_id，最多 200 人。"
+                label="可见用户"
+                hint="从当前账号可见的飞书人员中选择，最多 200 人。"
               >
-                <textarea
-                  required
-                  rows={3}
-                  className={fieldClass}
-                  value={allowlist}
-                  onChange={(e) => setAllowlist(e.target.value)}
-                />
+                <DirectoryPicker kind="users" value={allowlist.split(/\s+/).filter(Boolean)} onChange={ids => setAllowlist(ids.join("\n"))} />
               </Field>
             )}
             <Field label="版本说明">

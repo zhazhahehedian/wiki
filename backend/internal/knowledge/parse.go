@@ -418,6 +418,10 @@ func appendHeading(path []string, level int, title string) ([]string, string) {
 // table context, while preserving their exact line/paragraph range. PDF pages
 // never merge. Oversized paragraphs use overlap and retain a part ordinal.
 func Split(p Preview) ([]Block, error) {
+	return splitWithInputLimit(p, 0)
+}
+
+func splitWithInputLimit(p Preview, maxInputBytes int) ([]Block, error) {
 	if !p.Valid() {
 		return nil, ErrInvalid
 	}
@@ -425,7 +429,8 @@ func Split(p Preview) ([]Block, error) {
 	groups := []Block{}
 	for _, b := range p.Blocks {
 		n := len(groups)
-		if n > 0 && b.Locator.Page == 0 && groups[n-1].Locator.Page == 0 && b.Locator.Heading == groups[n-1].Locator.Heading && len([]rune(groups[n-1].Content))+len([]rune(b.Content))+2 <= 1200 {
+		fitsBytes := n > 0 && (maxInputBytes <= 0 || len(b.Locator.Heading)+1+len(groups[n-1].Content)+2+len(b.Content) <= maxInputBytes)
+		if fitsBytes && b.Locator.Page == 0 && groups[n-1].Locator.Page == 0 && b.Locator.Heading == groups[n-1].Locator.Heading && len([]rune(groups[n-1].Content))+len([]rune(b.Content))+2 <= 1200 {
 			groups[n-1].Content += "\n\n" + b.Content
 			groups[n-1].Locator.LineEnd = b.Locator.LineEnd
 			groups[n-1].Locator.ParagraphEnd = b.Locator.ParagraphEnd
@@ -435,7 +440,11 @@ func Split(p Preview) ([]Block, error) {
 	}
 	for _, b := range groups {
 		r := []rune(b.Content)
-		if len(r) > 1200 && strings.Contains(b.Content, "|") {
+		byteBudget := maxInputBytes - len(b.Locator.Heading) - 1
+		if maxInputBytes > 0 && byteBudget < utf8.UTFMax {
+			return nil, fmt.Errorf("heading_too_large")
+		}
+		if (len(r) > 1200 || (maxInputBytes > 0 && len(b.Content) > byteBudget)) && strings.Contains(b.Content, "|") {
 			return nil, fmt.Errorf("table_too_large")
 		}
 		for part := 1; len(r) > 0; part++ {
@@ -443,13 +452,23 @@ func Split(p Preview) ([]Block, error) {
 			if end > 1200 {
 				end = 1200
 			}
+			if maxInputBytes > 0 {
+				used := 0
+				for i, char := range r[:end] {
+					used += utf8.RuneLen(char)
+					if used > byteBudget {
+						end = i
+						break
+					}
+				}
+			}
 			loc := b.Locator
 			loc.Part = part
 			out = append(out, Block{string(r[:end]), loc})
 			if end == len(r) {
 				break
 			}
-			r = r[end-120:]
+			r = r[end-min(120, end/10):]
 		}
 	}
 	if len(out) > 3000 {

@@ -14,11 +14,49 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	authstore "github.com/zenith-wang/it-wiki/backend/internal/auth"
 	"github.com/zenith-wang/it-wiki/backend/internal/config"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain"
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
+	"github.com/zenith-wang/it-wiki/backend/internal/repo"
+	"github.com/zenith-wang/it-wiki/backend/internal/service"
 )
 
 type noopAuthDB struct{}
+
+type successfulRedirectFlow struct{}
+
+func (successfulRedirectFlow) BeginOAuth(context.Context) (string, error) { return "test-state", nil }
+func (successfulRedirectFlow) CompleteOAuth(context.Context, string, string) (service.AuthResult, error) {
+	return service.AuthResult{
+		Session:      domain.Session{ExpiresAt: time.Now().Add(time.Hour)},
+		SessionToken: "test-session", CSRFToken: "test-csrf",
+	}, nil
+}
+
+func TestProductionOAuthSuccessRedirectsDirectlyToWorkspace(t *testing.T) {
+	cfg := &config.Config{FrontendOrigin: "https://app.example.test", SessionCookieSecure: true, SessionTTL: time.Hour}
+	h, err := httpx.NewAuthHandler(platformAuthHandlerConfig(cfg), successfulRedirectFlow{}, authstore.NewMemorySessionStore(nil), repo.NewAuthRepository(noopAuthDB{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/feishu/callback?state=test-state&code=test-code&redirect=https://evil.test", nil)
+	req.AddCookie(&http.Cookie{Name: httpx.OAuthStateCookieName, Value: "test-state"})
+	rec := httptest.NewRecorder()
+	h.Callback(rec, req)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "https://app.example.test/hub" {
+		t.Fatalf("callback status/location = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	var session *http.Cookie
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == httpx.SessionCookieName {
+			session = cookie
+		}
+	}
+	if session == nil || session.Value == "" || !session.Secure || !session.HttpOnly {
+		t.Fatal("callback did not establish a secure session before redirecting")
+	}
+}
 
 func (noopAuthDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
 	panic("unexpected database call during composition")
@@ -56,7 +94,7 @@ func TestBuildAuthHandlerConstructsProductionRouter(t *testing.T) {
 	if query.Get("client_id") != "app-id" || query.Get("response_type") != "code" {
 		t.Fatalf("OAuth start query = %v", query)
 	}
-	if got, want := query.Get("scope"), strings.Join(requiredFeishuScopes(), " "); got != want {
+	if got, want := query.Get("scope"), strings.Join(platformAuthHandlerConfig(cfg).Scopes, " "); got != want {
 		t.Fatalf("OAuth start scope = %q, want %q", got, want)
 	}
 }

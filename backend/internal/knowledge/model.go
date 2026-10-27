@@ -33,6 +33,7 @@ type KB struct {
 	Description       string   `json:"description"`
 	Visibility        string   `json:"visibility"`
 	Department        string   `json:"department"`
+	DepartmentID      string   `json:"department_id"`
 	Members           []string `json:"members"`
 	Manage            bool     `json:"manage"`
 	ApplicationShared bool     `json:"application_shared"`

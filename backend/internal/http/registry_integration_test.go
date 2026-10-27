@@ -414,7 +414,7 @@ func verifyGovernanceMigration(t *testing.T, ctx context.Context, db *sql.DB) {
 	if e := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM capabilities),(SELECT count(*) FROM capability_versions),(SELECT count(*) FROM users)`).Scan(&beforeCaps, &beforeVersions, &beforeUsers); e != nil {
 		t.Fatal(e)
 	}
-	if e := goose.DownContext(ctx, db, "."); e != nil {
+	if e := goose.DownToContext(ctx, db, ".", 14); e != nil {
 		t.Fatal(e)
 	}
 	var afterCaps, afterVersions, afterUsers int

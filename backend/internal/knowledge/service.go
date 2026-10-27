@@ -21,6 +21,9 @@ import (
 )
 
 type Service struct {
+	Directory interface {
+		ValidateSelection(context.Context, string, string, []string) (string, error)
+	}
 	Optimizer QueryOptimizer
 	Repo      Repository
 	storage   ports.ObjectStorage
@@ -38,6 +41,26 @@ func New(r Repository, s ports.ObjectStorage, e ports.Embedder, min float32) *Se
 	return &Service{Repo: r, storage: s, embed: e, minScore: min, limits: map[string]*limit{}}
 }
 func (s *Service) SaveKB(ctx context.Context, p Principal, id string, in KB) (KB, error) {
+	if s.Directory != nil {
+		if p.UserID == "" {
+			return KB{}, ErrForbidden
+		}
+		if in.Visibility == "department" && in.DepartmentID == "" {
+			return KB{}, ErrInvalid
+		}
+		if in.Visibility != "department" {
+			in.DepartmentID = ""
+			in.Department = ""
+		}
+		if in.Visibility != "members" {
+			in.Members = nil
+		}
+		name, e := s.Directory.ValidateSelection(ctx, p.UserID, in.DepartmentID, in.Members)
+		if e != nil {
+			return KB{}, e
+		}
+		in.Department = name
+	}
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" || len([]rune(in.Name)) > 120 || len(in.Description) > 4000 || len(in.Members) > 100 {
 		return KB{}, ErrInvalid
@@ -131,7 +154,7 @@ func (s *Service) Process(ctx context.Context, id string) error {
 	if !preview.Valid() {
 		return fail("parse_quality_blocked", false)
 	}
-	blocks, e := Split(preview)
+	blocks, e := splitWithInputLimit(preview, s.embeddingInputLimit())
 	if e != nil {
 		diagnostic(&preview, "structure_too_large", "表格或结构超过安全切分上限，无法保证表头、单位和上下文完整；请拆分源文档", 0, true)
 		if e = s.Repo.RecordPreview(ctx, id, preview); e != nil {
@@ -245,6 +268,9 @@ func (s *Service) Search(ctx context.Context, p Principal, in SearchRequest) ([]
 	info := RetrievalInfo{Strategy: "none", Rewrite: "skipped", Rerank: "skipped", Warnings: []string{}}
 	if e := ValidateSearch(&in); e != nil {
 		return nil, info, e
+	}
+	if maxBytes := s.embeddingInputLimit(); maxBytes > 0 && len(in.Query) > maxBytes {
+		return nil, info, ErrInvalid
 	}
 	release, e := s.acquire(p)
 	if e != nil {

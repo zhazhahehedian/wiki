@@ -4,7 +4,7 @@ import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
   title: "能力中心 · Capability Hub",
-  description: "团队 MCP 与 Skill 的注册、治理和分发平台",
+  description: "发现团队共享的 MCP 与 Skill，连接知识服务，探索模型能力。团队能力，共同创造。",
 };
 
 export default function RootLayout({

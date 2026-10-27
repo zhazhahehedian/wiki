@@ -5,6 +5,7 @@ export interface KnowledgeBase {
   description: string;
   visibility: string;
   department: string;
+  department_id?: string;
   members: string[];
   manage: boolean;
   application_shared: boolean;

@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -11,18 +12,20 @@ import (
 )
 
 type Identity struct {
-	OpenID      string `json:"open_id"`
-	IsAdmin     bool   `json:"is_admin"`
-	Department  string `json:"department"`
-	Revision    int64  `json:"revision"`
-	DisplayName string `json:"display_name,omitempty"`
+	OpenID        string   `json:"open_id"`
+	IsAdmin       bool     `json:"is_admin"`
+	Department    string   `json:"department"`
+	DepartmentIDs []string `json:"department_ids"`
+	Revision      int64    `json:"revision"`
+	DisplayName   string   `json:"display_name,omitempty"`
 }
 type PublishedMetadata struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Department  string   `json:"department"`
-	Visibility  string   `json:"visibility"`
-	Allowlist   []string `json:"allowlist,omitempty"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Department   string   `json:"department"`
+	DepartmentID string   `json:"department_id"`
+	Visibility   string   `json:"visibility"`
+	Allowlist    []string `json:"allowlist,omitempty"`
 }
 
 // CanViewPublished is also the permission boundary for future credential grants.
@@ -37,6 +40,9 @@ func CanViewPublished(who Identity, owner string, live bool, meta PublishedMetad
 	case "org":
 		return true
 	case "department":
+		if meta.DepartmentID != "" {
+			return slices.Contains(who.DepartmentIDs, meta.DepartmentID)
+		}
 		return who.Department != "" && meta.Department != "" && who.Department == meta.Department
 	case "allowlist":
 		for _, id := range meta.Allowlist {
@@ -49,12 +55,13 @@ func CanViewPublished(who Identity, owner string, live bool, meta PublishedMetad
 }
 
 type ActionRequest struct {
-	Revision   int64    `json:"revision"`
-	VersionID  string   `json:"version_id"`
-	Reason     string   `json:"reason"`
-	Visibility string   `json:"visibility,omitempty"`
-	Department string   `json:"department,omitempty"`
-	Allowlist  []string `json:"allowlist,omitempty"`
+	Revision     int64    `json:"revision"`
+	VersionID    string   `json:"version_id"`
+	Reason       string   `json:"reason"`
+	Visibility   string   `json:"visibility,omitempty"`
+	Department   string   `json:"department,omitempty"`
+	DepartmentID string   `json:"department_id,omitempty"`
+	Allowlist    []string `json:"allowlist,omitempty"`
 }
 type AuditEntry struct {
 	ID          string         `json:"id"`
@@ -84,6 +91,15 @@ type DepartmentRequest struct {
 	Reason     string `json:"reason"`
 }
 type auditContextKey struct{}
+type credentialContextKey struct{}
+
+func WithCredentialID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, credentialContextKey{}, id)
+}
+func CredentialID(ctx context.Context) string {
+	id, _ := ctx.Value(credentialContextKey{}).(string)
+	return id
+}
 
 func WithRequestID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, auditContextKey{}, id)
@@ -128,12 +144,15 @@ func (s *Service) Act(ctx context.Context, user, slug, action string, r ActionRe
 		return Detail{}, ErrInvalid
 	}
 	if action == "visibility" {
-		input := SaveRequest{Slug: "visibility", Type: "skill", Name: "visibility", Description: "visibility", Version: "1", Visibility: r.Visibility, Department: r.Department, Allowlist: r.Allowlist}
+		input := SaveRequest{Slug: "visibility", Type: "skill", Name: "visibility", Description: "visibility", Version: "1", Visibility: r.Visibility, Department: r.Department, DepartmentID: r.DepartmentID, Allowlist: r.Allowlist}
+		if e := s.validateDirectory(ctx, user, &input); e != nil {
+			return Detail{}, e
+		}
 		if e := validate(&input); e != nil {
 			return Detail{}, e
 		}
 		r.Department = input.Department
-	} else if r.Visibility != "" || r.Department != "" || len(r.Allowlist) > 0 {
+	} else if r.Visibility != "" || r.Department != "" || r.DepartmentID != "" || len(r.Allowlist) > 0 {
 		return Detail{}, ErrInvalid
 	}
 	// Validate the exact candidate before entering the short SQL transaction. The
