@@ -88,8 +88,9 @@ func (q *Queries) CreateCapability(ctx context.Context, arg CreateCapabilityPara
 
 const createCapabilityVersion = `-- name: CreateCapabilityVersion :one
 INSERT INTO capability_versions (capability_id, version, changelog, created_by,
-    mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, skill_bundle_key, skill_manifest)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, capability_id, version, changelog, created_by, created_at, mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, skill_bundle_key, skill_manifest, published_at
+    mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, bundle_key, skill_manifest,
+    bundle_sha256, bundle_size, bundle_findings)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id, capability_id, version, changelog, created_by, created_at, mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, bundle_key, skill_manifest, published_at, bundle_sha256, bundle_size, bundle_findings
 `
 
 type CreateCapabilityVersionParams struct {
@@ -101,8 +102,11 @@ type CreateCapabilityVersionParams struct {
 	McpTransport   *string   `json:"mcp_transport"`
 	McpAuthScheme  *string   `json:"mcp_auth_scheme"`
 	Tools          []byte    `json:"tools"`
-	SkillBundleKey *string   `json:"skill_bundle_key"`
+	BundleKey      *string   `json:"bundle_key"`
 	SkillManifest  []byte    `json:"skill_manifest"`
+	BundleSha256   *string   `json:"bundle_sha256"`
+	BundleSize     *int64    `json:"bundle_size"`
+	BundleFindings []byte    `json:"bundle_findings"`
 }
 
 func (q *Queries) CreateCapabilityVersion(ctx context.Context, arg CreateCapabilityVersionParams) (CapabilityVersion, error) {
@@ -115,8 +119,11 @@ func (q *Queries) CreateCapabilityVersion(ctx context.Context, arg CreateCapabil
 		arg.McpTransport,
 		arg.McpAuthScheme,
 		arg.Tools,
-		arg.SkillBundleKey,
+		arg.BundleKey,
 		arg.SkillManifest,
+		arg.BundleSha256,
+		arg.BundleSize,
+		arg.BundleFindings,
 	)
 	var i CapabilityVersion
 	err := row.Scan(
@@ -130,9 +137,12 @@ func (q *Queries) CreateCapabilityVersion(ctx context.Context, arg CreateCapabil
 		&i.McpTransport,
 		&i.McpAuthScheme,
 		&i.Tools,
-		&i.SkillBundleKey,
+		&i.BundleKey,
 		&i.SkillManifest,
 		&i.PublishedAt,
+		&i.BundleSha256,
+		&i.BundleSize,
+		&i.BundleFindings,
 	)
 	return i, err
 }
@@ -197,7 +207,7 @@ func (q *Queries) ListCapabilityAllowlist(ctx context.Context, capabilityID uuid
 }
 
 const listCapabilityVersions = `-- name: ListCapabilityVersions :many
-SELECT id, capability_id, version, changelog, created_by, created_at, mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, skill_bundle_key, skill_manifest, published_at FROM capability_versions WHERE capability_id=$1 ORDER BY created_at DESC, id
+SELECT id, capability_id, version, changelog, created_by, created_at, mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, bundle_key, skill_manifest, published_at, bundle_sha256, bundle_size, bundle_findings FROM capability_versions WHERE capability_id=$1 ORDER BY created_at DESC, id
 `
 
 func (q *Queries) ListCapabilityVersions(ctx context.Context, capabilityID uuid.UUID) ([]CapabilityVersion, error) {
@@ -220,9 +230,12 @@ func (q *Queries) ListCapabilityVersions(ctx context.Context, capabilityID uuid.
 			&i.McpTransport,
 			&i.McpAuthScheme,
 			&i.Tools,
-			&i.SkillBundleKey,
+			&i.BundleKey,
 			&i.SkillManifest,
 			&i.PublishedAt,
+			&i.BundleSha256,
+			&i.BundleSize,
+			&i.BundleFindings,
 		); err != nil {
 			return nil, err
 		}
@@ -338,11 +351,11 @@ func (q *Queries) LockOwnedCapability(ctx context.Context, arg LockOwnedCapabili
 }
 
 const registryBundleReferenced = `-- name: RegistryBundleReferenced :one
-SELECT EXISTS(SELECT 1 FROM capability_versions WHERE skill_bundle_key = $1)
+SELECT EXISTS(SELECT 1 FROM capability_versions WHERE bundle_key = $1)
 `
 
-func (q *Queries) RegistryBundleReferenced(ctx context.Context, skillBundleKey *string) (bool, error) {
-	row := q.db.QueryRow(ctx, registryBundleReferenced, skillBundleKey)
+func (q *Queries) RegistryBundleReferenced(ctx context.Context, bundleKey *string) (bool, error) {
+	row := q.db.QueryRow(ctx, registryBundleReferenced, bundleKey)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
@@ -444,8 +457,9 @@ func (q *Queries) UpdateCapability(ctx context.Context, arg UpdateCapabilityPara
 
 const updateCapabilityVersion = `-- name: UpdateCapabilityVersion :one
 UPDATE capability_versions SET changelog=$2, mcp_endpoint=$3, mcp_transport=$4,
-    mcp_auth_scheme=$5, tools=$6, skill_bundle_key=$7, skill_manifest=$8
-WHERE id=$1 RETURNING id, capability_id, version, changelog, created_by, created_at, mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, skill_bundle_key, skill_manifest, published_at
+    mcp_auth_scheme=$5, tools=$6, bundle_key=$7, skill_manifest=$8,
+    bundle_sha256=$9, bundle_size=$10, bundle_findings=$11
+WHERE id=$1 RETURNING id, capability_id, version, changelog, created_by, created_at, mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, bundle_key, skill_manifest, published_at, bundle_sha256, bundle_size, bundle_findings
 `
 
 type UpdateCapabilityVersionParams struct {
@@ -455,8 +469,11 @@ type UpdateCapabilityVersionParams struct {
 	McpTransport   *string   `json:"mcp_transport"`
 	McpAuthScheme  *string   `json:"mcp_auth_scheme"`
 	Tools          []byte    `json:"tools"`
-	SkillBundleKey *string   `json:"skill_bundle_key"`
+	BundleKey      *string   `json:"bundle_key"`
 	SkillManifest  []byte    `json:"skill_manifest"`
+	BundleSha256   *string   `json:"bundle_sha256"`
+	BundleSize     *int64    `json:"bundle_size"`
+	BundleFindings []byte    `json:"bundle_findings"`
 }
 
 func (q *Queries) UpdateCapabilityVersion(ctx context.Context, arg UpdateCapabilityVersionParams) (CapabilityVersion, error) {
@@ -467,8 +484,11 @@ func (q *Queries) UpdateCapabilityVersion(ctx context.Context, arg UpdateCapabil
 		arg.McpTransport,
 		arg.McpAuthScheme,
 		arg.Tools,
-		arg.SkillBundleKey,
+		arg.BundleKey,
 		arg.SkillManifest,
+		arg.BundleSha256,
+		arg.BundleSize,
+		arg.BundleFindings,
 	)
 	var i CapabilityVersion
 	err := row.Scan(
@@ -482,9 +502,12 @@ func (q *Queries) UpdateCapabilityVersion(ctx context.Context, arg UpdateCapabil
 		&i.McpTransport,
 		&i.McpAuthScheme,
 		&i.Tools,
-		&i.SkillBundleKey,
+		&i.BundleKey,
 		&i.SkillManifest,
 		&i.PublishedAt,
+		&i.BundleSha256,
+		&i.BundleSize,
+		&i.BundleFindings,
 	)
 	return i, err
 }

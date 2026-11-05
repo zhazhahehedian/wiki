@@ -282,7 +282,7 @@ func verifyReviewerIntegration(t *testing.T, db *sql.DB, pool *pgxpool.Pool, s *
 	if _, e = s.Files(ctx, reviewer, skill.Slug, first); !errors.Is(e, registry.ErrNotFound) {
 		t.Fatal("historical file exposed", e)
 	}
-	if _, e = s.Download(keyCtx, reviewer, skill.Slug, skill.DraftVersionID); !errors.Is(e, registry.ErrNotFound) {
+	if _, _, e = s.Download(keyCtx, reviewer, skill.Slug, skill.DraftVersionID); !errors.Is(e, registry.ErrNotFound) {
 		t.Fatal("publishing key downloaded review files", e)
 	}
 	grant(false)

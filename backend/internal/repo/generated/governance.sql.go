@@ -8,6 +8,7 @@ package generated
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -27,6 +28,17 @@ ON CONFLICT (open_id) DO UPDATE SET is_admin=true, revision=platform_profiles.re
 func (q *Queries) BootstrapPlatformAdmin(ctx context.Context, openID string) error {
 	_, err := q.db.Exec(ctx, bootstrapPlatformAdmin, openID)
 	return err
+}
+
+const countCapabilityDownloads = `-- name: CountCapabilityDownloads :one
+SELECT count(*)::bigint FROM audit_log WHERE action='download' AND target_id=$1
+`
+
+func (q *Queries) CountCapabilityDownloads(ctx context.Context, targetID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countCapabilityDownloads, targetID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const getCapability = `-- name: GetCapability :one
@@ -131,8 +143,62 @@ func (q *Queries) IsPlatformAdmin(ctx context.Context, openID string) (bool, err
 	return exists, err
 }
 
+const listCapabilityDownloaders = `-- name: ListCapabilityDownloaders :many
+SELECT l.actor_open_id, COALESCE(MAX(u.display_name), '')::text AS display_name,
+    count(*)::bigint AS downloads, MAX(l.created_at)::timestamptz AS last_downloaded_at,
+    (array_agg(l.detail->>'version_id' ORDER BY l.created_at DESC))[1]::text AS last_version_id
+FROM audit_log l
+LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=l.actor_open_id
+LEFT JOIN users u ON u.id=a.user_id
+WHERE l.action='download' AND l.target_id=$1
+GROUP BY l.actor_open_id
+ORDER BY last_downloaded_at DESC, l.actor_open_id
+LIMIT $3 OFFSET $2
+`
+
+type ListCapabilityDownloadersParams struct {
+	TargetID   string `json:"target_id"`
+	PageOffset int32  `json:"page_offset"`
+	PageLimit  int32  `json:"page_limit"`
+}
+
+type ListCapabilityDownloadersRow struct {
+	ActorOpenID      string    `json:"actor_open_id"`
+	DisplayName      string    `json:"display_name"`
+	Downloads        int64     `json:"downloads"`
+	LastDownloadedAt time.Time `json:"last_downloaded_at"`
+	LastVersionID    string    `json:"last_version_id"`
+}
+
+func (q *Queries) ListCapabilityDownloaders(ctx context.Context, arg ListCapabilityDownloadersParams) ([]ListCapabilityDownloadersRow, error) {
+	rows, err := q.db.Query(ctx, listCapabilityDownloaders, arg.TargetID, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCapabilityDownloadersRow{}
+	for rows.Next() {
+		var i ListCapabilityDownloadersRow
+		if err := rows.Scan(
+			&i.ActorOpenID,
+			&i.DisplayName,
+			&i.Downloads,
+			&i.LastDownloadedAt,
+			&i.LastVersionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCatalogCapabilities = `-- name: ListCatalogCapabilities :many
-SELECT c.id, c.slug, c.type, c.name, c.description, c.owner_open_id, c.department, c.status, c.visibility, c.current_version_id, c.draft_version_id, c.revision, c.created_at, c.updated_at, c.is_live, c.published_metadata, c.review_reason, c.department_id, v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name
+SELECT c.id, c.slug, c.type, c.name, c.description, c.owner_open_id, c.department, c.status, c.visibility, c.current_version_id, c.draft_version_id, c.revision, c.created_at, c.updated_at, c.is_live, c.published_metadata, c.review_reason, c.department_id, v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name,
+    (SELECT count(*) FROM audit_log l WHERE l.action='download' AND l.target_id=c.id::text)::bigint AS download_count
 FROM capabilities c JOIN capability_versions v ON v.id=c.current_version_id
 LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=c.owner_open_id
 LEFT JOIN users u ON u.id=a.user_id
@@ -167,6 +233,7 @@ type ListCatalogCapabilitiesRow struct {
 	Capability       Capability `json:"capability"`
 	PublishedVersion string     `json:"published_version"`
 	PublisherName    string     `json:"publisher_name"`
+	DownloadCount    int64      `json:"download_count"`
 }
 
 func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCapabilitiesParams) ([]ListCatalogCapabilitiesRow, error) {
@@ -210,7 +277,39 @@ func (q *Queries) ListCatalogCapabilities(ctx context.Context, arg ListCatalogCa
 			&i.Capability.DepartmentID,
 			&i.PublishedVersion,
 			&i.PublisherName,
+			&i.DownloadCount,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDownloaderAccounts = `-- name: ListDownloaderAccounts :many
+SELECT DISTINCT a.user_id, l.actor_open_id
+FROM audit_log l JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=l.actor_open_id
+WHERE l.action='download' AND l.target_id=$1
+`
+
+type ListDownloaderAccountsRow struct {
+	UserID      uuid.UUID `json:"user_id"`
+	ActorOpenID string    `json:"actor_open_id"`
+}
+
+func (q *Queries) ListDownloaderAccounts(ctx context.Context, targetID string) ([]ListDownloaderAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listDownloaderAccounts, targetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDownloaderAccountsRow{}
+	for rows.Next() {
+		var i ListDownloaderAccountsRow
+		if err := rows.Scan(&i.UserID, &i.ActorOpenID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -265,6 +364,32 @@ func (q *Queries) ListGovernanceAudit(ctx context.Context, arg ListGovernanceAud
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotifyReviewers = `-- name: ListNotifyReviewers :many
+SELECT p.open_id FROM platform_profiles p
+JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=p.open_id
+WHERE p.is_admin OR p.is_reviewer
+`
+
+func (q *Queries) ListNotifyReviewers(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, listNotifyReviewers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var open_id string
+		if err := rows.Scan(&open_id); err != nil {
+			return nil, err
+		}
+		items = append(items, open_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

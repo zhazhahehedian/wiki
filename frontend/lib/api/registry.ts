@@ -17,6 +17,7 @@ export interface Capability {
   published_version?: string;
   publisher_name?: string;
   draft_version_id?: string;
+  download_count?: number;
   revision: number;
   created_at: string;
   updated_at: string;
@@ -39,6 +40,13 @@ export interface CapabilityVersion {
   skill_manifest?: { name: string; description: string };
   published_at?: string;
   has_bundle: boolean;
+  bundle_sha256?: string;
+  bundle_size?: number;
+  bundle_findings?: BundleFinding[];
+}
+export interface BundleFinding {
+  path: string;
+  kind: "env_file" | "private_key" | "credential_file" | "vcs_directory" | "cloud_access_key" | "api_token";
 }
 export interface CapabilityDetail extends Capability {
   versions: CapabilityVersion[];
@@ -263,5 +271,19 @@ export interface Reviewer {
 export function listReviewers(offset: number, signal?: AbortSignal) {
   return apiFetch<{ items: Reviewer[]; has_more: boolean }>(
     `/api/v1/governance/reviewers?limit=24&offset=${offset}`, { signal },
+  );
+}
+
+export interface Downloader {
+  open_id: string;
+  display_name: string;
+  downloads: number;
+  last_downloaded_at: string;
+  last_version_id: string;
+}
+export function listDownloaders(slug: string, offset: number, signal?: AbortSignal) {
+  return apiFetch<{ items: Downloader[]; has_more: boolean }>(
+    `${root}/${encodeURIComponent(slug)}/downloads?limit=50&offset=${offset}`,
+    { signal },
   );
 }

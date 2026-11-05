@@ -12,6 +12,7 @@ import {
   capabilityBundleURL,
 } from "@/lib/api/registry";
 import { primaryClass, secondaryClass, RegistryError } from "./registry-shared";
+import { BundleFacts, McpPackageFiles } from "./mcp-package";
 
 export function MarketSkillFiles({
   slug,
@@ -148,6 +149,7 @@ export function MarketDetailPage({ slug }: { slug: string }) {
           <p className="mt-2 break-all text-sm text-zinc-500">
             {item.slug}
             {version && ` · v${version.version}`}
+            {` · ${item.download_count ?? 0} 次下载`}
           </p>
         </div>
         {version?.has_bundle && (
@@ -190,6 +192,8 @@ export function MarketDetailPage({ slug }: { slug: string }) {
                 <p className="text-xs text-zinc-500">
                   {version?.mcp_transport} · {version?.mcp_auth_scheme}
                 </p>
+                <BundleFacts version={version} />
+                {version?.has_bundle && <McpPackageFiles key={version.id} slug={slug} version={version.id} />}
                 {version?.tools?.map((tool) => (
                   <details key={tool.name} className="rounded-lg border p-4">
                     <summary className="cursor-pointer text-sm font-medium">
@@ -216,12 +220,12 @@ export function MarketDetailPage({ slug }: { slug: string }) {
             <section className="rounded-xl border border-zinc-200 bg-white p-5">
               <h2 className="font-semibold">如何使用 MCP</h2>
               {version?.has_bundle && <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm leading-6 text-zinc-600">
-                <li>下载当前版本的 MCP 程序包并解压。</li>
-                <li>阅读包内 README，安装依赖，填写自己的配置并按启动说明运行。</li>
-                <li>在 MCP 客户端配置启动命令（stdio）或运行后的 HTTP 服务地址。</li>
+                <li>下载当前版本的 MCP 程序包（ZIP，无需解压）。</li>
+                <li>在 WorkBuddy、ChatGPT 等支持导入的客户端中选择该 ZIP 安装。</li>
+                <li>按包内 README 填写自己的账号或配置；有新版本时会收到飞书通知。</li>
               </ol>}
               {version?.mcp_endpoint && <p className="mt-4 text-sm leading-6 text-zinc-600">也可使用发布者提供的 Endpoint 连接远程服务；需要凭证时联系服务提供者。</p>}
-              <p className="mt-4 text-xs leading-6 text-zinc-500">平台提供程序包存储与下载，运行环境由发布者或使用者自行准备。</p>
+              <p className="mt-4 text-xs leading-6 text-zinc-500">平台提供程序包审核、存储与下载，不托管运行。</p>
             </section>
           )}
           {skill && (

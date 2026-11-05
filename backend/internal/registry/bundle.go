@@ -32,22 +32,44 @@ func validBundlePath(name string) bool {
 	return true
 }
 
+// bundleTree applies the shared Skill/MCP archive path rules: portable
+// relative paths, no case-insensitive duplicates, and no file used as a directory.
+type bundleTree map[string]bool // folded path -> is directory
+
+func (t bundleTree) add(name string, directory bool) bool {
+	folded := strings.ToLower(name)
+	if _, duplicate := t[folded]; duplicate || !validBundlePath(name) {
+		return false
+	}
+	t[folded] = directory
+	return true
+}
+
+func (t bundleTree) consistent() bool {
+	for name := range t {
+		for i := strings.LastIndex(name, "/"); i >= 0; i = strings.LastIndex(name[:i], "/") {
+			if directory, exists := t[name[:i]]; exists && !directory {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // PackSkill never extracts archives or executes attachments. Paths are portable
 // relative paths beneath one skill directory, with a required root SKILL.md.
 func PackSkill(slug string, files []File) ([]byte, error) {
 	if !slugPattern.MatchString(slug) || len(slug) > 80 || len(files) == 0 || len(files) > MaxBundleFiles {
 		return nil, ErrInvalid
 	}
-	seen := map[string]bool{}
+	tree := bundleTree{}
 	size := 0
 	hasSkill := false
 	for _, f := range files {
 		name := f.Name
-		folded := strings.ToLower(name)
-		if !validBundlePath(name) || seen[folded] {
+		if !tree.add(name, false) {
 			return nil, ErrInvalid
 		}
-		seen[folded] = true
 		size += len(f.Data)
 		if size > MaxBundleBytes {
 			return nil, ErrInvalid
@@ -59,15 +81,8 @@ func PackSkill(slug string, files []File) ([]byte, error) {
 			}
 		}
 	}
-	if !hasSkill {
+	if !hasSkill || !tree.consistent() {
 		return nil, ErrInvalid
-	}
-	for name := range seen {
-		for other := range seen {
-			if strings.HasPrefix(other, name+"/") {
-				return nil, ErrInvalid
-			}
-		}
 	}
 	var out bytes.Buffer
 	z := zip.NewWriter(&out)

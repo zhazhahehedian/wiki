@@ -61,9 +61,12 @@ type CapabilityVersion struct {
 	McpTransport   *string            `json:"mcp_transport"`
 	McpAuthScheme  *string            `json:"mcp_auth_scheme"`
 	Tools          []byte             `json:"tools"`
-	SkillBundleKey *string            `json:"skill_bundle_key"`
+	BundleKey      *string            `json:"bundle_key"`
 	SkillManifest  []byte             `json:"skill_manifest"`
 	PublishedAt    pgtype.Timestamptz `json:"published_at"`
+	BundleSha256   *string            `json:"bundle_sha256"`
+	BundleSize     *int64             `json:"bundle_size"`
+	BundleFindings []byte             `json:"bundle_findings"`
 }
 
 type Conversation struct {

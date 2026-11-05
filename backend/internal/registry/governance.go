@@ -263,3 +263,34 @@ func (s *Service) Reviewers(ctx context.Context, user string, f Filter) (Reviewe
 	}
 	return s.repo.Reviewers(ctx, user, f)
 }
+
+// Event is a committed governance transition that may notify people. It is
+// enqueued in the same transaction as the transition and audit entry.
+type Event struct {
+	Action            string `json:"action"`
+	CapabilityID      string `json:"capability_id"`
+	Slug              string `json:"slug"`
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	VersionID         string `json:"version_id"`
+	Version           string `json:"version"`
+	ActorOpenID       string `json:"actor_open_id"`
+	OwnerOpenID       string `json:"owner_open_id"`
+	Reason            string `json:"reason,omitempty"`
+	PreviousVersionID string `json:"previous_version_id,omitempty"`
+}
+
+// Notifiable reports whether an action produces notifications.
+func Notifiable(action string) bool {
+	switch action {
+	case "submit", "approve", "force-publish", "reject", "offline":
+		return true
+	}
+	return false
+}
+
+// Account links a Feishu open_id to the platform user used for permission checks.
+type Account struct {
+	UserID string
+	OpenID string
+}

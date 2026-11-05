@@ -3,6 +3,8 @@ package registry
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,7 @@ type Service struct {
 	repo      Repository
 	storage   ports.ObjectStorage
 	directory SelectionValidator
+	previews  chan struct{}
 }
 
 type SelectionValidator interface {
@@ -33,7 +36,7 @@ type SelectionValidator interface {
 }
 
 func New(repo Repository, storage ports.ObjectStorage) *Service {
-	return &Service{repo: repo, storage: storage}
+	return &Service{repo: repo, storage: storage, previews: make(chan struct{}, maxConcurrentPreviews)}
 }
 func (s *Service) WithDirectory(d SelectionValidator) *Service { s.directory = d; return s }
 func (s *Service) validateDirectory(ctx context.Context, user string, r *SaveRequest) error {
@@ -148,7 +151,7 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 				if previous.ID != old.DraftVersionID || previous.PublishedAt != nil {
 					return Detail{}, ErrConflict
 				}
-				v.BundleKey = previous.BundleKey
+				v.BundleKey, v.BundleSHA256, v.BundleSize, v.BundleFindings = previous.BundleKey, previous.BundleSHA256, previous.BundleSize, previous.BundleFindings
 			}
 		}
 	} else if r.Revision != 0 {
@@ -161,13 +164,14 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 		if r.Type == "skill" {
 			bundle, err = PackSkill(r.Slug, files)
 		} else {
-			bundle, err = validateMCPBundle(ctx, files)
+			bundle, v.BundleFindings, err = validateMCPBundle(ctx, files)
 		}
 		if err != nil {
 			return Detail{}, err
 		}
-		uploaded = "registry/" + uuid.NewString() + ".zip"
-		v.BundleKey = uploaded
+		uploaded = bundlePrefix + uuid.NewString() + ".zip"
+		sum := sha256.Sum256(bundle)
+		v.BundleKey, v.BundleSHA256, v.BundleSize = uploaded, hex.EncodeToString(sum[:]), int64(len(bundle))
 		if err = s.storage.Put(ctx, uploaded, bytes.NewReader(bundle), int64(len(bundle)), "application/zip"); err != nil {
 			s.cleanupBundle(uploaded)
 			return Detail{}, fmt.Errorf("store capability bundle: %w", err)
@@ -214,15 +218,34 @@ func (s *Service) cleanupBundle(key string) {
 		}
 	}
 }
-func (s *Service) Download(ctx context.Context, user, slug, versionID string) (io.ReadCloser, error) {
+
+func (s *Service) Downloaders(ctx context.Context, user, slug string, f Filter) (DownloaderPage, error) {
+	if f.Limit < 1 || f.Limit > 100 || f.Offset < 0 || f.Offset > 100000 {
+		return DownloaderPage{}, ErrInvalid
+	}
+	return s.repo.Downloaders(ctx, user, slug, f)
+}
+
+// Download returns the version metadata with its bundle. Every successful
+// download is audited; an audit failure withholds the bundle.
+func (s *Service) Download(ctx context.Context, user, slug, versionID string) (Version, io.ReadCloser, error) {
 	detail, e := s.Get(ctx, user, slug)
 	if e != nil {
-		return nil, e
+		return Version{}, nil, e
 	}
 	for _, v := range detail.Versions {
-		if v.ID == versionID && v.BundleKey != "" {
-			return s.storage.Get(ctx, v.BundleKey)
+		if v.ID != versionID || v.BundleKey == "" {
+			continue
 		}
+		body, e := s.storage.Get(ctx, v.BundleKey)
+		if e != nil {
+			return Version{}, nil, e
+		}
+		if e = s.repo.RecordDownload(ctx, user, detail.ID, v.ID); e != nil {
+			_ = body.Close()
+			return Version{}, nil, e
+		}
+		return v, body, nil
 	}
-	return nil, ErrNotFound
+	return Version{}, nil, ErrNotFound
 }

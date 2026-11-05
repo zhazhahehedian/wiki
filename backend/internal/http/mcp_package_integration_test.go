@@ -6,11 +6,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pressly/goose/v3"
@@ -108,13 +111,23 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 		return get()
 	}
 	bundlePath := func(id string) string { return path + "/versions/" + id + "/bundle" }
+	downloads := 0
+	digests := true // false once 0022 has been rolled back: digests are not recomputed
 	download := func(role, id string, want []byte) {
 		t.Helper()
 		w := call(role, "GET", bundlePath(id), nil, nil, false)
 		check(w, 200)
-		if !bytes.Equal(w.Body.Bytes(), want) || w.Header().Get("Content-Type") != "application/zip" || w.Header().Get("Content-Disposition") != "attachment; filename=downloadable-mcp.zip" || w.Header().Get("Cache-Control") != "no-store" {
+		if !bytes.Equal(w.Body.Bytes(), want) || w.Header().Get("Content-Type") != "application/zip" || !strings.HasPrefix(w.Header().Get("Content-Disposition"), "attachment; filename=downloadable-mcp-") || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("download changed bytes or headers")
 		}
+		sum := sha256.Sum256(want)
+		if digests && (w.Header().Get("X-Bundle-SHA256") != hex.EncodeToString(sum[:]) || w.Header().Get("Content-Length") != strconv.Itoa(len(want))) {
+			t.Fatal("download digest headers missing", w.Header(), len(want))
+		}
+		if !digests && w.Header().Get("X-Bundle-SHA256") != "" {
+			t.Fatal("digest reported after it was dropped")
+		}
+		downloads++
 	}
 	input := registry.SaveRequest{Slug: "downloadable-mcp", Type: "mcp", Name: "可下载的 MCP", Description: "下载 ZIP 后按 README 运行。", Visibility: "allowlist", Allowlist: []string{"ou_" + users["consumer"]}, Version: "1.0.0", MCPTransport: "stdio", MCPAuthScheme: "none"}
 	// Exercise HTTP upload above the old Skill 10 MiB ceiling.
@@ -134,7 +147,18 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 	for _, role := range []string{"consumer", "outsider", "reviewer"} {
 		check(call(role, "GET", bundlePath(v1), nil, nil, false), 404)
 	}
-	check(call("owner", "GET", path+"/versions/"+v1+"/files", nil, nil, false), 404)
+	// Owners preview the package listing; draft files stay hidden from everyone else.
+	w = call("owner", "GET", path+"/versions/"+v1+"/files", nil, nil, false)
+	check(w, 200)
+	var listing struct {
+		Files []registry.ReviewFile `json:"files"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listing); err != nil || len(listing.Files) != 1 || listing.Files[0].Name != "README.md" || listing.Files[0].Content != nil {
+		t.Fatal("package listing wrong or inlined an oversized file", err, listing)
+	}
+	for _, role := range []string{"consumer", "outsider"} {
+		check(call(role, "GET", path+"/versions/"+v1+"/files", nil, nil, false), 404)
+	}
 	input.Revision = d.Revision
 	check(call("consumer", "PUT", path, input, files, true), 404)
 	// Keep a package for metadata-only edits, replace it only on explicit upload.
@@ -164,7 +188,7 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 	d = act("owner", "submit", d)
 	download("reviewer", v1, small)
 	check(call("consumer", "GET", bundlePath(v1), nil, nil, false), 404)
-	if body, err := s.Download(registry.WithCredentialID(ctx, "fixture"), users["reviewer"], input.Slug, v1); !errors.Is(err, registry.ErrNotFound) {
+	if _, body, err := s.Download(registry.WithCredentialID(ctx, "fixture"), users["reviewer"], input.Slug, v1); !errors.Is(err, registry.ErrNotFound) {
 		if body != nil {
 			body.Close()
 		}
@@ -201,19 +225,24 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 	download("outsider", v2, newBytes)
 	d = act("owner", "offline", d)
 	check(call("outsider", "GET", bundlePath(v2), nil, nil, false), 404)
+	// 0022 rolls back (derived digest data only); 0021 still refuses to drop packages.
 	if err := goose.DownToContext(ctx, db, ".", 20); err == nil {
 		t.Fatal("destructive MCP package rollback allowed")
 	}
 	if version, err := goose.GetDBVersionContext(ctx, db); err != nil || version != 21 {
 		t.Fatal("failed rollback changed migration version", version, err)
 	}
+	if err := goose.UpContext(ctx, db, "."); err != nil {
+		t.Fatal(err)
+	}
+	digests = false
 	download("owner", v2, newBytes)
 	// Leave a published package fixture for the opt-in browser acceptance.
 	d = act("owner", "submit", d)
 	d = act("reviewer", "approve", d)
 	_ = d
 	// Verify storage reads also work through the service without public bucket URLs.
-	r, err := s.Download(ctx, users["owner"], input.Slug, v2)
+	_, r, err := s.Download(ctx, users["owner"], input.Slug, v2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,5 +251,19 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 	if err != nil || !bytes.Equal(b, newBytes) {
 		t.Fatal("stored package changed", err)
 	}
-	t.Log("MCP package: migration up/down, guarded rollback, >10MiB HTTP upload, exact download, draft/reviewer/consumer/API isolation, replacement/version publication, visibility and offline passed")
+	var audited int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE action = 'download' AND target_id = $1`, d.ID).Scan(&audited); err != nil || audited != downloads+1 {
+		t.Fatal("downloads not audited", audited, downloads, err)
+	}
+	check(call("consumer", "GET", path+"/downloads", nil, nil, false), 404)
+	w = call("owner", "GET", path+"/downloads", nil, nil, false)
+	check(w, 200)
+	var downloaders registry.DownloaderPage
+	if err := json.Unmarshal(w.Body.Bytes(), &downloaders); err != nil || len(downloaders.Items) == 0 {
+		t.Fatal("owner cannot list downloaders", err)
+	}
+	if detail := get(); detail.DownloadCount != int64(audited) {
+		t.Fatal("detail download count mismatch", detail.DownloadCount, audited)
+	}
+	t.Log("MCP package: migration up/down, 0022 rollback with guarded 0021, download audit and digest, >10MiB HTTP upload, exact download, draft/reviewer/consumer/API isolation, replacement/version publication, visibility and offline passed")
 }

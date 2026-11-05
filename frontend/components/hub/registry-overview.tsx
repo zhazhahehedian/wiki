@@ -291,6 +291,7 @@ export function RegistryOverview({ mine = false }: { mine?: boolean }) {
                         title={item.publisher_name || item.owner_open_id}
                       >
                         发布者 · {item.publisher_name || item.owner_open_id}
+                        {` · ${item.download_count ?? 0} 次下载`}
                       </p>
                     )}
                   </Link>

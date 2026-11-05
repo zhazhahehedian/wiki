@@ -14,13 +14,24 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/repo/generated"
 )
 
+// EventSink enqueues a governance event inside the transition transaction.
+type EventSink func(ctx context.Context, tx pgx.Tx, event registry.Event) error
+
 type RegistryRepository struct {
-	pool *pgxpool.Pool
-	q    *generated.Queries
+	pool   *pgxpool.Pool
+	q      *generated.Queries
+	events EventSink
 }
 
 func NewRegistryRepository(pool *pgxpool.Pool) *RegistryRepository {
-	return &RegistryRepository{pool, generated.New(pool)}
+	return &RegistryRepository{pool: pool, q: generated.New(pool)}
+}
+
+// WithEvents enables governance notifications. Without a sink, transitions
+// behave exactly as before.
+func (r *RegistryRepository) WithEvents(sink EventSink) *RegistryRepository {
+	r.events = sink
+	return r
 }
 func registryError(e error) error {
 	if errors.Is(e, pgx.ErrNoRows) {
@@ -67,6 +78,12 @@ func nullableText(v string) *string {
 	}
 	return &v
 }
+func nullableSize(v int64) *int64 {
+	if v <= 0 {
+		return nil
+	}
+	return &v
+}
 func registryDetail(ctx context.Context, q *generated.Queries, c generated.Capability) (registry.Detail, error) {
 	result := registry.Detail{Capability: capability(c), Versions: []registry.Version{}}
 	rows, e := q.ListCapabilityVersions(ctx, c.ID)
@@ -74,7 +91,15 @@ func registryDetail(ctx context.Context, q *generated.Queries, c generated.Capab
 		return result, e
 	}
 	for _, v := range rows {
-		ver := registry.Version{ID: v.ID.String(), Version: v.Version, Changelog: v.Changelog, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt, MCPEndpoint: textValue(v.McpEndpoint), MCPTransport: textValue(v.McpTransport), MCPAuthScheme: textValue(v.McpAuthScheme), BundleKey: textValue(v.SkillBundleKey), HasBundle: v.SkillBundleKey != nil, SkillManifest: json.RawMessage(v.SkillManifest)}
+		ver := registry.Version{ID: v.ID.String(), Version: v.Version, Changelog: v.Changelog, CreatedBy: v.CreatedBy, CreatedAt: v.CreatedAt, MCPEndpoint: textValue(v.McpEndpoint), MCPTransport: textValue(v.McpTransport), MCPAuthScheme: textValue(v.McpAuthScheme), BundleKey: textValue(v.BundleKey), HasBundle: v.BundleKey != nil, BundleSHA256: textValue(v.BundleSha256), SkillManifest: json.RawMessage(v.SkillManifest)}
+		if v.BundleSize != nil {
+			ver.BundleSize = *v.BundleSize
+		}
+		if len(v.BundleFindings) > 0 {
+			if e = json.Unmarshal(v.BundleFindings, &ver.BundleFindings); e != nil {
+				return result, e
+			}
+		}
 		if v.PublishedAt.Valid {
 			t := v.PublishedAt.Time
 			ver.PublishedAt = &t
@@ -177,11 +202,17 @@ func (r *RegistryRepository) Save(ctx context.Context, owner, slug string, input
 			return result, e
 		}
 	}
+	var findings []byte
+	if v.BundleFindings != nil {
+		if findings, e = json.Marshal(v.BundleFindings); e != nil {
+			return result, e
+		}
+	}
 	var saved generated.CapabilityVersion
 	if existing == uuid.Nil {
-		saved, e = q.CreateCapabilityVersion(ctx, generated.CreateCapabilityVersionParams{CapabilityID: c.ID, Version: input.Version, Changelog: v.Changelog, CreatedBy: owner, McpEndpoint: nullableText(v.MCPEndpoint), McpTransport: nullableText(v.MCPTransport), McpAuthScheme: nullableText(v.MCPAuthScheme), Tools: tools, SkillBundleKey: nullableText(v.BundleKey), SkillManifest: v.SkillManifest})
+		saved, e = q.CreateCapabilityVersion(ctx, generated.CreateCapabilityVersionParams{CapabilityID: c.ID, Version: input.Version, Changelog: v.Changelog, CreatedBy: owner, McpEndpoint: nullableText(v.MCPEndpoint), McpTransport: nullableText(v.MCPTransport), McpAuthScheme: nullableText(v.MCPAuthScheme), Tools: tools, BundleKey: nullableText(v.BundleKey), SkillManifest: v.SkillManifest, BundleSha256: nullableText(v.BundleSHA256), BundleSize: nullableSize(v.BundleSize), BundleFindings: findings})
 	} else {
-		saved, e = q.UpdateCapabilityVersion(ctx, generated.UpdateCapabilityVersionParams{ID: existing, Changelog: v.Changelog, McpEndpoint: nullableText(v.MCPEndpoint), McpTransport: nullableText(v.MCPTransport), McpAuthScheme: nullableText(v.MCPAuthScheme), Tools: tools, SkillBundleKey: nullableText(v.BundleKey), SkillManifest: v.SkillManifest})
+		saved, e = q.UpdateCapabilityVersion(ctx, generated.UpdateCapabilityVersionParams{ID: existing, Changelog: v.Changelog, McpEndpoint: nullableText(v.MCPEndpoint), McpTransport: nullableText(v.MCPTransport), McpAuthScheme: nullableText(v.MCPAuthScheme), Tools: tools, BundleKey: nullableText(v.BundleKey), SkillManifest: v.SkillManifest, BundleSha256: nullableText(v.BundleSHA256), BundleSize: nullableSize(v.BundleSize), BundleFindings: findings})
 	}
 	if e != nil {
 		return result, e
@@ -221,4 +252,67 @@ func (r *RegistryRepository) Save(ctx context.Context, owner, slug string, input
 }
 func (r *RegistryRepository) BundleReferenced(ctx context.Context, key string) (bool, error) {
 	return r.q.RegistryBundleReferenced(ctx, &key)
+}
+
+// RecordDownload audits a bundle download after the caller's access check.
+func (r *RegistryRepository) RecordDownload(ctx context.Context, user, capabilityID, versionID string) error {
+	who, e := identity(ctx, r.q, user)
+	if e != nil {
+		return e
+	}
+	return writeAudit(ctx, r.q, who.OpenID, "download", "capability", capabilityID, map[string]any{"version_id": versionID})
+}
+
+// Downloaders lists audited downloads; only the owner or an admin may see who downloaded.
+func (r *RegistryRepository) Downloaders(ctx context.Context, user, slug string, f registry.Filter) (registry.DownloaderPage, error) {
+	who, e := identity(ctx, r.q, user)
+	if e != nil {
+		return registry.DownloaderPage{}, e
+	}
+	c, e := r.q.GetCapability(ctx, slug)
+	if e != nil {
+		return registry.DownloaderPage{}, registryError(e)
+	}
+	if !who.IsAdmin && who.OpenID != c.OwnerOpenID {
+		return registry.DownloaderPage{}, registry.ErrNotFound
+	}
+	rows, e := r.q.ListCapabilityDownloaders(ctx, generated.ListCapabilityDownloadersParams{TargetID: c.ID.String(), PageLimit: f.Limit + 1, PageOffset: f.Offset})
+	if e != nil {
+		return registry.DownloaderPage{}, e
+	}
+	page := registry.DownloaderPage{Items: []registry.Downloader{}, HasMore: len(rows) > int(f.Limit)}
+	if page.HasMore {
+		rows = rows[:f.Limit]
+	}
+	for _, row := range rows {
+		page.Items = append(page.Items, registry.Downloader{OpenID: row.ActorOpenID, DisplayName: row.DisplayName, Downloads: row.Downloads, LastDownloadedAt: row.LastDownloadedAt, LastVersionID: row.LastVersionID})
+	}
+	return page, nil
+}
+
+// NotifyReviewers returns everyone who may approve submissions.
+func (r *RegistryRepository) NotifyReviewers(ctx context.Context) ([]string, error) {
+	return r.q.ListNotifyReviewers(ctx)
+}
+
+// NotifyDownloaders returns past downloaders with their platform user IDs.
+func (r *RegistryRepository) NotifyDownloaders(ctx context.Context, capabilityID string) ([]registry.Account, error) {
+	rows, e := r.q.ListDownloaderAccounts(ctx, capabilityID)
+	if e != nil {
+		return nil, e
+	}
+	accounts := make([]registry.Account, 0, len(rows))
+	for _, row := range rows {
+		accounts = append(accounts, registry.Account{UserID: row.UserID.String(), OpenID: row.ActorOpenID})
+	}
+	return accounts, nil
+}
+
+// CanSeePublished applies the consumer projection used by the market.
+func (r *RegistryRepository) CanSeePublished(ctx context.Context, userID, slug string) (bool, error) {
+	_, e := r.Read(ctx, userID, slug, true)
+	if errors.Is(e, registry.ErrNotFound) || errors.Is(e, registry.ErrIdentity) {
+		return false, nil
+	}
+	return e == nil, e
 }

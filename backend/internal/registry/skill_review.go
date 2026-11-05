@@ -27,10 +27,10 @@ func (s *Service) Files(ctx context.Context, user, slug, versionID string) ([]Re
 	if e != nil {
 		return nil, e
 	}
-	if d.Type != "skill" {
-		return nil, ErrNotFound
-	}
 	for _, v := range d.Versions {
+		if v.ID == versionID && v.HasBundle && d.Type == "mcp" {
+			return s.mcpFiles(ctx, v)
+		}
 		if v.ID == versionID && v.HasBundle {
 			files, e := s.skillFiles(ctx, slug, v, false)
 			if e != nil {

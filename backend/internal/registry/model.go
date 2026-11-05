@@ -35,6 +35,7 @@ type Capability struct {
 	PublishedVersion string    `json:"published_version,omitempty"`
 	PublisherName    string    `json:"publisher_name,omitempty"`
 	DraftVersionID   string    `json:"draft_version_id,omitempty"`
+	DownloadCount    int64     `json:"download_count,omitempty"`
 	Revision         int64     `json:"revision"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
@@ -58,6 +59,10 @@ type Version struct {
 	BundleKey     string          `json:"-"`
 	PublishedAt   *time.Time      `json:"published_at,omitempty"`
 	HasBundle     bool            `json:"has_bundle"`
+	BundleSHA256  string          `json:"bundle_sha256,omitempty"`
+	BundleSize    int64           `json:"bundle_size,omitempty"`
+	// BundleFindings are upload-time review hints, never an approval gate.
+	BundleFindings []BundleFinding `json:"bundle_findings,omitempty"`
 }
 type Detail struct {
 	Capability
@@ -104,6 +109,7 @@ type Repository interface {
 	Get(context.Context, string, string) (Detail, error)
 	Save(context.Context, string, string, SaveRequest, Version) (Detail, error)
 	BundleReferenced(context.Context, string) (bool, error)
+	RecordDownload(ctx context.Context, user, capabilityID, versionID string) error
 	Identity(context.Context, string) (Identity, error)
 	Read(context.Context, string, string, bool) (Detail, error)
 	Catalog(context.Context, string, Filter) (Page, error)
@@ -114,4 +120,18 @@ type Repository interface {
 	SetDepartment(context.Context, string, string, DepartmentRequest) (Identity, error)
 	SetReviewer(context.Context, string, string, ReviewerRequest) (Identity, error)
 	Reviewers(context.Context, string, Filter) (ReviewerPage, error)
+	Downloaders(ctx context.Context, user, slug string, f Filter) (DownloaderPage, error)
+}
+
+// Downloader aggregates audited downloads per user for owners and admins.
+type Downloader struct {
+	OpenID           string    `json:"open_id"`
+	DisplayName      string    `json:"display_name"`
+	Downloads        int64     `json:"downloads"`
+	LastDownloadedAt time.Time `json:"last_downloaded_at"`
+	LastVersionID    string    `json:"last_version_id"`
+}
+type DownloaderPage struct {
+	Items   []Downloader `json:"items"`
+	HasMore bool         `json:"has_more"`
 }

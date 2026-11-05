@@ -105,14 +105,19 @@ it("does not expose template or download actions after access is denied", async 
 });
 
 it("offers a version-pinned MCP download and local running instructions without an endpoint", async () => {
-  vi.mocked(getCatalogCapability).mockResolvedValue({...detail, type:"mcp", versions:[{...detail.versions[0], mcp_transport:"stdio", mcp_auth_scheme:"none"}]});
+  vi.mocked(getCatalogCapability).mockResolvedValue({...detail, type:"mcp", versions:[{...detail.versions[0], mcp_transport:"stdio", mcp_auth_scheme:"none", bundle_size:2048, bundle_sha256:"a".repeat(64), bundle_findings:[{path:".env", kind:"env_file"}]}], download_count:3});
+  vi.mocked(getSkillFiles).mockResolvedValue({files:[{name:"pkg/README.md", size:20, content:"# 导入说明"}, {name:"pkg/server.js", size:10}]});
   mount();
+  expect(await screen.findByRole("heading", {name:"导入说明"})).toBeInTheDocument();
+  expect(screen.getByText(/3 次下载/)).toBeInTheDocument();
+  expect(screen.getByRole("note")).toHaveTextContent("环境变量文件");
+  expect(screen.getByText(/程序包 2\.0 KiB · SHA-256 a{64}/)).toBeInTheDocument();
   const link = await screen.findByRole("link", {name:"下载 MCP 程序包"});
   expect(link.getAttribute("href")).toContain("/weekly-report/versions/live/bundle");
   expect(screen.getByText("本版本通过程序包分发，下载后自行运行。")).toBeInTheDocument();
   expect(screen.getByRole("heading", {name:"如何使用 MCP"})).toBeInTheDocument();
   expect(screen.queryByRole("link", {name:"基于此创建"})).not.toBeInTheDocument();
-  expect(getSkillFiles).not.toHaveBeenCalled();
+  expect(getSkillFiles).toHaveBeenCalledWith("weekly-report", "live", expect.anything());
 });
 
 it("keeps remote MCP endpoints usable without showing an unavailable package download", async () => {

@@ -121,3 +121,21 @@ func (m *MinioClient) Delete(ctx context.Context, key string) error {
 	}
 	return nil
 }
+
+// ListOlder returns keys under prefix last modified before cutoff.
+func (m *MinioClient) ListOlder(ctx context.Context, prefix string, cutoff time.Time) ([]string, error) {
+	var keys []string
+	pages := s3.NewListObjectsV2Paginator(m.client, &s3.ListObjectsV2Input{Bucket: aws.String(m.cfg.Bucket), Prefix: aws.String(prefix)})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("s3 list %s: %w", prefix, err)
+		}
+		for _, object := range page.Contents {
+			if object.Key != nil && object.LastModified != nil && object.LastModified.Before(cutoff) {
+				keys = append(keys, *object.Key)
+			}
+		}
+	}
+	return keys, nil
+}

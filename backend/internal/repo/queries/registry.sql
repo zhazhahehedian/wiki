@@ -31,12 +31,14 @@ UPDATE capabilities SET draft_version_id=$2 WHERE id=$1 RETURNING *;
 
 -- name: CreateCapabilityVersion :one
 INSERT INTO capability_versions (capability_id, version, changelog, created_by,
-    mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, skill_bundle_key, skill_manifest)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;
+    mcp_endpoint, mcp_transport, mcp_auth_scheme, tools, bundle_key, skill_manifest,
+    bundle_sha256, bundle_size, bundle_findings)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *;
 
 -- name: UpdateCapabilityVersion :one
 UPDATE capability_versions SET changelog=$2, mcp_endpoint=$3, mcp_transport=$4,
-    mcp_auth_scheme=$5, tools=$6, skill_bundle_key=$7, skill_manifest=$8
+    mcp_auth_scheme=$5, tools=$6, bundle_key=$7, skill_manifest=$8,
+    bundle_sha256=$9, bundle_size=$10, bundle_findings=$11
 WHERE id=$1 RETURNING *;
 
 -- name: ListCapabilityVersions :many
@@ -52,4 +54,4 @@ INSERT INTO capability_allowlist(capability_id,open_id) VALUES ($1,$2);
 SELECT open_id FROM capability_allowlist WHERE capability_id=$1 ORDER BY open_id;
 
 -- name: RegistryBundleReferenced :one
-SELECT EXISTS(SELECT 1 FROM capability_versions WHERE skill_bundle_key = $1);
+SELECT EXISTS(SELECT 1 FROM capability_versions WHERE bundle_key = $1);

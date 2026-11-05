@@ -199,6 +199,7 @@ function AuditLog() {
     edit: "编辑草稿",
     set_department: "维护可信部门",
     set_reviewer: "变更审核资格",
+    download: "下载程序包",
   };
   return (
     <div className="space-y-6">

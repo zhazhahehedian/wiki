@@ -2,7 +2,9 @@ package http
 
 import (
 	"encoding/json"
+	"mime"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -60,7 +62,7 @@ func newRouter(h Handlers) http.Handler {
 				r.Post("/skill-builder/turn", h.SkillBuilder.Turn)
 			}
 		})
-		r = r.With(middleware.Timeout(time.Minute))
+		r = r.With(requestTimeout)
 
 		if h.Publishing != nil && h.Registry != nil {
 			r.Route("/open/capabilities", func(r chi.Router) {
@@ -152,6 +154,7 @@ func newRouter(h Handlers) http.Handler {
 					r.Post("/capabilities/{slug}/"+action, h.Registry.Action(action))
 				}
 				r.Get("/capabilities/{slug}/versions/{versionID}/files", h.Registry.Files)
+				r.Get("/capabilities/{slug}/downloads", h.Registry.Downloaders)
 				r.Get("/capabilities", h.Registry.List)
 				r.Post("/capabilities", h.Registry.Save)
 				r.Get("/capabilities/{slug}", h.Registry.Get)
@@ -166,6 +169,30 @@ func newRouter(h Handlers) http.Handler {
 	})
 
 	return r
+}
+
+// TransferTimeout covers bundle and document transfers on slow office links;
+// MCP packages are expected to stay well below the 100 MiB hard limit.
+const TransferTimeout = 3 * time.Minute
+
+func requestTimeout(next http.Handler) http.Handler {
+	normal := middleware.Timeout(time.Minute)(next)
+	transfer := middleware.Timeout(TransferTimeout)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isTransfer(r) {
+			transfer.ServeHTTP(w, r)
+			return
+		}
+		normal.ServeHTTP(w, r)
+	})
+}
+
+func isTransfer(r *http.Request) bool {
+	if r.Method == http.MethodGet {
+		return strings.HasSuffix(r.URL.Path, "/bundle")
+	}
+	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return media == "multipart/form-data"
 }
 
 func healthz(w http.ResponseWriter, r *http.Request) {

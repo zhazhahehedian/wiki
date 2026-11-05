@@ -16,6 +16,8 @@ import {
   RegistryError,
   visibilityLabels,
 } from "./registry-shared";
+import { BundleFacts, McpPackageFiles } from "./mcp-package";
+import { Downloaders } from "./downloaders";
 
 export function CapabilityDetailPage({ slug }: { slug: string }) {
   const query = useQuery({
@@ -99,7 +101,9 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
                     <Download className="size-4" />下载 MCP 程序包
                   </a>
                 )}
-                <p className="text-xs leading-6 text-zinc-500">{version?.has_bundle ? "程序包属于当前选中的版本。下载后按包内 README 安装依赖、配置并运行，平台不托管运行。" : "此版本仅提供远程服务地址，未上传程序包。"}</p>
+                <p className="text-xs leading-6 text-zinc-500">{version?.has_bundle ? "程序包属于当前选中的版本。使用者下载 ZIP 后交给支持导入的客户端（如 WorkBuddy）安装，平台不托管运行。" : "此版本仅提供远程服务地址，未上传程序包。"}</p>
+                <BundleFacts version={version} />
+                {version?.has_bundle && <McpPackageFiles key={version.id} slug={slug} version={version.id} />}
                 {version?.tools?.length ? (
                   version.tools.map((tool) => (
                     <details
@@ -231,6 +235,7 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
           </section>
         </div>
         <aside className="min-w-0 space-y-6">
+          {(item.is_owner || item.is_admin) && <Downloaders item={item} />}
           {item.type === "mcp" && (
             <section className="rounded-xl border border-zinc-200 bg-white p-5">
               <h2 className="font-semibold">接入信息</h2>

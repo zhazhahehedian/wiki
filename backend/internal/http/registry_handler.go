@@ -14,9 +14,17 @@ import (
 	"github.com/zenith-wang/it-wiki/backend/internal/registry"
 )
 
-type RegistryHandler struct{ service *registry.Service }
+// MaxConcurrentUploads bounds memory: each multipart save buffers its bundle.
+const MaxConcurrentUploads = 4
 
-func NewRegistryHandler(s *registry.Service) *RegistryHandler { return &RegistryHandler{s} }
+type RegistryHandler struct {
+	service *registry.Service
+	uploads chan struct{}
+}
+
+func NewRegistryHandler(s *registry.Service) *RegistryHandler {
+	return &RegistryHandler{service: s, uploads: make(chan struct{}, MaxConcurrentUploads)}
+}
 func registryHTTPError(w http.ResponseWriter, r *http.Request, e error) {
 	if directoryHTTPError(w, r, e) {
 		return
@@ -108,6 +116,12 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 		registryHTTPError(w, r, registry.ErrInvalid)
 		return
 	}
+	select {
+	case h.uploads <- struct{}{}:
+		defer func() { <-h.uploads }()
+	case <-r.Context().Done():
+		return
+	}
 	var input registry.SaveRequest
 	hasMetadata := false
 	files := []registry.File{}
@@ -184,14 +198,21 @@ func (h *RegistryHandler) Download(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, e := h.service.Download(r.Context(), user, chi.URLParam(r, "slug"), chi.URLParam(r, "versionID"))
+	slug := chi.URLParam(r, "slug")
+	version, body, e := h.service.Download(r.Context(), user, slug, chi.URLParam(r, "versionID"))
 	if e != nil {
 		registryHTTPError(w, r, e)
 		return
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": chi.URLParam(r, "slug") + ".zip"}))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": slug + "-" + version.Version + ".zip"}))
+	if version.BundleSize > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(version.BundleSize, 10))
+	}
+	if version.BundleSHA256 != "" {
+		w.Header().Set("X-Bundle-SHA256", version.BundleSHA256)
+	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.Copy(w, body)
 }

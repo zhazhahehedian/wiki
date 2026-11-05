@@ -31,7 +31,7 @@ func mcpZIP(t *testing.T, names ...string) []byte {
 
 func TestMCPBundleValidation(t *testing.T) {
 	valid := mcpZIP(t, "project/", "project/README.md", "project/server.py")
-	out, err := validateMCPBundle(context.Background(), []File{{"release.ZIP", valid}})
+	out, _, err := validateMCPBundle(context.Background(), []File{{"release.ZIP", valid}})
 	if err != nil || !bytes.Equal(out, valid) {
 		t.Fatal("ZIP bytes changed", err)
 	}
@@ -41,13 +41,13 @@ func TestMCPBundleValidation(t *testing.T) {
 		{"dup/", "dup/"}, {"a//b"}, {"a/../b"},
 	} {
 		t.Run(fmt.Sprint(names), func(t *testing.T) {
-			if _, err := validateMCPBundle(context.Background(), []File{{"release.zip", mcpZIP(t, names...)}}); !errors.Is(err, ErrMCPPackage) {
+			if _, _, err := validateMCPBundle(context.Background(), []File{{"release.zip", mcpZIP(t, names...)}}); !errors.Is(err, ErrMCPPackage) {
 				t.Fatal("unsafe archive accepted", err)
 			}
 		})
 	}
 	for _, files := range [][]File{nil, {{"not.zip", []byte("not a zip")}}, {{"a.tar", valid}}, {{"../a.zip", valid}}, {{"a.zip", valid}, {"b.zip", valid}}, {{"large.zip", make([]byte, MaxMCPBundleBytes+1)}}} {
-		if _, err := validateMCPBundle(context.Background(), files); !errors.Is(err, ErrMCPPackage) {
+		if _, _, err := validateMCPBundle(context.Background(), files); !errors.Is(err, ErrMCPPackage) {
 			t.Fatal("invalid files accepted", err)
 		}
 	}
@@ -59,7 +59,7 @@ func TestMCPBundleValidation(t *testing.T) {
 		w, _ := z.CreateHeader(h)
 		_, _ = w.Write([]byte("target"))
 		_ = z.Close()
-		if _, err := validateMCPBundle(context.Background(), []File{{"a.zip", b.Bytes()}}); !errors.Is(err, ErrMCPPackage) {
+		if _, _, err := validateMCPBundle(context.Background(), []File{{"a.zip", b.Bytes()}}); !errors.Is(err, ErrMCPPackage) {
 			t.Fatal("special file accepted", err)
 		}
 	}
@@ -72,7 +72,7 @@ func TestMCPBundleValidation(t *testing.T) {
 		z := zip.NewWriter(&b)
 		_, _ = z.CreateRaw(h)
 		_ = z.Close()
-		if _, err := validateMCPBundle(context.Background(), []File{{"a.zip", b.Bytes()}}); !errors.Is(err, ErrMCPPackage) {
+		if _, _, err := validateMCPBundle(context.Background(), []File{{"a.zip", b.Bytes()}}); !errors.Is(err, ErrMCPPackage) {
 			t.Fatal("invalid ZIP metadata accepted", err)
 		}
 	}
@@ -80,19 +80,19 @@ func TestMCPBundleValidation(t *testing.T) {
 	for i := range names {
 		names[i] = fmt.Sprintf("file-%d", i)
 	}
-	if _, err := validateMCPBundle(context.Background(), []File{{"a.zip", mcpZIP(t, names...)}}); !errors.Is(err, ErrMCPPackage) {
+	if _, _, err := validateMCPBundle(context.Background(), []File{{"a.zip", mcpZIP(t, names...)}}); !errors.Is(err, ErrMCPPackage) {
 		t.Fatal("entry limit ignored")
 	}
 	corrupt := bytes.Clone(valid)
 	// Corrupt a central-directory checksum while leaving structure readable.
 	i := bytes.LastIndex(corrupt, []byte{'P', 'K', 1, 2})
 	corrupt[i+16] ^= 1
-	if _, err := validateMCPBundle(context.Background(), []File{{"a.zip", corrupt}}); !errors.Is(err, ErrMCPPackage) {
+	if _, _, err := validateMCPBundle(context.Background(), []File{{"a.zip", corrupt}}); !errors.Is(err, ErrMCPPackage) {
 		t.Fatal("CRC corruption accepted", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := validateMCPBundle(ctx, []File{{"a.zip", valid}}); !errors.Is(err, context.Canceled) {
+	if _, _, err := validateMCPBundle(ctx, []File{{"a.zip", valid}}); !errors.Is(err, context.Canceled) {
 		t.Fatal("ignored cancellation", err)
 	}
 }
@@ -130,5 +130,49 @@ func TestMCPPackageSaveFailures(t *testing.T) {
 				t.Fatalf("unsafe package save: %v %+v", err, storage)
 			}
 		})
+	}
+}
+
+func TestMCPBundleFindingsFlagButDoNotBlock(t *testing.T) {
+	var b bytes.Buffer
+	z := zip.NewWriter(&b)
+	for name, content := range map[string]string{
+		"README.md":            "# demo",
+		".env":                 "TOKEN=x",
+		".env.example":         "TOKEN=",
+		"config/server.pem":    "cert",
+		"src/client.js":        "const key = 'sk-" + "abcdefghijklmnopqrstuvwxyz0123456789';",
+		"keys/deploy":          "-----BEGIN OPENSSH PRIVATE KEY-----\n",
+		"docs/usage.md":        "no secrets here",
+		".git/config":          "[core]",
+		"src/aliyun/client.go": "id := \"LTAI" + "5tAbCdEfGhIjKlMn\"",
+	} {
+		w, err := z.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(content))
+	}
+	if err := z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, findings, err := validateMCPBundle(context.Background(), []File{{"a.zip", b.Bytes()}})
+	if err != nil {
+		t.Fatal("findings must not block upload", err)
+	}
+	got := map[string]string{}
+	for _, f := range findings {
+		got[f.Path] = f.Kind
+	}
+	want := map[string]string{".env": "env_file", "config/server.pem": "private_key", "src/client.js": "api_token", "keys/deploy": "private_key", ".git/config": "vcs_directory", "src/aliyun/client.go": "cloud_access_key"}
+	for path, kind := range want {
+		if got[path] != kind {
+			t.Errorf("%s: got %q, want %q", path, got[path], kind)
+		}
+	}
+	for _, clean := range []string{"README.md", ".env.example", "docs/usage.md"} {
+		if _, flagged := got[clean]; flagged {
+			t.Errorf("%s falsely flagged", clean)
+		}
 	}
 }

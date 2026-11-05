@@ -37,6 +37,15 @@
 
 本轮没有对公司业务库、MinIO、真实账号权限作改动。模型出网、K1 真实知识写入等既有环境问题不因本批功能而宣称解决。
 
+## 公司电脑 review 后补充（未提交前请看）
+
+按用户确认继续在公司电脑开发：上传/下载 3 分钟超时、并发上传上限、迁移 0022（`bundle_key` 更名、包 SHA-256/大小、上传疑似凭证扫描）、下载审计与校验头、MCP 包 README/文件预览、下载次数与下载记录、飞书消息通知（默认关闭，配置见 [飞书消息通知](../feishu-notifications.md)）、MinIO 孤儿包定期清理、Skill/MCP ZIP 规则合并；删除未接入的 K2 飞书文档加载与旧 source 领域代码（约 2000 行，需要时从 git 历史 `4ecaf52` 恢复）；前端 `shadcn` 移至 devDependencies。设计见 [MCP 分发补充](../superpowers/specs/2026-11-05-mcp-package-distribution.md)。
+
+- 0022 与全部注册/治理/MCP 包/通知集成已在公司电脑 Docker 一次性 PostgreSQL 18（pgvector 0.8.2）与本地 MinIO 上通过，见[隔离验证](../verification/2026-11-05-company-hardening/README.md)；业务库与公司 MinIO 仍未改动。
+- 0022 down 只删除可推导的校验与扫描数据；之后 0021 的原有守卫照常生效。
+- 飞书通知只做过模拟上游单元测试；开启前需启用机器人能力与 `im:message:send_as_bot`，并用真实账号验收。
+- 公司反向代理需允许约 100 MiB 请求体与不少于 3 分钟的读写超时。
+
 ## 未包含的本机原有工作
 
 `deploy/offline/`、`deploy/README.md`、`docs/deploy-debug-feishu.md` 和 `backend/internal/http/auth_handler_test.go` 的原有离线部署/内网 HTTP 排错改动不属于这次功能批次，保留在原电脑工作区，未随本次提交上传。公司已有部署目录与配置应继续保留；不要因为 GitHub 中没有这些本地文件就删除公司文件。私有配置、凭证、缓存及离线镜像包不进入本次交付。

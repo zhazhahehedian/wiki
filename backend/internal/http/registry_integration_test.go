@@ -151,7 +151,7 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 	defer func() {
 		c, done := context.WithTimeout(context.Background(), 20*time.Second)
 		defer done()
-		rows, err := pool.Query(c, `SELECT skill_bundle_key FROM capability_versions WHERE skill_bundle_key IS NOT NULL`)
+		rows, err := pool.Query(c, `SELECT bundle_key FROM capability_versions WHERE bundle_key IS NOT NULL`)
 		if err != nil {
 			t.Error(err)
 			return
@@ -177,6 +177,7 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 		users := verifyGovernanceIntegration(t, pool, service, repository, alice, bob)
 		verifyReviewerIntegration(t, db, pool, service, repository, users)
 		verifyMCPPackageIntegration(t, db, service, users)
+		verifyGovernanceEvents(t, service, repository, users)
 		if os.Getenv("REGISTRY_BROWSER_CHECK") == "1" {
 			model := verifySkillBuilderIntegration(t, pool, service, alice, bob)
 			runRegistryBrowserFixture(t, service, model, users)
@@ -345,6 +346,7 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 	governanceUsers := verifyGovernanceIntegration(t, pool, service, repository, alice, bob)
 	verifyReviewerIntegration(t, db, pool, service, repository, governanceUsers)
 	verifyMCPPackageIntegration(t, db, service, governanceUsers)
+	verifyGovernanceEvents(t, service, repository, governanceUsers)
 	model := verifySkillBuilderIntegration(t, pool, service, alice, bob)
 	if os.Getenv("REGISTRY_BROWSER_CHECK") == "1" {
 		runRegistryBrowserFixture(t, service, model, governanceUsers)

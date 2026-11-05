@@ -16,7 +16,7 @@
 |---|---|
 | A 骨架、B 注册草稿、C 治理、游乐场、Skill 创建 | 已实现并合入 main |
 | 独立审核员与授权管理 | 2026-11-05 已实现并验证：全平台 MCP / Skill 审核、允许自审、管理员授予/撤销、角色与审核人可见；纳入本批代码交付，尚未部署，见[验证记录](docs/verification/2026-11-05-reviewer-authorization/README.md) |
-| MCP 程序包分发 | 2026-11-05 已实现并验证：ZIP 上传、按版本授权下载、无需预部署 Endpoint；浏览器上传→审核→使用者下载通过。含迁移 0021，纳入本批代码交付，尚未部署，见[验证记录](docs/verification/2026-11-05-mcp-packages/README.md) |
+| MCP 程序包分发 | 2026-11-05 已实现并验证：ZIP 上传、按版本授权下载、无需预部署 Endpoint；浏览器上传→审核→使用者下载通过。含迁移 0021；公司电脑 review 后追加 0022（包 SHA-256/大小、疑似凭证扫描）、包内容预览、下载审计与统计、飞书消息通知（默认关闭）、3 分钟传输超时、孤儿包清理；已在公司电脑 Docker 隔离 PostgreSQL 18 + MinIO 验证（含 0022 回退与通知 River 全链路），通知待真实账号验收，见[验证记录](docs/verification/2026-11-05-company-hardening/README.md)；尚未部署，见[验证记录](docs/verification/2026-11-05-mcp-packages/README.md) |
 | 内部能力市场（D11） | 已实现，已推送 main |
 | K1 知识服务 | 主体、百炼/DeepSeek 适配与部署配置已实现；隔离真实模型评测通过，正式站点已启动，生产知识写入验收待完成；见 [2026-10-27 发布说明](docs/releases/2026-10-27-directory-publishing-deployment.md) |
 | D 凭证保险箱与机器发现、E 健康检查、K2 飞书云文档同步、K3 用户委托 | 待实施 |
@@ -49,6 +49,7 @@
 | MCP 上传、下载与自行运行 | [程序包分发设计](docs/superpowers/specs/2026-11-05-mcp-package-distribution.md)、[隔离验证](docs/verification/2026-11-05-mcp-packages/README.md) |
 | 凭证、发现、健康检查（待实施） | 能力中心 spec §8–10 |
 | 知识服务 API 与配置 | [knowledge-api.md](docs/knowledge-api.md) |
+| 飞书消息通知（审核、上线、新版本、下线） | [应用配置与规则](docs/feishu-notifications.md) |
 | 飞书组织选择、发布 API 与账号凭证 | [设计](docs/superpowers/specs/2026-10-27-directory-and-publishing-api.md)、[飞书权限与重新授权](docs/feishu-directory-setup.md)、[发布 API](docs/publishing-api.md) |
 | Skill 创建 / 市场 | [Skill 创建计划](docs/superpowers/plans/2026-09-06-skill-builder-plan.md)、[市场计划](docs/superpowers/plans/2026-09-19-skill-market-plan.md) |
 | 飞书认证与排错、K2 同步参考 | [飞书部署排错](docs/deploy-debug-feishu.md)、[飞书设计](docs/superpowers/specs/2026-08-08-feishu-auth-and-source-ingestion-design.md)、[同步恢复设计](docs/superpowers/specs/2026-08-09-feishu-sync-liveness-design.md) |

@@ -36,7 +36,8 @@ AND (sqlc.arg(search)::text='' OR strpos(lower(name || ' ' || description || ' '
 ORDER BY updated_at, id LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
 -- name: ListCatalogCapabilities :many
-SELECT sqlc.embed(c), v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name
+SELECT sqlc.embed(c), v.version AS published_version, COALESCE(u.display_name, '')::text AS publisher_name,
+    (SELECT count(*) FROM audit_log l WHERE l.action='download' AND l.target_id=c.id::text)::bigint AS download_count
 FROM capabilities c JOIN capability_versions v ON v.id=c.current_version_id
 LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=c.owner_open_id
 LEFT JOIN users u ON u.id=a.user_id
@@ -123,3 +124,28 @@ LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
 -- name: SetCapabilityVisibility :one
 UPDATE capabilities SET visibility=$2,department=$3,department_id=$4 WHERE id=$1 RETURNING *;
+
+-- name: CountCapabilityDownloads :one
+SELECT count(*)::bigint FROM audit_log WHERE action='download' AND target_id=$1;
+
+-- name: ListCapabilityDownloaders :many
+SELECT l.actor_open_id, COALESCE(MAX(u.display_name), '')::text AS display_name,
+    count(*)::bigint AS downloads, MAX(l.created_at)::timestamptz AS last_downloaded_at,
+    (array_agg(l.detail->>'version_id' ORDER BY l.created_at DESC))[1]::text AS last_version_id
+FROM audit_log l
+LEFT JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=l.actor_open_id
+LEFT JOIN users u ON u.id=a.user_id
+WHERE l.action='download' AND l.target_id=sqlc.arg(target_id)
+GROUP BY l.actor_open_id
+ORDER BY last_downloaded_at DESC, l.actor_open_id
+LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
+
+-- name: ListDownloaderAccounts :many
+SELECT DISTINCT a.user_id, l.actor_open_id
+FROM audit_log l JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=l.actor_open_id
+WHERE l.action='download' AND l.target_id=$1;
+
+-- name: ListNotifyReviewers :many
+SELECT p.open_id FROM platform_profiles p
+JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=p.open_id
+WHERE p.is_admin OR p.is_reviewer;

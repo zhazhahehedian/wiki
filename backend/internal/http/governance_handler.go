@@ -205,3 +205,20 @@ func (h *RegistryHandler) Reviewers(w http.ResponseWriter, r *http.Request) {
 	}
 	WriteJSON(w, 200, out)
 }
+func (h *RegistryHandler) Downloaders(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	f, e := registryFilter(r)
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	page, e := h.service.Downloaders(r.Context(), user, chi.URLParam(r, "slug"), f)
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	WriteJSON(w, 200, page)
+}

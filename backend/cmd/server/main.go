@@ -91,10 +91,31 @@ func run() error {
 	}
 	modelService := playground.New(repo.NewPlaygroundRepository(pool), protector, modelClient)
 	registryRepo := repo.NewRegistryRepository(pool)
+	notifier, err := buildNotifier(cfg, pool, registryRepo)
+	if err != nil {
+		return err
+	}
+	if notifier == nil {
+		fmt.Println("[server] Feishu notifications disabled: FEISHU_NOTIFY_ENABLED is not true")
+	} else {
+		notifyCtx, notifyCancel := context.WithCancel(context.Background())
+		defer notifyCancel()
+		if err := notifier.Start(notifyCtx); err != nil {
+			return fmt.Errorf("notification worker: %w", err)
+		}
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			_ = notifier.Stop(ctx)
+		}()
+	}
 	if err := registryRepo.BootstrapAdmin(bootCtx, cfg.BootstrapAdminFeishuOpenID); err != nil {
 		return fmt.Errorf("bootstrap platform admin: %w", err)
 	}
 	registryService := registry.New(registryRepo, mc)
+	sweepCtx, sweepCancel := context.WithCancel(context.Background())
+	defer sweepCancel()
+	go registryService.RunOrphanSweeper(sweepCtx, mc, 6*time.Hour)
 	var directoryHandler *httpx.DirectoryHandler
 	var directoryService *directory.Service
 	if authService != nil {

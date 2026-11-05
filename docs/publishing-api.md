@@ -68,7 +68,7 @@ curl --fail-with-body "$BASE/api/v1/open/capabilities" \
 
 单个 ZIP，不超过 100 MiB、2000 条目、解压后 500 MiB；不接受加密、符号链接、特殊文件、重复或不安全路径。ZIP 原样存储，不解压执行；建议附 README、依赖、启动方式及配置示例。`stdio` 的 Endpoint 必须为空、鉴权为 `none`；`streamable-http` 支持可选 Endpoint（已部署地址）。程序包和 Endpoint 至少提供一个，远程 MCP 也可同时上传程序包。
 
-同一未发布版本不带 `files` 时保留原包；新上传替换该版本完整包。新版本不继承旧包，需要重新上传或提供远程 Endpoint。审核发布后，授权用户在市场详情点击「下载 MCP 程序包」，或请求上述 bundle 接口；响应是 ZIP 附件，不返回 MinIO 公开地址。下载仍校验版本、可见范围和上线状态，平台不托管运行环境。
+同一未发布版本不带 `files` 时保留原包；新上传替换该版本完整包。新版本不继承旧包，需要重新上传或提供远程 Endpoint。审核发布后，授权用户在市场详情点击「下载 MCP 程序包」，或请求上述 bundle 接口；响应是 ZIP 附件，文件名为 `{slug}-{version}.zip`；0022 之后上传的包附带 `Content-Length` 与 `X-Bundle-SHA256`，详情中的版本也返回 `bundle_size`、`bundle_sha256`，以及上传扫描的 `bundle_findings`（疑似凭证文件或内容，仅提示，不阻止上传）；旧包不补算。每次成功下载写入审计（action `download`）。不返回 MinIO 公开地址。上传与下载请求超时为 3 分钟，其余接口 1 分钟。下载仍校验版本、可见范围和上线状态，平台不托管运行环境。
 
 ## 上传 Skill
 

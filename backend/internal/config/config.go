@@ -27,6 +27,8 @@ type Config struct {
 	FeishuRedirectURL  string
 	FeishuTenantKey    string
 	OAuthEncryptionKey string
+	// FeishuNotify sends governance messages as the app's bot.
+	FeishuNotify bool
 
 	SessionCookieSecure bool
 	SessionTTL          time.Duration
@@ -88,6 +90,13 @@ func LoadPlatform() (*Config, error) {
 			return nil, fmt.Errorf("missing required env var: %s", key)
 		}
 	}
+	feishuNotify, err := strconv.ParseBool(getEnv("FEISHU_NOTIFY_ENABLED", "false"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid FEISHU_NOTIFY_ENABLED: %w", err)
+	}
+	if feishuNotify && !feishuEnabled {
+		return nil, fmt.Errorf("FEISHU_NOTIFY_ENABLED requires the Feishu app configuration")
+	}
 	cfg := &Config{
 		Port:             getEnv("PORT", "8080"),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
@@ -106,6 +115,7 @@ func LoadPlatform() (*Config, error) {
 		FeishuRedirectURL:  feishuValues["FEISHU_REDIRECT_URL"],
 		FeishuTenantKey:    feishuValues["FEISHU_TENANT_KEY"],
 		OAuthEncryptionKey: feishuValues["OAUTH_ENCRYPTION_KEY"],
+		FeishuNotify:       feishuNotify,
 
 		SessionCookieSecure: sessionCookieSecure,
 		SessionTTL:          sessionTTL,

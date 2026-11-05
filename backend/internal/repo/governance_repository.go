@@ -117,6 +117,10 @@ func (r *RegistryRepository) Read(ctx context.Context, user, slug string, public
 	if e != nil {
 		return registry.Detail{}, e
 	}
+	downloads, e := q.CountCapabilityDownloads(ctx, c.ID.String())
+	if e != nil {
+		return registry.Detail{}, e
+	}
 	if manage {
 		d.IsOwner = who.OpenID == c.OwnerOpenID
 		d.IsAdmin = who.IsAdmin
@@ -138,6 +142,7 @@ func (r *RegistryRepository) Read(ctx context.Context, user, slug string, public
 		d.Allowlist = nil
 		d.Published = nil
 	}
+	d.DownloadCount = downloads
 	return d, tx.Commit(ctx)
 }
 func (r *RegistryRepository) Catalog(ctx context.Context, user string, f registry.Filter) (registry.Page, error) {
@@ -160,6 +165,7 @@ func (r *RegistryRepository) Catalog(ctx context.Context, user string, f registr
 		}
 		v.PublishedVersion = c.PublishedVersion
 		v.PublisherName = c.PublisherName
+		v.DownloadCount = c.DownloadCount
 		page.Items = append(page.Items, v)
 	}
 	return page, nil
@@ -353,6 +359,17 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 	result, e = registryDetail(ctx, q, c)
 	if e != nil {
 		return result, e
+	}
+	if r.events != nil && registry.Notifiable(action) {
+		event := registry.Event{Action: action, CapabilityID: c.ID.String(), Slug: c.Slug, Name: c.Name, Type: c.Type, VersionID: input.VersionID, ActorOpenID: who.OpenID, OwnerOpenID: c.OwnerOpenID, Reason: input.Reason, PreviousVersionID: before["current_version_id"].(string)}
+		for _, v := range result.Versions {
+			if v.ID == input.VersionID {
+				event.Version = v.Version
+			}
+		}
+		if e = r.events(ctx, tx, event); e != nil {
+			return result, e
+		}
 	}
 	result.IsOwner = owner
 	result.IsAdmin = who.IsAdmin
