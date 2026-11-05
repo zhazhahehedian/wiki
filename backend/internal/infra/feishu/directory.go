@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"github.com/zenith-wang/it-wiki/backend/internal/directory"
-	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
 func directoryQuery(page string) url.Values {
@@ -24,12 +23,12 @@ func directoryError(e error) error {
 		return e
 	}
 	// Provider bodies and tokens are deliberately never included in public errors.
-	var source *ports.SourceLoadError
+	var source *APIError
 	if errors.As(e, &source) {
 		switch source.Code {
-		case ports.SourceLoadForbidden:
+		case APIForbidden:
 			return directory.ErrAuthorization
-		case ports.SourceLoadNotFound:
+		case APINotFound:
 			return directory.ErrInvalid
 		}
 	}

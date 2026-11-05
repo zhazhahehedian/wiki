@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
 func TestClientRetriesRateLimitUsingRetryAfterWithoutLeakingToken(t *testing.T) {
@@ -64,8 +62,8 @@ func TestClientReturnsStableRedactedErrorAfterBoundedRetries(t *testing.T) {
 
 	client := NewClient(ClientConfig{BaseURL: server.URL, MaxRetries: 1, Wait: noWait}, server.Client())
 	err := client.Get(context.Background(), token, "/resource", nil, &struct{}{})
-	var loadErr *ports.SourceLoadError
-	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+	var loadErr *APIError
+	if !errors.As(err, &loadErr) || loadErr.Code != APIFailed {
 		t.Fatalf("Get() error = %#v", err)
 	}
 	if attempts != 2 {
@@ -76,7 +74,7 @@ func TestClientReturnsStableRedactedErrorAfterBoundedRetries(t *testing.T) {
 	}
 }
 
-func TestClientRejectsMalformedEnvelopeAndPageTokenLoop(t *testing.T) {
+func TestClientRejectsMalformedEnvelope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"code":0,"data":{}} trailing`))
 	}))
@@ -84,23 +82,16 @@ func TestClientRejectsMalformedEnvelopeAndPageTokenLoop(t *testing.T) {
 
 	client := NewClient(ClientConfig{BaseURL: server.URL}, server.Client())
 	err := client.Get(context.Background(), "token", "/resource", nil, &struct{}{})
-	var loadErr *ports.SourceLoadError
-	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadMalformed {
+	var loadErr *APIError
+	if !errors.As(err, &loadErr) || loadErr.Code != APIMalformed {
 		t.Fatalf("Get() error = %#v", err)
 	}
 
-	tracker := newPageTokenTracker()
-	if err := tracker.Advance("next"); err != nil {
-		t.Fatalf("first Advance() error = %v", err)
-	}
-	if err := tracker.Advance("next"); !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadMalformed {
-		t.Fatalf("repeated Advance() error = %#v", err)
-	}
 }
 
-func TestSourceLoadErrorRedactsUntrustedCauseFromJSON(t *testing.T) {
+func TestAPIErrorRedactsUntrustedCauseFromJSON(t *testing.T) {
 	const secret = "provider-copied-secret-token"
-	err := ports.NewSourceLoadError(ports.SourceLoadAPIError, leakingError{Secret: secret})
+	err := newAPIError(APIFailed, leakingError{Secret: secret})
 	encoded, marshalErr := json.Marshal(err)
 	if marshalErr != nil {
 		t.Fatal(marshalErr)
@@ -119,8 +110,8 @@ func TestClientRedactsTransportErrorFromUnwrapChain(t *testing.T) {
 
 	err := client.Get(context.Background(), "transport-secret", "/resource", nil, &struct{}{})
 	assertRedactedErrorChain(t, err, secret, "transport-secret")
-	var loadErr *ports.SourceLoadError
-	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+	var loadErr *APIError
+	if !errors.As(err, &loadErr) || loadErr.Code != APIFailed {
 		t.Fatalf("Get() error = %#v", err)
 	}
 }
@@ -139,8 +130,8 @@ func TestClientRedactsBodyReadErrorFromUnwrapChain(t *testing.T) {
 
 	err := client.Get(context.Background(), "token", "/resource", nil, &struct{}{})
 	assertRedactedErrorChain(t, err, secret)
-	var loadErr *ports.SourceLoadError
-	if !errors.As(err, &loadErr) || loadErr.Code != ports.SourceLoadAPIError {
+	var loadErr *APIError
+	if !errors.As(err, &loadErr) || loadErr.Code != APIFailed {
 		t.Fatalf("Get() error = %#v", err)
 	}
 }
@@ -229,64 +220,6 @@ func TestClientHonorsHTTPDateRetryAfterAndPerRequestTimeout(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Get() error = %v, want deadline exceeded", err)
 	}
-}
-
-func TestResourceBudgetTighteningPreservesUsageAndNeverLoosens(t *testing.T) {
-	budget := newResourceBudget(ResourceLimits{MaxPages: 10, MaxBlocks: 10, MaxRows: 10, MaxOutputBytes: 100, MaxDepth: 10})
-	if err := budget.Page(); err != nil {
-		t.Fatal(err)
-	}
-	if err := budget.Blocks(1); err != nil {
-		t.Fatal(err)
-	}
-	if err := budget.Rows(2); err != nil {
-		t.Fatal(err)
-	}
-	if err := budget.Bytes(10); err != nil {
-		t.Fatal(err)
-	}
-	if err := budget.RetainedBytes(10); err != nil {
-		t.Fatal(err)
-	}
-	ctx := contextWithResourceBudget(context.Background(), budget)
-
-	got, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 2, MaxBlocks: 1, MaxRows: 3, MaxOutputBytes: 20, MaxDepth: 2})
-	if err != nil || got != budget {
-		t.Fatalf("tighten = %p, %v; want existing %p", got, err, budget)
-	}
-	if budget.pages != 1 || budget.blocks != 1 || budget.rows != 2 || budget.bytes != 10 || budget.retainedBytes != 10 {
-		t.Fatalf("usage reset during tightening: %+v", budget)
-	}
-	if _, err := resourceBudgetFromContext(ctx, ResourceLimits{MaxPages: 100, MaxBlocks: 100, MaxRows: 100, MaxOutputBytes: 1000, MaxDepth: 100}); err != nil {
-		t.Fatal(err)
-	}
-	if budget.limits.MaxPages != 2 || budget.limits.MaxRows != 3 || budget.limits.MaxOutputBytes != 20 || budget.limits.MaxDepth != 2 {
-		t.Fatalf("limits loosened: %+v", budget.limits)
-	}
-
-	if err := budget.Page(); err != nil {
-		t.Fatal(err)
-	}
-	assertLoadCode(t, budget.Page(), ports.SourceLoadTooLarge)
-	assertLoadCode(t, budget.Blocks(1), ports.SourceLoadTooLarge)
-	assertLoadCode(t, budget.Rows(2), ports.SourceLoadTooLarge)
-	assertLoadCode(t, budget.CheckAdditionalOutputBytes(11), ports.SourceLoadTooLarge)
-	if err := budget.Bytes(10); err != nil {
-		t.Fatal(err)
-	}
-	assertLoadCode(t, budget.Bytes(1), ports.SourceLoadTooLarge)
-	if err := budget.RetainedBytes(10); err != nil {
-		t.Fatal(err)
-	}
-	assertLoadCode(t, budget.RetainedBytes(1), ports.SourceLoadTooLarge)
-	assertLoadCode(t, budget.Depth(3), ports.SourceLoadTooLarge)
-
-	overused := newResourceBudget(ResourceLimits{MaxRows: 10})
-	if err := overused.Rows(2); err != nil {
-		t.Fatal(err)
-	}
-	_, err = resourceBudgetFromContext(contextWithResourceBudget(context.Background(), overused), ResourceLimits{MaxRows: 1})
-	assertLoadCode(t, err, ports.SourceLoadTooLarge)
 }
 
 type leakingError struct{ Secret string }

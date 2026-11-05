@@ -11,8 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
 const (
@@ -20,45 +18,62 @@ const (
 	defaultMaxRetries     = 3
 	defaultMaxRetryDelay  = 30 * time.Second
 	maxAPIResponseBytes   = 8 << 20
-	defaultMaxPages       = 1_000
-	defaultMaxBlocks      = 100_000
-	defaultMaxRows        = 10_000
-	defaultMaxOutputBytes = 10 << 20
-	defaultMaxDepth       = 100
 )
 
 type WaitFunc func(context.Context, time.Duration) error
 
 type ClientConfig struct {
-	BaseURL        string
-	Timeout        time.Duration
-	MaxRetries     int
-	Backoff        time.Duration
-	MaxRetryDelay  time.Duration
-	Wait           WaitFunc
-	Now            func() time.Time
-	ResourceLimits ResourceLimits
-}
-
-type ResourceLimits struct {
-	MaxPages       int
-	MaxBlocks      int
-	MaxRows        int
-	MaxOutputBytes int
-	MaxDepth       int
+	BaseURL       string
+	Timeout       time.Duration
+	MaxRetries    int
+	Backoff       time.Duration
+	MaxRetryDelay time.Duration
+	Wait          WaitFunc
+	Now           func() time.Time
 }
 
 type Client struct {
-	baseURL        string
-	timeout        time.Duration
-	maxRetries     int
-	backoff        time.Duration
-	maxRetryDelay  time.Duration
-	wait           WaitFunc
-	now            func() time.Time
-	http           *http.Client
-	resourceLimits ResourceLimits
+	baseURL       string
+	timeout       time.Duration
+	maxRetries    int
+	backoff       time.Duration
+	maxRetryDelay time.Duration
+	wait          WaitFunc
+	now           func() time.Time
+	http          *http.Client
 }
+
+type APIErrorCode string
+
+const (
+	APIForbidden APIErrorCode = "resource_forbidden"
+	APINotFound  APIErrorCode = "resource_not_found"
+	APIRateLimit APIErrorCode = "rate_limited"
+	APIFailed    APIErrorCode = "api_error"
+	APITooLarge  APIErrorCode = "too_large"
+	APIMalformed APIErrorCode = "malformed"
+)
+
+// APIError deliberately keeps only cancellation causes so provider bodies and
+// transport details never reach responses or logs.
+type APIError struct {
+	Code  APIErrorCode `json:"code"`
+	cause error
+}
+
+func newAPIError(code APIErrorCode, cause error) *APIError {
+	var safe error
+	switch {
+	case errors.Is(cause, context.Canceled):
+		safe = context.Canceled
+	case errors.Is(cause, context.DeadlineExceeded):
+		safe = context.DeadlineExceeded
+	}
+	return &APIError{Code: code, cause: safe}
+}
+
+func (e *APIError) Error() string { return "Feishu API request failed" }
+func (e *APIError) Unwrap() error { return e.cause }
 
 type apiEnvelope struct {
 	Code int             `json:"code"`
@@ -94,123 +109,11 @@ func NewClient(config ClientConfig, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	config.ResourceLimits = withDefaultResourceLimits(config.ResourceLimits)
 	return &Client{
 		baseURL: strings.TrimRight(config.BaseURL, "/"), timeout: config.Timeout,
 		maxRetries: config.MaxRetries, backoff: config.Backoff, maxRetryDelay: config.MaxRetryDelay, wait: config.Wait,
-		now: config.Now, http: httpClient, resourceLimits: config.ResourceLimits,
+		now: config.Now, http: httpClient,
 	}
-}
-
-func withDefaultResourceLimits(limits ResourceLimits) ResourceLimits {
-	if limits.MaxPages <= 0 {
-		limits.MaxPages = defaultMaxPages
-	}
-	if limits.MaxBlocks <= 0 {
-		limits.MaxBlocks = defaultMaxBlocks
-	}
-	if limits.MaxRows <= 0 {
-		limits.MaxRows = defaultMaxRows
-	}
-	if limits.MaxOutputBytes <= 0 {
-		limits.MaxOutputBytes = defaultMaxOutputBytes
-	}
-	if limits.MaxDepth <= 0 {
-		limits.MaxDepth = defaultMaxDepth
-	}
-	return limits
-}
-
-type resourceBudget struct {
-	limits ResourceLimits
-	pages  int
-	blocks int
-	rows   int
-	bytes  int
-	// Retained provider data and final output are separate monotonic dimensions
-	// governed by the same configured byte ceiling.
-	retainedBytes int
-}
-
-func newResourceBudget(limits ResourceLimits) *resourceBudget {
-	return &resourceBudget{limits: withDefaultResourceLimits(limits)}
-}
-
-type resourceBudgetContextKey struct{}
-
-func resourceBudgetFromContext(ctx context.Context, limits ResourceLimits) (*resourceBudget, error) {
-	if budget, ok := ctx.Value(resourceBudgetContextKey{}).(*resourceBudget); ok && budget != nil {
-		if err := budget.tighten(limits); err != nil {
-			return nil, err
-		}
-		return budget, nil
-	}
-	return newResourceBudget(limits), nil
-}
-
-func contextWithResourceBudget(ctx context.Context, budget *resourceBudget) context.Context {
-	return context.WithValue(ctx, resourceBudgetContextKey{}, budget)
-}
-
-func (b *resourceBudget) consume(current *int, amount, maximum int) error {
-	if amount < 0 || *current > maximum-amount {
-		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
-	}
-	*current += amount
-	return nil
-}
-
-func (b *resourceBudget) tighten(limits ResourceLimits) error {
-	limits = withDefaultResourceLimits(limits)
-	b.limits.MaxPages = min(b.limits.MaxPages, limits.MaxPages)
-	b.limits.MaxBlocks = min(b.limits.MaxBlocks, limits.MaxBlocks)
-	b.limits.MaxRows = min(b.limits.MaxRows, limits.MaxRows)
-	b.limits.MaxOutputBytes = min(b.limits.MaxOutputBytes, limits.MaxOutputBytes)
-	b.limits.MaxDepth = min(b.limits.MaxDepth, limits.MaxDepth)
-	if b.pages > b.limits.MaxPages || b.blocks > b.limits.MaxBlocks || b.rows > b.limits.MaxRows || b.bytes > b.limits.MaxOutputBytes || b.retainedBytes > b.limits.MaxOutputBytes {
-		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
-	}
-	return nil
-}
-
-func (b *resourceBudget) Page() error { return b.consume(&b.pages, 1, b.limits.MaxPages) }
-func (b *resourceBudget) CheckPages(count int) error {
-	return b.checkAdditional(b.pages, count, b.limits.MaxPages)
-}
-func (b *resourceBudget) Blocks(count int) error {
-	return b.consume(&b.blocks, count, b.limits.MaxBlocks)
-}
-func (b *resourceBudget) Entities(count int) error { return b.Blocks(count) }
-func (b *resourceBudget) Rows(count int) error     { return b.consume(&b.rows, count, b.limits.MaxRows) }
-func (b *resourceBudget) CheckRows(count int) error {
-	return b.checkAdditional(b.rows, count, b.limits.MaxRows)
-}
-func (b *resourceBudget) Bytes(count int) error {
-	return b.consume(&b.bytes, count, b.limits.MaxOutputBytes)
-}
-func (b *resourceBudget) RetainedBytes(count int) error {
-	return b.consume(&b.retainedBytes, count, b.limits.MaxOutputBytes)
-}
-func (b *resourceBudget) CheckAdditionalRetainedBytes(total int) error {
-	return b.checkAdditional(b.retainedBytes, total, b.limits.MaxOutputBytes)
-}
-func (b *resourceBudget) checkAdditional(current, amount, maximum int) error {
-	if amount < 0 || current > maximum-amount {
-		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
-	}
-	return nil
-}
-func (b *resourceBudget) CheckAdditionalOutputBytes(total int) error {
-	if total < 0 || b.bytes > b.limits.MaxOutputBytes-total {
-		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
-	}
-	return nil
-}
-func (b *resourceBudget) Depth(depth int) error {
-	if depth > b.limits.MaxDepth {
-		return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
-	}
-	return nil
 }
 
 func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Values, out any) error {
@@ -223,7 +126,7 @@ func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Va
 		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
 		if err != nil {
 			cancel()
-			return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			return newAPIError(APIMalformed, nil)
 		}
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 		req.Header.Set("Accept", "application/json")
@@ -239,7 +142,7 @@ func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Va
 				}
 				continue
 			}
-			return ports.NewSourceLoadError(ports.SourceLoadAPIError, err)
+			return newAPIError(APIFailed, err)
 		}
 
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxAPIResponseBytes+1))
@@ -252,7 +155,7 @@ func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Va
 				}
 				continue
 			}
-			return ports.NewSourceLoadError(ports.SourceLoadAPIError, readErr)
+			return newAPIError(APIFailed, readErr)
 		}
 		if retryableStatus(resp.StatusCode) && attempt < c.maxRetries {
 			if err := c.wait(ctx, c.retryDelay(attempt, resp.Header.Get("Retry-After"))); err != nil {
@@ -263,28 +166,28 @@ func (c *Client) Get(ctx context.Context, accessToken, path string, query url.Va
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			var providerError apiEnvelope
 			if len(body) <= maxAPIResponseBytes && decodeExactJSON(body, &providerError) == nil && providerError.Code != 0 {
-				if code := feishuErrorCode(providerError.Code); code != ports.SourceLoadAPIError {
-					return ports.NewSourceLoadError(code, nil)
+				if code := feishuErrorCode(providerError.Code); code != APIFailed {
+					return newAPIError(code, nil)
 				}
 			}
-			return ports.NewSourceLoadError(httpErrorCode(resp.StatusCode), nil)
+			return newAPIError(httpErrorCode(resp.StatusCode), nil)
 		}
 		if len(body) > maxAPIResponseBytes {
-			return ports.NewSourceLoadError(ports.SourceLoadTooLarge, nil)
+			return newAPIError(APITooLarge, nil)
 		}
 
 		var envelope apiEnvelope
 		if err := decodeExactJSON(body, &envelope); err != nil {
-			return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			return newAPIError(APIMalformed, nil)
 		}
 		if envelope.Code != 0 {
-			return ports.NewSourceLoadError(feishuErrorCode(envelope.Code), nil)
+			return newAPIError(feishuErrorCode(envelope.Code), nil)
 		}
 		if len(envelope.Data) == 0 || bytes.Equal(bytes.TrimSpace(envelope.Data), []byte("null")) {
-			return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			return newAPIError(APIMalformed, nil)
 		}
 		if err := decodeExactJSON(envelope.Data, out); err != nil {
-			return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
+			return newAPIError(APIMalformed, nil)
 		}
 		return nil
 	}
@@ -305,29 +208,29 @@ func retryableStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
-func httpErrorCode(status int) ports.SourceLoadErrorCode {
+func httpErrorCode(status int) APIErrorCode {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return ports.SourceLoadForbidden
+		return APIForbidden
 	case http.StatusNotFound:
-		return ports.SourceLoadNotFound
+		return APINotFound
 	case http.StatusTooManyRequests:
-		return ports.SourceLoadRateLimit
+		return APIRateLimit
 	default:
-		return ports.SourceLoadAPIError
+		return APIFailed
 	}
 }
 
-func feishuErrorCode(code int) ports.SourceLoadErrorCode {
+func feishuErrorCode(code int) APIErrorCode {
 	switch code {
 	case 99991663, 99991668, 99991661, 99991664, 99991672, 41050, 40004:
-		return ports.SourceLoadForbidden
+		return APIForbidden
 	case 1770002, 1254045:
-		return ports.SourceLoadNotFound
+		return APINotFound
 	case 99991400:
-		return ports.SourceLoadRateLimit
+		return APIRateLimit
 	default:
-		return ports.SourceLoadAPIError
+		return APIFailed
 	}
 }
 
@@ -363,25 +266,4 @@ func waitForContext(ctx context.Context, delay time.Duration) error {
 	case <-timer.C:
 		return nil
 	}
-}
-
-type pageTokenTracker struct{ seen map[string]struct{} }
-
-func validAPIIdentifier(value string) bool {
-	return len(value) > 0 && len(value) <= maxResourceIdentifierBytes && resourceIdentifierPattern.MatchString(value)
-}
-
-func newPageTokenTracker() *pageTokenTracker {
-	return &pageTokenTracker{seen: make(map[string]struct{})}
-}
-
-func (t *pageTokenTracker) Advance(token string) error {
-	if token == "" {
-		return nil
-	}
-	if _, exists := t.seen[token]; exists {
-		return ports.NewSourceLoadError(ports.SourceLoadMalformed, nil)
-	}
-	t.seen[token] = struct{}{}
-	return nil
 }
