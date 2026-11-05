@@ -14,6 +14,7 @@ export function HubSettings() {
     queryKey: ["registry", "identity"],
     queryFn: ({ signal }) => getGovernanceIdentity(signal),
     enabled: !!user,
+    refetchInterval: 30_000,
   });
   if (!user) return null;
   return (
@@ -45,9 +46,13 @@ export function HubSettings() {
               {governance.data
                 ? governance.data.is_admin
                   ? "管理员"
-                  : "普通用户 / 自有能力 Owner"
+                  : governance.data.is_reviewer ? "审核员 / 自有能力 Owner" : "普通用户 / 自有能力 Owner"
                 : "尚未取得权限资料"}
             </dd>
+          </div>
+          <div className="flex flex-wrap justify-between gap-3 py-4">
+            <dt className="text-zinc-500">审核范围</dt>
+            <dd>{governance.data ? governance.data.is_admin || governance.data.is_reviewer ? "全平台 MCP / Skill，允许自审" : "暂无审核资格，请联系平台管理员" : "尚未取得权限资料"}</dd>
           </div>
           <div className="flex justify-between gap-3 py-4">
             <dt className="text-zinc-500">原有可信部门</dt>

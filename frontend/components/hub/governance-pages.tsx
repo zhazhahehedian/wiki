@@ -10,6 +10,7 @@ import {
   listAudit,
   listProfiles,
   setTrustedDepartment,
+  setReviewer,
   type GovernanceIdentity,
 } from "@/lib/api/registry";
 import {
@@ -23,21 +24,25 @@ import {
 import { actionLabels } from "./governance-controls";
 
 export function AdminGate({ children }: { children: ReactNode }) {
+  return <GovernanceGate>{children}</GovernanceGate>;
+}
+function GovernanceGate({ children, review = false }: { children: ReactNode; review?: boolean }) {
   const query = useQuery({
     queryKey: ["registry", "identity"],
     queryFn: ({ signal }) => getGovernanceIdentity(signal),
+    refetchInterval: 30_000,
   });
-  if (query.isPending) return <p role="status">正在检查管理员权限…</p>;
+  if (query.isPending) return <p role="status">正在检查治理权限…</p>;
   if (query.isError)
     return (
       <RegistryError error={query.error} retry={() => void query.refetch()} />
     );
-  if (!query.data.is_admin)
+  if (!query.data.is_admin && !(review && query.data.is_reviewer))
     return (
       <div className="rounded-xl border border-zinc-200 bg-white p-8">
-        <h1 className="font-semibold">需要管理员权限</h1>
+        <h1 className="font-semibold">{review ? "需要审核员或管理员权限" : "需要管理员权限"}</h1>
         <p className="mt-3 text-sm text-zinc-500">
-          当前账号可浏览能力市场并管理自己的发布。
+          当前账号可浏览能力市场并管理自己的发布。审核资格由平台管理员配置。
         </p>
         <Link
           href="/hub/registry"
@@ -79,9 +84,9 @@ function Pagination({
 }
 export function ReviewsPage() {
   return (
-    <AdminGate>
+    <GovernanceGate review>
       <ReviewQueue />
-    </AdminGate>
+    </GovernanceGate>
   );
 }
 function ReviewQueue() {
@@ -91,13 +96,14 @@ function ReviewQueue() {
   const query = useQuery({
     queryKey: ["registry", "reviews", { q, offset }],
     queryFn: ({ signal }) => listReviews({ q, offset }, signal),
+    refetchInterval: 30_000,
   });
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">审核队列</h1>
         <p className="mt-2 text-sm text-zinc-500">
-          按提交时间处理。打开详情查看待审版本、Skill 文件和上线版本对照。
+          全平台 MCP / Skill · 允许自审。按提交时间处理，打开详情查看待审版本、Skill 文件和上线版本对照。
         </p>
       </header>
       <form
@@ -192,13 +198,14 @@ function AuditLog() {
     create: "创建草稿",
     edit: "编辑草稿",
     set_department: "维护可信部门",
+    set_reviewer: "变更审核资格",
   };
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">审计日志</h1>
         <p className="mt-2 text-sm text-zinc-500">
-          查看能力治理与部门授权变更，按操作者、动作或目标筛选。
+          查看能力治理、审核资格与部门资料变更，按操作者、动作或目标筛选。
         </p>
       </header>
       <form
@@ -304,7 +311,8 @@ function Profiles() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">部门授权</h1>
+        <h1 className="text-2xl font-semibold">用户与审核授权</h1>
+        <p className="mt-2 text-sm leading-6 text-zinc-500">为已登录用户授予或撤销全平台审核资格，允许自审。审核员只负责待审材料的查看、通过与驳回；管理员始终保有审核权限。</p>
         <p className="mt-2 text-sm leading-6 text-zinc-500">
           此页维护历史记录使用的可信部门名称，变更会记录审计。新的部门选择使用飞书部门 ID，并根据本人真实归属授权；此处手工填写不会赋予新的飞书部门权限。
         </p>
@@ -336,11 +344,15 @@ function Profiles() {
       ) : (
         <>
           <div className="space-y-4">
+            {query.data.items.length === 0 && <p className="p-6 text-sm text-zinc-500">没有匹配的已登录用户。请先让对方通过飞书登录平台。</p>}
             {query.data.items.map((profile) => (
-              <ProfileRow
-                key={`${profile.open_id}:${profile.revision}`}
-                profile={profile}
-              />
+              <div key={`${profile.open_id}:${profile.revision}`} className="space-y-3 rounded-xl border border-zinc-200 bg-white p-5">
+                <ReviewerAuthorization profile={profile} />
+                <details>
+                  <summary className="cursor-pointer text-sm text-zinc-500">历史可信部门资料</summary>
+                  <ProfileRow profile={profile} />
+                </details>
+              </div>
             ))}
           </div>
           <Pagination
@@ -351,6 +363,36 @@ function Profiles() {
         </>
       )}
     </div>
+  );
+}
+function ReviewerAuthorization({ profile }: { profile: GovernanceIdentity }) {
+  const client = useQueryClient();
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>();
+  const granting = !profile.is_reviewer;
+  return (
+    <form className="space-y-4" aria-label={`审核资格：${profile.display_name || profile.open_id}`} onSubmit={async e => {
+      e.preventDefault();
+      setBusy(true); setError(undefined);
+      try {
+        await setReviewer(profile, granting, reason.trim());
+        await client.invalidateQueries({ queryKey: ["registry"] });
+      } catch (e) { setError(e); } finally { setBusy(false); }
+    }}>
+      <div>
+        <h2 className="font-medium">{profile.display_name || "飞书用户"} <span className="ml-2 text-xs text-zinc-600">{profile.is_admin ? "管理员" : profile.is_reviewer ? "审核员" : "普通用户"}</span></h2>
+        <p className="mt-1 break-all text-xs text-zinc-400">{profile.open_id}</p>
+        <p className="mt-2 text-sm text-zinc-500">{profile.is_admin ? "管理员已拥有全平台审核权限，无需另行授予。" : profile.is_reviewer ? "可审核全平台 MCP / Skill，允许自审。" : "暂无审核资格，可管理自己的发布。"}</p>
+      </div>
+      {!profile.is_admin && <>
+        <Field label="审核资格变更说明">
+          <input className={fieldClass} required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} placeholder="填写授权或撤销原因，操作将记录审计" />
+        </Field>
+        <button className={secondaryClass} disabled={busy || !reason.trim()}>{busy ? "正在保存…" : granting ? "授予审核资格" : "撤销审核资格"}</button>
+      </>}
+      {error != null && <RegistryError error={error} retry={() => void client.invalidateQueries({ queryKey: ["registry"] })} />}
+    </form>
   );
 }
 function ProfileRow({ profile }: { profile: GovernanceIdentity }) {

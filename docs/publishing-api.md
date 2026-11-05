@@ -8,6 +8,8 @@
 
 权限可分别选择 `capabilities:read`、`capabilities:write`、`capabilities:submit`；凭证不会扩大账号现有 Owner/Admin 或可见范围权限。管理凭证的接口只接受登录 Session，并保留 Origin/CSRF：
 
+账号被授予 Reviewer 后，发布 API 凭证仍不能使用审核员专属的待审材料读取权限，也不能通过、驳回或管理审核资格。全平台审核与自审在站内登录后完成；`submit` 只提交审核。
+
 | 方法 | 路径 | 请求 |
 |---|---|---|
 | GET | `/api/v1/publishing/credentials` | 返回本人凭证列表，无完整密钥或摘要 |
@@ -24,7 +26,7 @@
 |---|---|---|
 | GET `/` | read | 列出本人能力；q、type、status、department、limit（1–100，默认24）、offset |
 | GET `/{slug}` | read | 按账号和上线可见范围读取详情；Owner/Admin 可读管理视图 |
-| GET `/{slug}/versions/{id}/bundle` | read | 下载授权可见的 Skill ZIP |
+| GET `/{slug}/versions/{id}/bundle` | read | 下载授权可见的 MCP 程序包或 Skill ZIP |
 | POST `/` | write | 创建草稿，201 |
 | PUT `/{slug}` | write | Owner 完整更新草稿，200；提供最新 revision |
 | POST `/{slug}/new-draft` | write | Owner 对已发布/下线能力开新草稿，200 |
@@ -48,6 +50,25 @@ curl --fail-with-body "$BASE/api/v1/open/capabilities" \
 支持 `mcp_auth_scheme=none/bearer`。Endpoint 不得包含凭证、查询参数或片段。工具项包含 `name`、`description`、`inputSchema`（对象 schema）；注册只记录规范，不在线调用 MCP。
 
 保存返回详情，包括 `slug`、`status`、`revision`、`draft_version_id` 和 `versions`。创建 revision 传 0 或省略；更新不可省略。字段 `department_id` 是飞书 `open_department_id`，`department` 由服务端查证为显示名。`visibility=department` 必填部门 ID；`allowlist` 必须包含非空的 `open_id` 数组且仅用于 `visibility=allowlist`，最多200人。所选 ID 必须在绑定账号可见范围内，并已完成通讯录授权。
+
+## 上传 MCP 程序包
+
+无需先部署 MCP。保存 `mcp-metadata.json`：
+
+```json
+{"slug":"local-search","type":"mcp","name":"本地搜索","description":"下载后按 README 运行","visibility":"org","version":"1.0.0","mcp_transport":"stdio","mcp_auth_scheme":"none","tools":[]}
+```
+
+```bash
+curl --fail-with-body "$BASE/api/v1/open/capabilities" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F 'metadata=<mcp-metadata.json;type=application/json' \
+  -F 'files=@mcp-server.zip;filename=mcp-server.zip'
+```
+
+单个 ZIP，不超过 100 MiB、2000 条目、解压后 500 MiB；不接受加密、符号链接、特殊文件、重复或不安全路径。ZIP 原样存储，不解压执行；建议附 README、依赖、启动方式及配置示例。`stdio` 的 Endpoint 必须为空、鉴权为 `none`；`streamable-http` 支持可选 Endpoint（已部署地址）。程序包和 Endpoint 至少提供一个，远程 MCP 也可同时上传程序包。
+
+同一未发布版本不带 `files` 时保留原包；新上传替换该版本完整包。新版本不继承旧包，需要重新上传或提供远程 Endpoint。审核发布后，授权用户在市场详情点击「下载 MCP 程序包」，或请求上述 bundle 接口；响应是 ZIP 附件，不返回 MinIO 公开地址。下载仍校验版本、可见范围和上线状态，平台不托管运行环境。
 
 ## 上传 Skill
 

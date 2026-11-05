@@ -36,8 +36,8 @@ const blank: CapabilityInput = {
   version: "1.0.0",
   changelog: "",
   mcp_endpoint: "",
-  mcp_transport: "streamable-http",
-  mcp_auth_scheme: "bearer",
+  mcp_transport: "stdio",
+  mcp_auth_scheme: "none",
   tools: [],
 };
 function initial(detail?: CapabilityDetail): CapabilityInput {
@@ -99,6 +99,8 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
   const [error, setError] = useState<unknown>();
   const [localError, setLocalError] = useState("");
   const [saving, setSaving] = useState(false);
+  const current = detail?.versions.find((v) => v.id === detail.draft_version_id);
+  const retainsBundle = current?.has_bundle && !current.published_at && current.version === form.version;
   function set<K extends keyof CapabilityInput>(
     key: K,
     value: CapabilityInput[K],
@@ -142,15 +144,25 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
       }
     }
     if (
-      files.length > 50 ||
-      files.reduce((n, f) => n + f.size, 0) > 10 * 1024 * 1024
+      form.type === "skill" &&
+      (files.length > 50 || files.reduce((n, f) => n + f.size, 0) > 10 * 1024 * 1024)
     ) {
       setLocalError("附件最多 50 个，总大小不能超过 10 MB。");
       return;
     }
-    const current = detail?.versions.find(
-      (v) => v.id === detail.draft_version_id,
-    );
+    if (form.type === "mcp") {
+      if (
+        files.length > 1 ||
+        files.some((f) => !f.name.toLowerCase().endsWith(".zip") || f.size > 100 * 1024 * 1024)
+      ) {
+        setLocalError("请选择一个不超过 100 MiB 的 MCP ZIP 程序包。");
+        return;
+      }
+      if (!form.mcp_endpoint && files.length === 0 && !retainsBundle) {
+        setLocalError("请上传 MCP ZIP 程序包，或填写已部署服务的 Endpoint；新版本需要重新上传程序包。");
+        return;
+      }
+    }
     if (
       form.type === "skill" &&
       (!current?.has_bundle ||
@@ -182,7 +194,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
     try {
       const saved = await saveCapability(
         input,
-        form.type === "skill" ? files : [],
+        files,
         detail?.slug,
       );
       client.setQueryData(["registry", "detail", saved.slug], saved);
@@ -254,9 +266,10 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                   disabled={!!detail || saving}
                   className={fieldClass}
                   value={form.type}
-                  onValueChange={(value) =>
-                    set("type", value as CapabilityInput["type"])
-                  }
+                  onValueChange={(value) => {
+                    set("type", value as CapabilityInput["type"]);
+                    setFiles([]);
+                  }}
                   options={[
                     { value: "mcp", label: "MCP 服务" },
                     { value: "skill", label: "Skill" },
@@ -282,16 +295,54 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
           </section>
           <section className="space-y-5 rounded-xl border border-zinc-200 bg-white p-6">
             <h2 className="font-semibold">
-              {form.type === "mcp" ? "MCP 服务规格" : "Skill 文件"}
+              {form.type === "mcp" ? "MCP 程序包与接入方式" : "Skill 文件"}
             </h2>
             {form.type === "mcp" ? (
               <>
                 <Field
-                  label="Endpoint"
-                  hint="HTTP / HTTPS 地址，不含凭证、查询参数或片段。平台仅记录接入信息。"
+                  label="MCP 程序包（ZIP）"
+                  hint="上传一个 ZIP，最大 100 MiB，最多 2000 条目、解压后 500 MiB。建议包含 README、依赖、启动命令和配置示例。审核发布后，有权限的用户可直接下载并自行运行。"
                 >
                   <input
-                    required
+                    key="mcp-package"
+                    type="file"
+                    accept=".zip,application/zip"
+                    disabled={saving}
+                    className={fieldClass}
+                    onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                  />
+                </Field>
+                <p className="text-xs leading-6 text-zinc-500">
+                  {files[0]
+                    ? `已选择：${files[0].name}（${(files[0].size / 1024 / 1024).toFixed(2)} MiB），保存后替换该版本的完整程序包。`
+                    : retainsBundle
+                      ? "当前草稿已有程序包；不选择文件将保留原包。新版本需要重新上传。"
+                      : "尚未选择程序包。没有已部署服务地址时，必须上传程序包。"}
+                </p>
+                <Field label="传输协议">
+                  <Select
+                    className={fieldClass}
+                    value={form.mcp_transport}
+                    disabled={saving}
+                    onValueChange={(value) => {
+                      setForm((prev) => ({
+                        ...prev,
+                        mcp_transport: value,
+                        ...(value === "stdio" ? { mcp_endpoint: "", mcp_auth_scheme: "none" } : {}),
+                      }));
+                    }}
+                    options={[
+                      { value: "stdio", label: "stdio · 本地进程" },
+                      { value: "streamable-http", label: "Streamable HTTP · HTTP 服务" },
+                    ]}
+                  />
+                </Field>
+                {form.mcp_transport === "streamable-http" && <>
+                <Field
+                  label="Endpoint（已部署时选填）"
+                  hint="已部署的 HTTP / HTTPS 服务地址，不含凭证、查询参数或片段。仅分发程序包时可以留空。"
+                >
+                  <input
                     type="url"
                     maxLength={2048}
                     className={fieldClass}
@@ -300,14 +351,6 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                     placeholder="https://mcp.example.com/mcp"
                   />
                 </Field>
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <Field label="传输协议">
-                    <input
-                      readOnly
-                      className={fieldClass}
-                      value="streamable-http"
-                    />
-                  </Field>
                   <Field label="鉴权方式">
                     <Select
                       className={fieldClass}
@@ -320,7 +363,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                       ]}
                     />
                   </Field>
-                </div>
+                </>}
                 <Field
                   label="工具清单 JSON"
                   hint={
@@ -422,7 +465,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
               />
             </Field>
             <p className="text-xs text-zinc-600">
-              草稿供你维护与管理员审核，保存不会向消费者公开。
+                草稿供你维护，提交后由管理员或审核员审核；保存不会向消费者公开。
             </p>
           </section>
         </fieldset>

@@ -82,8 +82,11 @@ type Querier interface {
 	ListPlatformProfiles(ctx context.Context, arg ListPlatformProfilesParams) ([]ListPlatformProfilesRow, error)
 	ListPublishingCredentials(ctx context.Context, userID uuid.UUID) ([]PublishingCredential, error)
 	ListReviewCapabilities(ctx context.Context, arg ListReviewCapabilitiesParams) ([]Capability, error)
+	ListReviewers(ctx context.Context, arg ListReviewersParams) ([]ListReviewersRow, error)
 	LockAdminBootstrap(ctx context.Context) error
 	LockCapability(ctx context.Context, slug string) (Capability, error)
+	LockGovernanceProfiles(ctx context.Context, dollar_1 []string) ([]string, error)
+	LockGovernanceRole(ctx context.Context, userID uuid.UUID) (string, error)
 	LockOwnedCapability(ctx context.Context, arg LockOwnedCapabilityParams) (Capability, error)
 	MarkOAuthAccountReauthRequired(ctx context.Context, id uuid.UUID) error
 	MarkVersionPublished(ctx context.Context, id uuid.UUID) error
@@ -95,6 +98,7 @@ type Querier interface {
 	SetCapabilityDraft(ctx context.Context, arg SetCapabilityDraftParams) (Capability, error)
 	SetCapabilityGovernance(ctx context.Context, arg SetCapabilityGovernanceParams) (Capability, error)
 	SetCapabilityVisibility(ctx context.Context, arg SetCapabilityVisibilityParams) (Capability, error)
+	SetReviewer(ctx context.Context, arg SetReviewerParams) (PlatformProfile, error)
 	SetTrustedDepartment(ctx context.Context, arg SetTrustedDepartmentParams) (PlatformProfile, error)
 	UpdateCapability(ctx context.Context, arg UpdateCapabilityParams) (Capability, error)
 	UpdateCapabilityVersion(ctx context.Context, arg UpdateCapabilityVersionParams) (CapabilityVersion, error)

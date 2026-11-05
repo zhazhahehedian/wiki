@@ -46,7 +46,7 @@
 - ❌ Skill 在线执行 / sandbox 运行
 - Skill 自然语言**生成引导**的轻量版本已于 2026-09-06 获用户授权提前实施（D10）；完整联网研究/自动执行仍不属于 v1。
 - ❌ 对外部合作方/客户输出能力(商业化方向,更远)
-- ❌ 按部门配置审批人(v1 仅平台管理员审批)
+- ❌ 按部门配置审批人（第一版由平台管理员或显式授权的全平台审核员审批，见 [2026-11-05 审核资格设计](2026-11-05-reviewer-authorization.md)）
 - ❌ 游乐场会话历史持久化(v1 对话临时,不落库)
 - ❌ 修改 Token Hub 代码(它由他人维护,零 fork)
 - ❌ 本平台完整知识聊天产品、会话管理及回答 Agent；K1 仅交付知识管理和检索，外部业务系统构建对话。
@@ -106,7 +106,10 @@
 |---|---|
 | **登录用户**(任意飞书用户) | 浏览有权见到的能力;获取有权访问能力的接入凭证;使用游乐场 |
 | **Owner** | 创建/编辑/发新版本自己的能力;提交审核;设置可见范围 |
+| **Reviewer** | 查看全平台 MCP / Skill 待审材料及当前上线版本对照；审核通过/驳回；允许自审 |
 | **Admin** | 审核通过/驳回;强制上线/下线;查看全部审计;可见范围兜底覆盖 |
+
+- 2026-11-05 增补：Admin 可为已登录用户授予、撤销 Reviewer；授权按飞书 Open ID 保存并记录审计。Reviewer 不继承 Admin 的平台管理、私有能力浏览、知识库或凭据权限。具体契约见[审核资格设计](2026-11-05-reviewer-authorization.md)。
 
 - Bootstrap admin 通过 env `BOOTSTRAP_ADMIN_FEISHU_OPEN_ID` 指定(参考 it-wiki 的 bootstrap owner 模式;只补空,不覆盖)。
 - 身份来自平台自有飞书 OAuth(复用 it-wiki 的 `internal/auth`),得到 `open_id`;与 Token Hub 用户天然同源(同一飞书租户)。
@@ -153,12 +156,12 @@
 | created_at | timestamptz | |
 | published_at | timestamptz null | 首次上线时间；非空版本不可覆写 |
 | **— MCP —** | | |
-| mcp_endpoint | text null | Streamable HTTP endpoint |
-| mcp_transport | text null | 默认 `streamable-http` |
+| mcp_endpoint | text null | 已部署的 Streamable HTTP endpoint；有程序包时可空 |
+| mcp_transport | text null | `streamable-http` 或 `stdio`（2026-11-05 增补） |
 | mcp_auth_scheme | text null | 如 `bearer` |
 | tools | jsonb null | 工具清单(名称/描述/入参 schema),作者声明或 introspect 回填 |
 | **— Skill —** | | |
-| skill_bundle_key | text null | MinIO 对象 key(SKILL.md + 附件打包) |
+| skill_bundle_key | text null | 通用版本包对象 key（保留历史列名）；Skill 打包源文件，MCP 原样保存 ZIP |
 | skill_manifest | jsonb null | name/description/when-to-use 等元信息 |
 
 阶段 B 实施约束：slug/type 创建后固定（`new`、`create-skill` 为页面保留标识）；`(capability_id, version)` 唯一。同名版本只能编辑当前草稿，新版本标签创建新记录，历史记录保留。B 暂仅开放 Owner 自己的列表/详情/附件与草稿写入，可见范围配置不提前开放跨用户读取。见[阶段 B 计划](../plans/2026-09-06-capability-hub-phase-b-plan.md)。
@@ -221,14 +224,14 @@
 ## 7. 治理流程
 
 ```
-draft ──(owner 提交)──▶ in_review ──(admin 通过)──▶ published
+draft ──(owner 提交)──▶ in_review ──(admin/reviewer 通过)──▶ published
   ▲                        │                          │
-  └──────(admin 驳回)───────┘        (admin/owner 下线)─┴──▶ offline ──(重新提交)──▶ in_review
+  └──(admin/reviewer 驳回)──┘        (admin/owner 下线)─┴──▶ offline ──(重新提交)──▶ in_review
 ```
 
 - Owner 创建能力/新版本 → `draft`;可反复编辑。
-- 提交审核 → `in_review`,进入 admin 审核队列。
-- Admin 通过 → `published`,设置 `current_version_id`;驳回 → 回 `draft`(带驳回理由,记 audit)。
+- 提交审核 → `in_review`,进入 Admin/Reviewer 共同审核队列。
+- Admin/Reviewer 通过 → `published`,设置 `current_version_id`;驳回 → 回 `draft`(带驳回理由,记 audit)。
 - 下线 → `offline`(能力仍在,但不对普通用户可见/不可取凭证)。
 - 每个状态跃迁写 `audit_log`。
 - 新版本:发新版本走同样审核;上线新版本原子切换 `current_version_id`(参考 it-wiki 的 atomic promotion 思路)。
@@ -239,11 +242,11 @@ draft ──(owner 提交)──▶ in_review ──(admin 通过)──▶ publ
 
 - `status` 表示当前维护流程，`is_live` 独立表示对消费者上线；`published_metadata` 保存已审核的名称、描述、部门、可见范围与名单快照。Owner 发新版显式进入 `new-draft`，随后编辑/提交/驳回均保留旧版上线。审批一次事务切换版本指针与快照；消费者永远只读上线快照与当前版本，不能读草稿或旧版本附件。Owner/Admin 管理详情可查看历史和待审内容。
 - `capability_versions.published_at` 标识已上线过的不可变版本；同名已上线版本永不覆写。初次发布和每次编辑保留 revision 乐观锁；所有治理动作带 `revision` 与 `version_id`，事务内锁定能力行后重新核对。提交后不可编辑；重复或过期动作返回 409。
-- Owner 提交、创建新草稿；Admin 通过/驳回（驳回必须填理由）。v1 允许 Admin 审核自己的能力，使用相同校验且留下 actor 审计，不声称实现双人审批。Admin 可带理由强制发布 draft/in_review/offline 的当前候选，仍校验完整包格式，不跳过原子发布。Owner/Admin 下线须说明理由，同时停止旧版可见并结束当前审核；offline 可重新提交当前候选，无草稿时重提原上线版本。重新编辑已上线版本必须使用新版本号。
+- Owner 提交、创建新草稿；Admin/Reviewer 通过/驳回（驳回必须填理由）。允许 Admin 和 Reviewer 审核自己的能力，使用相同校验且留下 actor 审计，不声称实现双人审批。Admin 可带理由强制发布 draft/in_review/offline 的当前候选，仍校验完整包格式，不跳过原子发布。Owner/Admin 下线须说明理由，同时停止旧版可见并结束当前审核；offline 可重新提交当前候选，无草稿时重提原上线版本。重新编辑已上线版本必须使用新版本号。
 - Admin 可带理由覆盖当前上线快照的可见范围；审核中拒绝覆盖，避免审核对象漂移。覆盖与审计原子提交并递增 revision，Owner 可在管理详情看到生效快照；没有独立新版草稿时同步维护配置，防止下线重提撤销覆盖；存在独立草稿时，其后续审核仍以该次提交配置为准。
-- `platform_profiles(open_id,is_admin,department,revision)` 保存服务端角色与可信部门。Admin 页面只维护已登录用户的部门，不提供用户自授角色入口。Bootstrap 由 `BOOTSTRAP_ADMIN_FEISHU_OPEN_ID` 指定，用持久单例记录消费并串行执行：仅首次且无 Admin 时补角色，可在目标首次登录前预配；已有 Admin 不覆盖，后续改 env 不转移角色。角色不绑定浏览器输入；取消 env 不撤销已授角色。角色撤销通过受控运维修改持久 profile，已消费 bootstrap 不会恢复撤销的角色；未来角色管理 UI 独立实施。
+- `platform_profiles(open_id,is_admin,is_reviewer,department,revision)` 保存服务端角色与历史可信部门。Admin 页面管理已登录用户的审核资格与历史部门，不提供普通用户自授角色入口。Bootstrap 由 `BOOTSTRAP_ADMIN_FEISHU_OPEN_ID` 指定，用持久单例记录消费并串行执行：仅首次且无 Admin 时补角色，可在目标首次登录前预配；已有 Admin 不覆盖，后续改 env 不转移角色。角色不绑定浏览器输入；取消 env 不撤销已授角色。Admin 角色仍通过受控运维维护，已消费 bootstrap 不会恢复撤销的角色；Reviewer 通过独立授权入口维护并与审核事务协调撤权顺序。
 - 手动上传与创建助手共用发布格式检查：包目录名与 `SKILL.md` frontmatter 的 name 相同（最长 64），description 为非空字符串（最长 1024 字），必须有正文；所有 Markdown 包内相对文件引用必须存在。允许携带脚本但平台仅存储/展示/下载，不执行或加载远程内容。旧草稿仍可保存修复，提交和批准必须通过校验；历史 Skill 标识超过 64 字符时，因标识不可变，需要用合规标识重新创建。
-- 从 C 起 create/edit（含 Skill 创建助手）与所有治理写入都在同一事务写 `audit_log`；记录 actor、动作、目标、版本/revision、状态变化、理由、request_id 和时间，不复制能力正文、工具 schema、完整名单、模型素材或凭证。历史 B 操作不补造审计。审核/审计/部门资料 API 仅 Admin 可读写；普通消费者详情不包含名单和治理审计。
+- 从 C 起 create/edit（含 Skill 创建助手）与所有治理写入都在同一事务写 `audit_log`；记录 actor、动作、目标、版本/revision、状态变化、理由、request_id 和时间，不复制能力正文、工具 schema、完整名单、模型素材或凭证。历史 B 操作不补造审计。审核 API 允许 Admin/Reviewer；审计、部门资料及审核资格管理 API 仅 Admin 可读写。登录用户可查看最小审核人名单；普通消费者详情不包含能力名单和治理审计。
 - Web 目录使用 `/api/v1/catalog` 与上线快照详情；`/api/v1/capabilities` 保留 Owner 管理列表，详情按 Owner/Admin 管理权限或已发布访问权限投影。两种列表使用不同前端缓存键。机器 discovery 与凭证 API 仍属 D。
 
 ---
@@ -303,7 +306,7 @@ K1 计划新增「知识库」入口及 Admin「应用接入」管理；知识�
 - **能力详情(两栏)**:
   - 左主栏:描述、**工具清单**(每个 tool 名称 + 说明 + 入参)、版本历史。
   - 右栏:**接入信息**(endpoint / 传输 / 鉴权 / 「获取接入凭证」)、可见范围(部门 + 白名单)、健康 / 元信息(负责人 / 更新时间 / 仓库)。
-- **发布 / 编辑**(标准表单/向导):基本信息(名称/类型/部门/描述)→ 类型专属(MCP:endpoint/传输/鉴权/工具清单;Skill:上传 SKILL.md + 附件)→ 可见范围/权限 → 提交审核。
+- **发布 / 编辑**(标准表单/向导):基本信息(名称/类型/部门/描述)→ 类型专属(MCP:ZIP 程序包或已部署 endpoint/传输/鉴权/工具清单;Skill:上传 SKILL.md + 附件)→ 可见范围/权限 → 提交审核。MCP 程序包支持下载后自行运行，详见 [2026-11-05 程序包分发增补](2026-11-05-mcp-package-distribution.md)。
 - **游乐场**:new-api 游乐场式的网页对话页,套 B 风格;输入框工具栏选择模型与参数,输入框对话;「接口配置」与「设置 → 模型接口」共用配置,包含 API 基础地址、API Key、自动获取并勾选的模型列表及默认模型，保留手动 ID 输入。无需 Token Hub 源码、管理接口或用户分组接口。
 - **游乐场布局（2026-09-07）**：对话画布占满导航栏下方的可用视口，移除页面内重复菜单标题和说明；消息列与底部输入框居中限宽，输入框采用浅灰圆角、轻阴影的悬浮样式，画布连续延伸到底部。长对话在画布内滚动，末条消息预留输入框高度；生成时跟随最新内容，用户上翻后暂停跟随并可一键回到底部。
 - **模型生成等待与失败反馈（2026-09-08）**：游乐场与 Skill 创建共用的模型流式调用总时限为 5 分钟，等待上游响应头最多 60 秒；两条模型生成 POST 路由的外层请求时限为 6 分钟，预留鉴权和返回结构化错误的时间，其余路由仍为 60 秒，模型列表发现仍为 20 秒。Skill 创建在完整结果校验后展示草案，等待期间显示动画和实际经过时间，长等待提供说明但不虚构阶段或百分比；超时、响应中断、上游 HTTP 拒绝与无效草案分别提示，保留需求、素材与已有草案，取消释放上游请求。

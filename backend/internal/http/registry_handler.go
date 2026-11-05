@@ -25,10 +25,12 @@ func registryHTTPError(w http.ResponseWriter, r *http.Request, e error) {
 		return
 	}
 	switch {
+	case errors.Is(e, registry.ErrMCPPackage):
+		WriteError(w, r, NewAPIError(400, "invalid_mcp_package", "请上传一个有效的 MCP ZIP 程序包（不超过 100 MiB、2000 条目、解压后 500 MiB）；不支持加密包、链接或不安全路径。未填写 Endpoint 时必须有程序包。"))
 	case errors.Is(e, registry.ErrSkillPublication):
 		WriteError(w, r, NewAPIError(400, "invalid_skill_publication", "Skill 发布格式不完整：SKILL.md 需包含与标识一致的 name（最长 64）和非空 description（最长 1024）的 YAML 文件头、正文，且包内文件引用必须存在。请编辑完整包后重新提交。"))
 	case errors.Is(e, registry.ErrInvalid):
-		WriteError(w, r, NewAPIError(400, "invalid_capability", "请检查名称、版本、可见范围、MCP 工具或 Skill 附件格式"))
+		WriteError(w, r, NewAPIError(400, "invalid_capability", "请检查名称、版本、可见范围、MCP 接入信息/程序包或 Skill 附件格式"))
 	case errors.Is(e, registry.ErrNotFound):
 		WriteError(w, r, NewAPIError(404, "capability_not_found", "能力或版本不存在"))
 	case errors.Is(e, registry.ErrConflict):
@@ -87,7 +89,7 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, registry.MaxBundleBytes+512*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, registry.MaxMCPBundleBytes+512*1024)
 	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && media == "application/json" {
 		r.Body = http.MaxBytesReader(w, r.Body, 300*1024)
 		var input registry.SaveRequest
@@ -141,9 +143,13 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 				registryHTTPError(w, r, registry.ErrInvalid)
 				return
 			}
-			raw, err := io.ReadAll(io.LimitReader(part, int64(registry.MaxBundleBytes-total+1)))
+			limit := registry.MaxMCPBundleBytes
+			if hasMetadata && input.Type == "skill" {
+				limit = registry.MaxBundleBytes
+			}
+			raw, err := io.ReadAll(io.LimitReader(part, int64(limit-total+1)))
 			total += len(raw)
-			if err != nil || total > registry.MaxBundleBytes {
+			if err != nil || total > limit {
 				registryHTTPError(w, r, registry.ErrInvalid)
 				return
 			}
@@ -185,7 +191,7 @@ func (h *RegistryHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	defer body.Close()
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", `attachment; filename="skill.zip"`)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": chi.URLParam(r, "slug") + ".zip"}))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.Copy(w, body)
 }

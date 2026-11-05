@@ -335,6 +335,31 @@ func TestDirectoryPublishingIntegration(t *testing.T) {
 	skill.Slug = "bad-skill"
 	files[0].Name = "../SKILL.md"
 	check(call("", alice.Token, "POST", root, skill, files, false), 400)
+	packageInput := registry.SaveRequest{Slug: "api-mcp-package", Type: "mcp", Name: "MCP ZIP", Description: "Download and run", Visibility: "org", Version: "1", MCPTransport: "stdio", MCPAuthScheme: "none"}
+	packageBytes := mcpPackageFixture(t, []byte("# MCP\nRun the documented command.\n"))
+	packageFiles := []registry.File{{Name: "mcp.zip", Data: packageBytes}}
+	check(call("", readOnly.Token, "POST", root, packageInput, packageFiles, false), 403)
+	w = call("", alice.Token, "POST", root, packageInput, packageFiles, false)
+	check(w, 201)
+	packageDetail := detail(w)
+	packagePath := root + "/api-mcp-package/versions/" + packageDetail.DraftVersionID + "/bundle"
+	check(call("", writer.Token, "GET", packagePath, nil, nil, false), 403)
+	check(call("", bob.Token, "GET", packagePath, nil, nil, false), 404)
+	w = call("", readOnly.Token, "GET", packagePath, nil, nil, false)
+	check(w, 200)
+	if !bytes.Equal(w.Body.Bytes(), packageBytes) {
+		t.Fatal("publishing API changed MCP ZIP")
+	}
+	w = call("", alice.Token, "POST", root+"/api-mcp-package/submit", registry.ActionRequest{Revision: packageDetail.Revision, VersionID: packageDetail.DraftVersionID}, nil, false)
+	check(w, 200)
+	packageDetail = detail(w)
+	w = call("admin", "", "POST", "/api/v1/capabilities/api-mcp-package/approve", registry.ActionRequest{Revision: packageDetail.Revision, VersionID: packageDetail.DraftVersionID}, nil, true)
+	check(w, 200)
+	w = call("", bob.Token, "GET", packagePath, nil, nil, false)
+	check(w, 200)
+	if !bytes.Equal(w.Body.Bytes(), packageBytes) {
+		t.Fatal("consumer API changed MCP ZIP")
+	}
 	// List never returns secrets; credentials belong only to their creator.
 	w = call("alice", "", "GET", "/api/v1/publishing/credentials", nil, nil, false)
 	check(w, 200)

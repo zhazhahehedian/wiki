@@ -9,7 +9,7 @@ import { ArrowLeft, Download, Copy, FileText } from "lucide-react";
 import {
   getCatalogCapability,
   getSkillFiles,
-  skillBundleURL,
+  capabilityBundleURL,
 } from "@/lib/api/registry";
 import { primaryClass, secondaryClass, RegistryError } from "./registry-shared";
 
@@ -150,18 +150,18 @@ export function MarketDetailPage({ slug }: { slug: string }) {
             {version && ` · v${version.version}`}
           </p>
         </div>
-        {skill && version?.has_bundle && (
+        {version?.has_bundle && (
           <div className="flex flex-wrap gap-2">
-            <Link href={templateURL} className={primaryClass}>
+            {skill && <Link href={templateURL} className={primaryClass}>
               <Copy className="size-4" />
               基于此创建
-            </Link>
+            </Link>}
             <a
-              href={skillBundleURL(slug, version.id)}
+              href={capabilityBundleURL(slug, version.id)}
               className={secondaryClass}
             >
               <Download className="size-4" />
-              下载 Skill 包
+              {skill ? "下载 Skill 包" : "下载 MCP 程序包"}
             </a>
           </div>
         )}
@@ -186,7 +186,7 @@ export function MarketDetailPage({ slug }: { slug: string }) {
               />
             ) : !skill ? (
               <div className="space-y-4">
-                <p className="break-all text-sm">{version?.mcp_endpoint}</p>
+                <p className="break-all text-sm">{version?.mcp_endpoint || "本版本通过程序包分发，下载后自行运行。"}</p>
                 <p className="text-xs text-zinc-500">
                   {version?.mcp_transport} · {version?.mcp_auth_scheme}
                 </p>
@@ -212,6 +212,18 @@ export function MarketDetailPage({ slug }: { slug: string }) {
           </section>
         </div>
         <aside className="min-w-0 space-y-6">
+          {!skill && (
+            <section className="rounded-xl border border-zinc-200 bg-white p-5">
+              <h2 className="font-semibold">如何使用 MCP</h2>
+              {version?.has_bundle && <ol className="mt-4 list-decimal space-y-3 pl-5 text-sm leading-6 text-zinc-600">
+                <li>下载当前版本的 MCP 程序包并解压。</li>
+                <li>阅读包内 README，安装依赖，填写自己的配置并按启动说明运行。</li>
+                <li>在 MCP 客户端配置启动命令（stdio）或运行后的 HTTP 服务地址。</li>
+              </ol>}
+              {version?.mcp_endpoint && <p className="mt-4 text-sm leading-6 text-zinc-600">也可使用发布者提供的 Endpoint 连接远程服务；需要凭证时联系服务提供者。</p>}
+              <p className="mt-4 text-xs leading-6 text-zinc-500">平台提供程序包存储与下载，运行环境由发布者或使用者自行准备。</p>
+            </section>
+          )}
           {skill && (
             <section className="rounded-xl border border-zinc-200 bg-white p-5">
               <h2 className="font-semibold">如何使用</h2>

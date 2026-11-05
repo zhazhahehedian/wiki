@@ -13,6 +13,7 @@ var (
 	ErrNotFound         = errors.New("capability not found")
 	ErrConflict         = errors.New("capability revision or version conflict")
 	ErrSkillPublication = errors.New("invalid skill publication format")
+	ErrMCPPackage       = errors.New("invalid MCP package")
 	ErrForbidden        = errors.New("registry permission denied")
 	ErrIdentity         = errors.New("feishu identity required")
 )
@@ -60,11 +61,13 @@ type Version struct {
 }
 type Detail struct {
 	Capability
-	Versions  []Version          `json:"versions"`
-	Allowlist []string           `json:"allowlist,omitempty"`
-	IsOwner   bool               `json:"is_owner"`
-	IsAdmin   bool               `json:"is_admin"`
-	Published *PublishedMetadata `json:"published,omitempty"`
+	Versions     []Version          `json:"versions"`
+	Allowlist    []string           `json:"allowlist,omitempty"`
+	IsOwner      bool               `json:"is_owner"`
+	IsAdmin      bool               `json:"is_admin"`
+	CanReview    bool               `json:"can_review"`
+	IsReviewView bool               `json:"is_review_view"`
+	Published    *PublishedMetadata `json:"published,omitempty"`
 }
 type SaveRequest struct {
 	Slug          string   `json:"slug"`
@@ -109,4 +112,6 @@ type Repository interface {
 	Audit(context.Context, string, AuditFilter) (AuditPage, error)
 	Profiles(context.Context, string, Filter) (ProfilePage, error)
 	SetDepartment(context.Context, string, string, DepartmentRequest) (Identity, error)
+	SetReviewer(context.Context, string, string, ReviewerRequest) (Identity, error)
+	Reviewers(context.Context, string, Filter) (ReviewerPage, error)
 }

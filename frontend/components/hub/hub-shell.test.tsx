@@ -53,6 +53,13 @@ beforeEach(() => {
     isError: false,
   });
 });
+it("shows reviewers the queue without admin-only navigation", async () => {
+  vi.mocked(getGovernanceIdentity).mockResolvedValue({ open_id: "ou_reviewer", is_admin: false, is_reviewer: true, department: "", revision: 1 });
+  mount();
+  expect(await screen.findByRole("link", { name: "审核队列" })).toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "用户与审核授权" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "审计日志" })).not.toBeInTheDocument();
+});
 it("shows the new navigation with an active page and no legacy product links", () => {
   mount();
   expect(screen.getByRole("link", { name: "能力市场" })).toHaveAttribute(
@@ -198,5 +205,5 @@ it("shows governance navigation only for a server-authorized admin", async () =>
     "href",
     "/hub/audit",
   );
-  expect(screen.getByRole("link", { name: "部门授权" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "用户与审核授权" })).toBeInTheDocument();
 });

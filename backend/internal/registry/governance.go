@@ -14,10 +14,33 @@ import (
 type Identity struct {
 	OpenID        string   `json:"open_id"`
 	IsAdmin       bool     `json:"is_admin"`
+	IsReviewer    bool     `json:"is_reviewer"`
 	Department    string   `json:"department"`
 	DepartmentIDs []string `json:"department_ids"`
 	Revision      int64    `json:"revision"`
 	DisplayName   string   `json:"display_name,omitempty"`
+}
+
+// Review privileges belong to the browser session, never publishing API keys.
+func (i Identity) CanReview(ctx context.Context) bool {
+	return CredentialID(ctx) == "" && (i.IsAdmin || i.IsReviewer)
+}
+
+type ReviewerRequest struct {
+	IsReviewer *bool  `json:"is_reviewer"`
+	Revision   int64  `json:"revision"`
+	Reason     string `json:"reason"`
+}
+
+type Reviewer struct {
+	OpenID      string `json:"open_id"`
+	DisplayName string `json:"display_name"`
+	IsAdmin     bool   `json:"is_admin"`
+}
+
+type ReviewerPage struct {
+	Items   []Reviewer `json:"items"`
+	HasMore bool       `json:"has_more"`
 }
 type PublishedMetadata struct {
 	Name         string   `json:"name"`
@@ -166,7 +189,7 @@ func (s *Service) Act(ctx context.Context, user, slug, action string, r ActionRe
 		if e != nil {
 			return Detail{}, e
 		}
-		if (action == "submit" && d.OwnerOpenID != who.OpenID) || (action != "submit" && !who.IsAdmin) {
+		if (action == "submit" && d.OwnerOpenID != who.OpenID) || (action == "approve" && !who.CanReview(ctx)) || (action == "force-publish" && (!who.IsAdmin || CredentialID(ctx) != "")) {
 			return Detail{}, ErrForbidden
 		}
 		if d.Revision != r.Revision {
@@ -224,4 +247,19 @@ func (s *Service) SetDepartment(ctx context.Context, user, openID string, r Depa
 		return Identity{}, ErrInvalid
 	}
 	return s.repo.SetDepartment(ctx, user, openID, r)
+}
+
+func (s *Service) SetReviewer(ctx context.Context, user, openID string, r ReviewerRequest) (Identity, error) {
+	r.Reason = strings.TrimSpace(r.Reason)
+	if openID == "" || len(openID) > 128 || r.IsReviewer == nil || r.Revision < 0 || r.Reason == "" || utf8.RuneCountInString(r.Reason) > 2000 {
+		return Identity{}, ErrInvalid
+	}
+	return s.repo.SetReviewer(ctx, user, openID, r)
+}
+
+func (s *Service) Reviewers(ctx context.Context, user string, f Filter) (ReviewerPage, error) {
+	if !validFilter(f) {
+		return ReviewerPage{}, ErrInvalid
+	}
+	return s.repo.Reviewers(ctx, user, f)
 }

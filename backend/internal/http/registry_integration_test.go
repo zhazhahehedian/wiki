@@ -175,6 +175,8 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 		}
 		verifyGovernanceMigration(t, ctx, db)
 		users := verifyGovernanceIntegration(t, pool, service, repository, alice, bob)
+		verifyReviewerIntegration(t, db, pool, service, repository, users)
+		verifyMCPPackageIntegration(t, db, service, users)
 		if os.Getenv("REGISTRY_BROWSER_CHECK") == "1" {
 			model := verifySkillBuilderIntegration(t, pool, service, alice, bob)
 			runRegistryBrowserFixture(t, service, model, users)
@@ -341,6 +343,8 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 	t.Log("registry migration up/down/up, Owner isolation, CSRF, atomic save/rollback, concurrent conflict, history, filters and Skill zip roundtrip passed")
 	verifyGovernanceMigration(t, ctx, db)
 	governanceUsers := verifyGovernanceIntegration(t, pool, service, repository, alice, bob)
+	verifyReviewerIntegration(t, db, pool, service, repository, governanceUsers)
+	verifyMCPPackageIntegration(t, db, service, governanceUsers)
 	model := verifySkillBuilderIntegration(t, pool, service, alice, bob)
 	if os.Getenv("REGISTRY_BROWSER_CHECK") == "1" {
 		runRegistryBrowserFixture(t, service, model, governanceUsers)

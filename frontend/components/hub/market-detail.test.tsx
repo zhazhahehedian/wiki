@@ -103,3 +103,22 @@ it("does not expose template or download actions after access is denied", async 
   ).not.toBeInTheDocument();
   expect(getSkillFiles).not.toHaveBeenCalled();
 });
+
+it("offers a version-pinned MCP download and local running instructions without an endpoint", async () => {
+  vi.mocked(getCatalogCapability).mockResolvedValue({...detail, type:"mcp", versions:[{...detail.versions[0], mcp_transport:"stdio", mcp_auth_scheme:"none"}]});
+  mount();
+  const link = await screen.findByRole("link", {name:"下载 MCP 程序包"});
+  expect(link.getAttribute("href")).toContain("/weekly-report/versions/live/bundle");
+  expect(screen.getByText("本版本通过程序包分发，下载后自行运行。")).toBeInTheDocument();
+  expect(screen.getByRole("heading", {name:"如何使用 MCP"})).toBeInTheDocument();
+  expect(screen.queryByRole("link", {name:"基于此创建"})).not.toBeInTheDocument();
+  expect(getSkillFiles).not.toHaveBeenCalled();
+});
+
+it("keeps remote MCP endpoints usable without showing an unavailable package download", async () => {
+  vi.mocked(getCatalogCapability).mockResolvedValue({...detail, type:"mcp", versions:[{...detail.versions[0], has_bundle:false, mcp_endpoint:"https://example.test/mcp", mcp_transport:"streamable-http"}]});
+  mount();
+  expect(await screen.findByText("https://example.test/mcp")).toBeInTheDocument();
+  expect(screen.queryByRole("link", {name:"下载 MCP 程序包"})).not.toBeInTheDocument();
+  expect(getSkillFiles).not.toHaveBeenCalled();
+});

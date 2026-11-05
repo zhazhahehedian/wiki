@@ -11,6 +11,15 @@ curl --fail-with-body "$BASE/api/v1/open/capabilities" \\
     "description":"搜索团队内容","visibility":"org","version":"1.0.0",
     "mcp_endpoint":"https://mcp.example.com/mcp",
     "mcp_transport":"streamable-http","mcp_auth_scheme":"bearer","tools":[]}'`;
+const mcpPackage=`# mcp-metadata.json 包含以下 JSON（无需预先部署）：
+{"slug":"local-search","type":"mcp","name":"本地搜索",
+ "description":"下载后按 README 运行","visibility":"org","version":"1.0.0",
+ "mcp_transport":"stdio","mcp_auth_scheme":"none","tools":[]}
+
+curl --fail-with-body "$BASE/api/v1/open/capabilities" \\
+  -H "Authorization: Bearer $TOKEN" \\
+  -F 'metadata=<mcp-metadata.json;type=application/json' \\
+  -F 'files=@mcp-server.zip;filename=mcp-server.zip'`;
 const skill=`# metadata.json 包含以下 JSON：
 {"slug":"report-skill","type":"skill","name":"报告助手",
  "description":"整理报告","visibility":"org","version":"1.0.0"}
@@ -54,14 +63,14 @@ export function PublishingAPIDocs(){return <div className="mx-auto max-w-5xl spa
     <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-3">方法 / 相对路径</th><th className="p-3">用途</th><th className="p-3">权限</th></tr></thead><tbody>{[
       ["GET /","分页列出自己的能力；q、type、status、department、limit（1–100）、offset","read"],
       ["GET /{slug}","详情、revision 和版本 ID；仍校验 Owner/Admin/上线可见范围","read"],
-      ["GET /{slug}/versions/{id}/bundle","下载授权可见的 Skill ZIP","read"],
-      ["POST /","注册 MCP JSON 或 Skill multipart；返回 201 草稿","write"],
+      ["GET /{slug}/versions/{id}/bundle","下载授权可见的 MCP 程序包或 Skill ZIP","read"],
+      ["POST /","注册 MCP JSON 或上传 MCP/Skill multipart；返回 201 草稿","write"],
       ["PUT /{slug}","完整更新草稿；必填最新 revision，返回 200","write"],
       ["POST /{slug}/new-draft","已发布或下线后创建新草稿，保留上线版本","write"],
       ["POST /{slug}/submit","提交精确候选版本至审核，返回 200","submit"],
     ].map(([path,purpose,scope])=><tr key={path} className="border-b border-zinc-100"><td className="whitespace-nowrap p-3 font-mono text-xs">{path}</td><td className="min-w-56 p-3 text-zinc-600">{purpose}</td><td className="p-3 font-mono text-xs">capabilities:{scope}</td></tr>)}</tbody></table></div>
   </section>
-  <section className="space-y-3"><h2 className="text-lg font-semibold">请求与返回</h2><p className="text-sm leading-7 text-zinc-600">保存必填 <code>slug、type、name、description、visibility、version</code>；创建的 <code>revision</code> 为 0 或省略，更新必须使用读取响应中的 revision。MCP 另需 mcp_endpoint、mcp_transport、mcp_auth_scheme 和 tools；仅支持 streamable-http，鉴权方式 none / bearer。Endpoint 不得含凭证、查询参数或片段。Skill 使用 multipart 的 metadata JSON 和多个 files；相对路径放在 filename 中，最多 50 文件、共 10 MiB。每次上传替换整个草稿包；仅更新同一未发布版本元数据时可不带 files。</p><p className="text-sm leading-7 text-zinc-600">visibility 为 org / department / allowlist。部门使用 <code>department_id</code>（飞书 open_department_id），名称由服务端确认；名单用 <code>allowlist</code> 中的 open_id。所选部门和用户必须在绑定账号的飞书可见范围内，且账号已完成通讯录授权。名称不用于匹配新的部门权限。</p>
+  <section className="space-y-3"><h2 className="text-lg font-semibold">请求与返回</h2><p className="text-sm leading-7 text-zinc-600">保存必填 <code>slug、type、name、description、visibility、version</code>；创建的 <code>revision</code> 为 0 或省略，更新必须使用读取响应中的 revision。MCP 的 mcp_transport 支持 stdio / streamable-http，mcp_auth_scheme 为 none / bearer。stdio 必须不填 Endpoint、鉴权为 none。HTTP 可选 Endpoint，不得含凭证、查询参数或片段。Endpoint 和程序包至少有一个；tools 声明工具清单。</p><p className="text-sm leading-7 text-zinc-600">MCP 上传使用 multipart 的 metadata JSON 与单个 files ZIP，最大 100 MiB、2000 条目、解压后 500 MiB，不支持加密、符号链接或不安全路径。建议附 README、依赖和启动说明。Skill 上传多个源文件，相对路径放在 filename 中，最多 50 文件、共 10 MiB。上传会替换该草稿版本的完整包；同一未发布版本可不带 files 保留原包，新版本需要重新上传或提供远程 MCP Endpoint。平台存储和分发程序包，不提供运行托管。</p><p className="text-sm leading-7 text-zinc-600">visibility 为 org / department / allowlist。部门使用 <code>department_id</code>（飞书 open_department_id），名称由服务端确认；名单用 <code>allowlist</code> 中的 open_id。所选部门和用户必须在绑定账号的飞书可见范围内，且账号已完成通讯录授权。名称不用于匹配新的部门权限。</p>
     <Code>{`// 保存响应（节选）；读回实际值，勿硬编码 revision 或 ID
 {"slug":"team-search","status":"draft","revision":1,
  "draft_version_id":"<uuid>","is_owner":true,"versions":[{"id":"<uuid>","version":"1.0.0"}]}
@@ -70,6 +79,6 @@ export function PublishingAPIDocs(){return <div className="mx-auto max-w-5xl spa
 // 分页响应
 {"items":[],"has_more":false}`}</Code>
   </section>
-  <section id="examples" className="space-y-5"><h2 className="text-lg font-semibold">调用示例（Bash / curl）</h2><h3 className="font-medium">注册 MCP</h3><Code>{mcp}</Code><h3 className="font-medium">上传 Skill 完整包</h3><Code>{skill}</Code><h3 className="font-medium">提交审核</h3><Code>{submit}</Code><h3 className="font-medium">更新已发布能力</h3><Code>{update}</Code></section>
+  <section id="examples" className="space-y-5"><h2 className="text-lg font-semibold">调用示例（Bash / curl）</h2><h3 className="font-medium">注册远程 MCP</h3><Code>{mcp}</Code><h3 className="font-medium">上传 MCP 程序包</h3><Code>{mcpPackage}</Code><h3 className="font-medium">上传 Skill 完整包</h3><Code>{skill}</Code><h3 className="font-medium">提交审核</h3><Code>{submit}</Code><h3 className="font-medium">更新已发布能力</h3><Code>{update}</Code></section>
   <section className="space-y-3"><h2 className="text-lg font-semibold">错误与重试</h2><p className="text-sm leading-7 text-zinc-600">400：字段、文件路径或 Skill 发布格式不合法；401：凭证缺失、无效、过期或撤销；403：凭证权限、账号角色或飞书目录权限不足；404：资源不存在或对账号不可见；409：revision、状态或版本冲突；502：飞书目录暂不可用。错误为 <code>{'{"error":{"code":"…","message":"…","request_id":"…"}}'}</code>。</p><p className="text-sm leading-7 text-zinc-600">遇到 409 应重新读取并确认差异后提交。网络中断时先 GET 确认保存/提交是否成功，再决定重试；重复创建同一 slug、重复覆盖已发布版本均会冲突。服务不承诺任意写请求可盲目重试。</p></section>
 </div>}

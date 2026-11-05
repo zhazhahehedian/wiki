@@ -45,6 +45,8 @@ export interface CapabilityDetail extends Capability {
   allowlist?: string[];
   is_owner?: boolean;
   is_admin?: boolean;
+  can_review?: boolean;
+  is_review_view?: boolean;
   published?: PublishedMetadata;
 }
 export interface CapabilityInput {
@@ -106,15 +108,17 @@ export function saveCapability(
     { method: slug ? "PUT" : "POST", body },
   );
 }
-export function skillBundleURL(slug: string, version: string) {
+export function capabilityBundleURL(slug: string, version: string) {
   return apiURL(
     `${root}/${encodeURIComponent(slug)}/versions/${encodeURIComponent(version)}/bundle`,
   );
 }
+export const skillBundleURL = capabilityBundleURL;
 
 export interface GovernanceIdentity {
   open_id: string;
   is_admin: boolean;
+  is_reviewer?: boolean;
   department: string;
   department_ids?: string[];
   revision: number;
@@ -240,5 +244,24 @@ export function setTrustedDepartment(
       method: "PUT",
       body: JSON.stringify({ department, revision: profile.revision, reason }),
     },
+  );
+}
+
+export function setReviewer(profile: GovernanceIdentity, isReviewer: boolean, reason: string) {
+  return apiFetch<GovernanceIdentity>(
+    `/api/v1/governance/profiles/${encodeURIComponent(profile.open_id)}/reviewer`,
+    { method: "PUT", body: JSON.stringify({ is_reviewer: isReviewer, revision: profile.revision, reason }) },
+  );
+}
+
+export interface Reviewer {
+  open_id: string;
+  display_name: string;
+  is_admin: boolean;
+}
+
+export function listReviewers(offset: number, signal?: AbortSignal) {
+  return apiFetch<{ items: Reviewer[]; has_more: boolean }>(
+    `/api/v1/governance/reviewers?limit=24&offset=${offset}`, { signal },
   );
 }

@@ -25,7 +25,7 @@ func identity(ctx context.Context, q *generated.Queries, user string) (registry.
 	if e != nil {
 		return registry.Identity{}, e
 	}
-	return registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, Department: row.Department, DepartmentIDs: row.DepartmentIds, Revision: row.Revision}, nil
+	return registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, IsReviewer: row.IsReviewer, Department: row.Department, DepartmentIDs: row.DepartmentIds, Revision: row.Revision}, nil
 }
 func (r *RegistryRepository) Identity(ctx context.Context, user string) (registry.Identity, error) {
 	return identity(ctx, r.q, user)
@@ -103,7 +103,8 @@ func (r *RegistryRepository) Read(ctx context.Context, user, slug string, public
 		return registry.Detail{}, registryError(e)
 	}
 	manage := !publicOnly && (who.IsAdmin || who.OpenID == c.OwnerOpenID)
-	if !manage {
+	review := !publicOnly && who.CanReview(ctx) && c.Status == "in_review"
+	if !manage && !review {
 		m, e := publishedMetadata(c)
 		if e != nil {
 			return registry.Detail{}, e
@@ -119,6 +120,9 @@ func (r *RegistryRepository) Read(ctx context.Context, user, slug string, public
 	if manage {
 		d.IsOwner = who.OpenID == c.OwnerOpenID
 		d.IsAdmin = who.IsAdmin
+		d.CanReview = review
+	} else if review {
+		d = reviewDetail(d)
 	} else {
 		d.Capability, e = publishedCapability(c)
 		if e != nil {
@@ -165,7 +169,7 @@ func (r *RegistryRepository) Reviews(ctx context.Context, user string, f registr
 	if e != nil {
 		return registry.Page{}, e
 	}
-	if !who.IsAdmin {
+	if !who.CanReview(ctx) {
 		return registry.Page{}, registry.ErrForbidden
 	}
 	rows, e := r.q.ListReviewCapabilities(ctx, generated.ListReviewCapabilitiesParams{FilterType: f.Type, FilterDepartment: f.Department, Search: f.Search, PageLimit: f.Limit + 1, PageOffset: f.Offset})
@@ -195,6 +199,11 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 	}
 	defer tx.Rollback(context.Background())
 	q := r.q.WithTx(tx)
+	// Hold the role row until commit. A concurrent revocation either precedes
+	// this read or waits for this complete, audited transition.
+	if e = lockGovernanceRole(ctx, q, user); e != nil {
+		return result, e
+	}
 	who, e := identity(ctx, q, user)
 	if e != nil {
 		return result, e
@@ -204,12 +213,16 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 		return result, e
 	}
 	owner := who.OpenID == c.OwnerOpenID
-	if !who.IsAdmin && !owner {
+	if !who.IsAdmin && !owner && !who.CanReview(ctx) {
 		return result, registry.ErrNotFound
 	}
 	switch action {
-	case "approve", "reject", "force-publish", "visibility":
-		if !who.IsAdmin {
+	case "approve", "reject":
+		if !who.CanReview(ctx) {
+			return result, registry.ErrForbidden
+		}
+	case "force-publish", "visibility":
+		if !who.IsAdmin || registry.CredentialID(ctx) != "" {
 			return result, registry.ErrForbidden
 		}
 	case "submit", "new-draft":
@@ -217,6 +230,9 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 			return result, registry.ErrForbidden
 		}
 	case "offline":
+		if !who.IsAdmin && !owner {
+			return result, registry.ErrForbidden
+		}
 	default:
 		return result, registry.ErrInvalid
 	}
@@ -340,6 +356,12 @@ func (r *RegistryRepository) Act(ctx context.Context, user, slug, action string,
 	}
 	result.IsOwner = owner
 	result.IsAdmin = who.IsAdmin
+	result.CanReview = who.CanReview(ctx) && c.Status == "in_review"
+	if !owner && !who.IsAdmin {
+		// A completed review does not grant ongoing access to the resulting
+		// private release or rejected draft. Return only the operation receipt.
+		result = registry.Detail{Capability: capability(c), Versions: []registry.Version{}, IsReviewView: true}
+	}
 	if e = tx.Commit(ctx); e != nil {
 		return result, errors.Join(registry.ErrCommitUnknown, e)
 	}
@@ -387,7 +409,7 @@ func (r *RegistryRepository) Profiles(ctx context.Context, user string, f regist
 		rows = rows[:f.Limit]
 	}
 	for _, v := range rows {
-		page.Items = append(page.Items, registry.Identity{OpenID: v.OpenID, DisplayName: v.DisplayName, IsAdmin: v.IsAdmin, Department: v.Department, Revision: v.Revision})
+		page.Items = append(page.Items, registry.Identity{OpenID: v.OpenID, DisplayName: v.DisplayName, IsAdmin: v.IsAdmin, IsReviewer: v.IsReviewer, Department: v.Department, Revision: v.Revision})
 	}
 	return page, nil
 }
@@ -416,6 +438,100 @@ func (r *RegistryRepository) SetDepartment(ctx context.Context, user, openID str
 	if e = writeAudit(ctx, q, who.OpenID, "set_department", "profile", openID, map[string]any{"department": input.Department, "revision": row.Revision, "reason": input.Reason}); e != nil {
 		return result, e
 	}
-	result = registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, Department: row.Department, Revision: row.Revision}
+	result = registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, IsReviewer: row.IsReviewer, Department: row.Department, Revision: row.Revision}
 	return result, tx.Commit(ctx)
+}
+
+func reviewDetail(d registry.Detail) registry.Detail {
+	versions := []registry.Version{}
+	for _, v := range d.Versions {
+		if v.ID == d.DraftVersionID || (d.IsLive && v.ID == d.CurrentVersionID) {
+			versions = append(versions, v)
+		}
+	}
+	d.Versions = versions
+	if !d.IsLive {
+		d.Published = nil
+		d.CurrentVersionID = ""
+	}
+	d.CanReview = true
+	d.IsReviewView = true
+	return d
+}
+
+func lockGovernanceRole(ctx context.Context, q *generated.Queries, user string) error {
+	id, e := uuid.Parse(user)
+	if e != nil {
+		return registry.ErrIdentity
+	}
+	_, e = q.LockGovernanceRole(ctx, id)
+	if errors.Is(e, pgx.ErrNoRows) {
+		return nil // A user without a profile has no privileged role.
+	}
+	return e
+}
+
+func (r *RegistryRepository) SetReviewer(ctx context.Context, user, openID string, input registry.ReviewerRequest) (result registry.Identity, err error) {
+	defer func() { err = registryError(err) }()
+	if registry.CredentialID(ctx) != "" {
+		return result, registry.ErrForbidden
+	}
+	tx, e := r.pool.Begin(ctx)
+	if e != nil {
+		return result, e
+	}
+	defer tx.Rollback(context.Background())
+	q := r.q.WithTx(tx)
+	who, e := identity(ctx, q, user)
+	if e != nil {
+		return result, e
+	}
+	if !who.IsAdmin {
+		return result, registry.ErrForbidden
+	}
+	// Lock actor and target in a stable order, including when an Admin edits
+	// their own reviewer flag. This also serializes with review transactions.
+	if _, e = q.LockGovernanceProfiles(ctx, []string{who.OpenID, openID}); e != nil {
+		return result, e
+	}
+	who, e = identity(ctx, q, user)
+	if e != nil {
+		return result, e
+	}
+	if !who.IsAdmin {
+		return result, registry.ErrForbidden
+	}
+	row, e := q.SetReviewer(ctx, generated.SetReviewerParams{OpenID: openID, IsReviewer: *input.IsReviewer, Revision: input.Revision})
+	if errors.Is(e, pgx.ErrNoRows) {
+		return result, registry.ErrConflict
+	}
+	if e != nil {
+		return result, e
+	}
+	if e = writeAudit(ctx, q, who.OpenID, "set_reviewer", "profile", openID, map[string]any{"is_reviewer": row.IsReviewer, "scope": "global", "revision": row.Revision, "reason": input.Reason}); e != nil {
+		return result, e
+	}
+	result = registry.Identity{OpenID: row.OpenID, IsAdmin: row.IsAdmin, IsReviewer: row.IsReviewer, Department: row.Department, Revision: row.Revision}
+	return result, tx.Commit(ctx)
+}
+
+func (r *RegistryRepository) Reviewers(ctx context.Context, user string, f registry.Filter) (registry.ReviewerPage, error) {
+	if _, e := r.Identity(ctx, user); e != nil {
+		return registry.ReviewerPage{}, e
+	}
+	if registry.CredentialID(ctx) != "" {
+		return registry.ReviewerPage{}, registry.ErrForbidden
+	}
+	rows, e := r.q.ListReviewers(ctx, generated.ListReviewersParams{PageLimit: f.Limit + 1, PageOffset: f.Offset})
+	if e != nil {
+		return registry.ReviewerPage{}, e
+	}
+	page := registry.ReviewerPage{Items: []registry.Reviewer{}, HasMore: len(rows) > int(f.Limit)}
+	if page.HasMore {
+		rows = rows[:f.Limit]
+	}
+	for _, row := range rows {
+		page.Items = append(page.Items, registry.Reviewer{OpenID: row.OpenID, DisplayName: row.DisplayName, IsAdmin: row.IsAdmin})
+	}
+	return page, nil
 }

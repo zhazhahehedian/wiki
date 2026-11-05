@@ -7,7 +7,8 @@ import { ArrowLeft, Pencil, Download } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { GovernanceControls } from "./governance-controls";
 import { SkillFiles } from "./skill-files";
-import { getCapability, skillBundleURL } from "@/lib/api/registry";
+import { ReviewerDirectory } from "./reviewer-directory";
+import { getCapability, capabilityBundleURL, skillBundleURL } from "@/lib/api/registry";
 import {
   primaryClass,
   secondaryClass,
@@ -36,11 +37,11 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
   return (
     <div className="space-y-6">
       <Link
-        href="/hub/publications"
+        href={item.is_review_view ? "/hub/reviews" : "/hub/publications"}
         className="inline-flex items-center gap-2 text-sm text-zinc-500"
       >
         <ArrowLeft className="size-4" />
-        我的发布
+        {item.is_review_view ? "审核队列" : "我的发布"}
       </Link>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -63,6 +64,7 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
         )}
       </header>
       <GovernanceControls key={item.revision} item={item} />
+      {item.is_owner && ["draft", "offline", "in_review"].includes(item.status) && <ReviewerDirectory />}
       <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
           <section className="rounded-xl border border-zinc-200 bg-white p-6">
@@ -92,6 +94,12 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
             )}
             {item.type === "mcp" ? (
               <div className="mt-5 space-y-3">
+                {version?.has_bundle && (
+                  <a href={capabilityBundleURL(slug, version.id)} className={secondaryClass}>
+                    <Download className="size-4" />下载 MCP 程序包
+                  </a>
+                )}
+                <p className="text-xs leading-6 text-zinc-500">{version?.has_bundle ? "程序包属于当前选中的版本。下载后按包内 README 安装依赖、配置并运行，平台不托管运行。" : "此版本仅提供远程服务地址，未上传程序包。"}</p>
                 {version?.tools?.length ? (
                   version.tools.map((tool) => (
                     <details
@@ -194,7 +202,7 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
               </section>
             )}
           <section className="rounded-xl border border-zinc-200 bg-white p-6">
-            <h2 className="font-semibold">版本历史</h2>
+            <h2 className="font-semibold">{item.is_review_view ? "本次审核涉及的版本" : "版本历史"}</h2>
             <ul className="mt-4 divide-y divide-zinc-100">
               {item.versions.map((v) => (
                 <li
@@ -230,7 +238,7 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
                 <div>
                   <dt className="text-xs text-zinc-400">Endpoint</dt>
                   <dd className="mt-2 break-all rounded-lg bg-zinc-50 p-3 font-mono text-xs">
-                    {version?.mcp_endpoint}
+                    {version?.mcp_endpoint || "下载程序包后自行运行"}
                   </dd>
                 </div>
                 <div>
@@ -289,7 +297,7 @@ export function CapabilityDetailPage({ slug }: { slug: string }) {
               </div>
             </dl>
             <p className="mt-5 text-xs leading-5 text-zinc-600">
-              {item.is_owner || item.is_admin
+              {item.is_review_view ? "审核视图：仅包含待审材料与当前上线版本对照。" : item.is_owner || item.is_admin
                 ? "管理视图：包含草稿、审核状态和历史版本。"
                 : "当前展示已审核上线且你有权访问的版本。"}
             </p>

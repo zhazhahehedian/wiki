@@ -143,9 +143,11 @@ func newRouter(h Handlers) http.Handler {
 				r.Get("/catalog/{slug}/template", h.Registry.SkillTemplate)
 				r.Get("/governance/me", h.Registry.Identity)
 				r.Get("/governance/reviews", h.Registry.Reviews)
+				r.Get("/governance/reviewers", h.Registry.Reviewers)
 				r.Get("/governance/audit", h.Registry.Audit)
 				r.Get("/governance/profiles", h.Registry.Profiles)
 				r.Put("/governance/profiles/{openID}/department", h.Registry.SetDepartment)
+				r.Put("/governance/profiles/{openID}/reviewer", h.Registry.SetReviewer)
 				for _, action := range []string{"submit", "approve", "reject", "offline", "new-draft", "force-publish", "visibility"} {
 					r.Post("/capabilities/{slug}/"+action, h.Registry.Action(action))
 				}

@@ -154,3 +154,41 @@ it("keeps field labels stable when editing prefilled multiline content", () => {
     detail.description,
   );
 });
+
+it("uploads an MCP package without requiring a deployed endpoint", async () => {
+  const user = userEvent.setup();
+  vi.mocked(saveCapability).mockResolvedValue(detail);
+  mount(detail);
+  await user.click(screen.getByRole("combobox", { name: "传输协议" }));
+  await user.click(await screen.findByRole("option", { name: "stdio · 本地进程" }));
+  expect(screen.queryByLabelText(/Endpoint/)).not.toBeInTheDocument();
+  const zip = new File(["zip fixture"], "server.zip", { type: "application/zip" });
+  await user.upload(screen.getByLabelText("MCP 程序包（ZIP）"), zip);
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+  await waitFor(() => expect(saveCapability).toHaveBeenCalledWith(expect.objectContaining({mcp_endpoint:"", mcp_transport:"stdio", mcp_auth_scheme:"none"}), [zip], "search"));
+});
+
+it("retains an existing MCP draft package but requires a package for the next version", async () => {
+  const user = userEvent.setup();
+  vi.mocked(saveCapability).mockResolvedValue(detail);
+  mount({...detail, versions:[{...detail.versions[0], has_bundle:true, mcp_endpoint:"", mcp_transport:"stdio", mcp_auth_scheme:"none"}]});
+  expect(screen.getByText(/当前草稿已有程序包/)).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+  await waitFor(() => expect(saveCapability).toHaveBeenCalledTimes(1));
+  await user.clear(screen.getByLabelText(/版本号/));
+  await user.type(screen.getByLabelText(/版本号/), "2.0.0");
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("新版本需要重新上传程序包");
+  expect(saveCapability).toHaveBeenCalledTimes(1);
+});
+
+it("rejects MCP ZIPs above the limit before saving", async () => {
+  const user = userEvent.setup();
+  mount(detail);
+  const zip = new File(["small"], "large.zip", {type:"application/zip"});
+  Object.defineProperty(zip, "size", {value:100*1024*1024+1});
+  await user.upload(screen.getByLabelText("MCP 程序包（ZIP）"), zip);
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("100 MiB");
+  expect(saveCapability).not.toHaveBeenCalled();
+});

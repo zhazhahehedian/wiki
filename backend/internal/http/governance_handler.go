@@ -169,3 +169,39 @@ func (h *RegistryHandler) SetDepartment(w http.ResponseWriter, r *http.Request) 
 	}
 	WriteJSON(w, 200, d)
 }
+
+func (h *RegistryHandler) SetReviewer(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	var input registry.ReviewerRequest
+	if e := decodeGovernance(w, r, &input); e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	out, e := h.service.SetReviewer(r.Context(), user, chi.URLParam(r, "openID"), input)
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	WriteJSON(w, 200, out)
+}
+
+func (h *RegistryHandler) Reviewers(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	f, e := registryFilter(r)
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	out, e := h.service.Reviewers(r.Context(), user, f)
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	WriteJSON(w, 200, out)
+}

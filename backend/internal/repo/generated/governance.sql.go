@@ -61,6 +61,7 @@ func (q *Queries) GetCapability(ctx context.Context, slug string) (Capability, e
 
 const governanceIdentity = `-- name: GovernanceIdentity :one
 SELECT a.provider_user_id AS open_id, COALESCE(p.is_admin, false)::boolean AS is_admin,
+    COALESCE(p.is_reviewer, false)::boolean AS is_reviewer,
     COALESCE(p.department, '')::text AS department, COALESCE(p.revision, 0)::bigint AS revision,
     CASE WHEN m.expires_at>now() AND NOT a.reauth_required
         AND a.scopes @> ARRAY['contact:contact.base:readonly','contact:department.base:readonly','contact:user.base:readonly','contact:user.department:readonly']::text[]
@@ -73,6 +74,7 @@ WHERE a.user_id=$1 AND a.provider='feishu'
 type GovernanceIdentityRow struct {
 	OpenID        string   `json:"open_id"`
 	IsAdmin       bool     `json:"is_admin"`
+	IsReviewer    bool     `json:"is_reviewer"`
 	Department    string   `json:"department"`
 	Revision      int64    `json:"revision"`
 	DepartmentIds []string `json:"department_ids"`
@@ -84,6 +86,7 @@ func (q *Queries) GovernanceIdentity(ctx context.Context, userID uuid.UUID) (Gov
 	err := row.Scan(
 		&i.OpenID,
 		&i.IsAdmin,
+		&i.IsReviewer,
 		&i.Department,
 		&i.Revision,
 		&i.DepartmentIds,
@@ -271,6 +274,7 @@ func (q *Queries) ListGovernanceAudit(ctx context.Context, arg ListGovernanceAud
 
 const listPlatformProfiles = `-- name: ListPlatformProfiles :many
 SELECT a.provider_user_id AS open_id, u.display_name,
+    COALESCE(p.is_reviewer, false)::boolean AS is_reviewer,
     COALESCE(p.is_admin, false)::boolean AS is_admin, COALESCE(p.department,'')::text AS department,
     COALESCE(p.revision,0)::bigint AS revision
 FROM oauth_accounts a JOIN users u ON u.id=a.user_id
@@ -288,6 +292,7 @@ type ListPlatformProfilesParams struct {
 type ListPlatformProfilesRow struct {
 	OpenID      string `json:"open_id"`
 	DisplayName string `json:"display_name"`
+	IsReviewer  bool   `json:"is_reviewer"`
 	IsAdmin     bool   `json:"is_admin"`
 	Department  string `json:"department"`
 	Revision    int64  `json:"revision"`
@@ -305,6 +310,7 @@ func (q *Queries) ListPlatformProfiles(ctx context.Context, arg ListPlatformProf
 		if err := rows.Scan(
 			&i.OpenID,
 			&i.DisplayName,
+			&i.IsReviewer,
 			&i.IsAdmin,
 			&i.Department,
 			&i.Revision,
@@ -380,6 +386,47 @@ func (q *Queries) ListReviewCapabilities(ctx context.Context, arg ListReviewCapa
 	return items, nil
 }
 
+const listReviewers = `-- name: ListReviewers :many
+SELECT p.open_id, u.display_name, p.is_admin
+FROM platform_profiles p
+JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=p.open_id
+JOIN users u ON u.id=a.user_id
+WHERE (p.is_admin OR p.is_reviewer)
+ORDER BY p.is_admin DESC, u.display_name, p.open_id
+LIMIT $2 OFFSET $1
+`
+
+type ListReviewersParams struct {
+	PageOffset int32 `json:"page_offset"`
+	PageLimit  int32 `json:"page_limit"`
+}
+
+type ListReviewersRow struct {
+	OpenID      string `json:"open_id"`
+	DisplayName string `json:"display_name"`
+	IsAdmin     bool   `json:"is_admin"`
+}
+
+func (q *Queries) ListReviewers(ctx context.Context, arg ListReviewersParams) ([]ListReviewersRow, error) {
+	rows, err := q.db.Query(ctx, listReviewers, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListReviewersRow{}
+	for rows.Next() {
+		var i ListReviewersRow
+		if err := rows.Scan(&i.OpenID, &i.DisplayName, &i.IsAdmin); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAdminBootstrap = `-- name: LockAdminBootstrap :exec
 SELECT pg_advisory_xact_lock(684291573)
 `
@@ -417,6 +464,44 @@ func (q *Queries) LockCapability(ctx context.Context, slug string) (Capability, 
 		&i.DepartmentID,
 	)
 	return i, err
+}
+
+const lockGovernanceProfiles = `-- name: LockGovernanceProfiles :many
+SELECT open_id FROM platform_profiles WHERE open_id=ANY($1::text[])
+ORDER BY open_id FOR UPDATE
+`
+
+func (q *Queries) LockGovernanceProfiles(ctx context.Context, dollar_1 []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, lockGovernanceProfiles, dollar_1)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var open_id string
+		if err := rows.Scan(&open_id); err != nil {
+			return nil, err
+		}
+		items = append(items, open_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockGovernanceRole = `-- name: LockGovernanceRole :one
+SELECT p.open_id FROM platform_profiles p
+JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=p.open_id
+WHERE a.user_id=$1 FOR SHARE OF p
+`
+
+func (q *Queries) LockGovernanceRole(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, lockGovernanceRole, userID)
+	var open_id string
+	err := row.Scan(&open_id)
+	return open_id, err
 }
 
 const markVersionPublished = `-- name: MarkVersionPublished :exec
@@ -520,6 +605,36 @@ func (q *Queries) SetCapabilityVisibility(ctx context.Context, arg SetCapability
 	return i, err
 }
 
+const setReviewer = `-- name: SetReviewer :one
+INSERT INTO platform_profiles(open_id,is_reviewer)
+SELECT $1,$2 WHERE EXISTS (
+    SELECT 1 FROM oauth_accounts WHERE provider='feishu' AND provider_user_id=$1)
+AND ($3::bigint=0 OR EXISTS(SELECT 1 FROM platform_profiles WHERE open_id=$1 AND revision=$3))
+ON CONFLICT(open_id) DO UPDATE SET is_reviewer=EXCLUDED.is_reviewer,revision=platform_profiles.revision+1,updated_at=now()
+WHERE platform_profiles.revision=$3
+RETURNING open_id, is_admin, department, revision, updated_at, is_reviewer
+`
+
+type SetReviewerParams struct {
+	OpenID     string `json:"open_id"`
+	IsReviewer bool   `json:"is_reviewer"`
+	Revision   int64  `json:"revision"`
+}
+
+func (q *Queries) SetReviewer(ctx context.Context, arg SetReviewerParams) (PlatformProfile, error) {
+	row := q.db.QueryRow(ctx, setReviewer, arg.OpenID, arg.IsReviewer, arg.Revision)
+	var i PlatformProfile
+	err := row.Scan(
+		&i.OpenID,
+		&i.IsAdmin,
+		&i.Department,
+		&i.Revision,
+		&i.UpdatedAt,
+		&i.IsReviewer,
+	)
+	return i, err
+}
+
 const setTrustedDepartment = `-- name: SetTrustedDepartment :one
 INSERT INTO platform_profiles(open_id,department)
 SELECT $1,$2 WHERE EXISTS (
@@ -527,7 +642,7 @@ SELECT $1,$2 WHERE EXISTS (
 AND ($3::bigint=0 OR EXISTS(SELECT 1 FROM platform_profiles WHERE open_id=$1 AND revision=$3))
 ON CONFLICT(open_id) DO UPDATE SET department=EXCLUDED.department,revision=platform_profiles.revision+1,updated_at=now()
 WHERE platform_profiles.revision=$3
-RETURNING open_id, is_admin, department, revision, updated_at
+RETURNING open_id, is_admin, department, revision, updated_at, is_reviewer
 `
 
 type SetTrustedDepartmentParams struct {
@@ -545,6 +660,7 @@ func (q *Queries) SetTrustedDepartment(ctx context.Context, arg SetTrustedDepart
 		&i.Department,
 		&i.Revision,
 		&i.UpdatedAt,
+		&i.IsReviewer,
 	)
 	return i, err
 }

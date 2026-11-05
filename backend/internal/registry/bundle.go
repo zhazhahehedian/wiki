@@ -11,6 +11,27 @@ import (
 const MaxBundleBytes = 10 << 20
 const MaxBundleFiles = 50
 
+func validBundlePath(name string) bool {
+	if !utf8.ValidString(name) || !fs.ValidPath(name) || name == "." || len(name) > 240 || strings.ContainsAny(name, "\\:\x00\r\n<>\"|?*") {
+		return false
+	}
+	for _, char := range name {
+		if char < 32 || char == 127 {
+			return false
+		}
+	}
+	for _, part := range strings.Split(name, "/") {
+		stem := strings.ToUpper(strings.SplitN(part, ".", 2)[0])
+		if stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" || (len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && stem[3] >= '1' && stem[3] <= '9') {
+			return false
+		}
+		if strings.TrimSpace(part) != part || strings.HasSuffix(part, ".") {
+			return false
+		}
+	}
+	return true
+}
+
 // PackSkill never extracts archives or executes attachments. Paths are portable
 // relative paths beneath one skill directory, with a required root SKILL.md.
 func PackSkill(slug string, files []File) ([]byte, error) {
@@ -23,22 +44,8 @@ func PackSkill(slug string, files []File) ([]byte, error) {
 	for _, f := range files {
 		name := f.Name
 		folded := strings.ToLower(name)
-		if !fs.ValidPath(name) || name == "." || len(name) > 240 || strings.ContainsAny(name, "\\:\x00\r\n<>\"|?*") || seen[folded] {
+		if !validBundlePath(name) || seen[folded] {
 			return nil, ErrInvalid
-		}
-		for _, char := range name {
-			if char < 32 || char == 127 {
-				return nil, ErrInvalid
-			}
-		}
-		for _, part := range strings.Split(name, "/") {
-			stem := strings.ToUpper(strings.SplitN(part, ".", 2)[0])
-			if stem == "CON" || stem == "PRN" || stem == "AUX" || stem == "NUL" || (len(stem) == 4 && (strings.HasPrefix(stem, "COM") || strings.HasPrefix(stem, "LPT")) && stem[3] >= '1' && stem[3] <= '9') {
-				return nil, ErrInvalid
-			}
-			if strings.TrimSpace(part) != part || strings.HasSuffix(part, ".") {
-				return nil, ErrInvalid
-			}
 		}
 		seen[folded] = true
 		size += len(f.Data)

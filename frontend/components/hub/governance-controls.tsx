@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Select } from "@/components/ui/select";
 import { DirectoryPicker } from "./directory-picker";
+import { APIError } from "@/lib/api/client";
 import {
   actOnCapability,
   type CapabilityDetail,
@@ -52,7 +53,8 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
     actions.push("submit");
   if (item.is_owner && ["published", "offline"].includes(item.status))
     actions.push("new-draft");
-  if (item.is_admin && item.status === "in_review")
+  const canReview = item.can_review ?? item.is_admin;
+  if (canReview && item.status === "in_review")
     actions.push("approve", "reject");
   if ((item.is_admin || item.is_owner) && item.is_live) actions.push("offline");
   if (
@@ -63,7 +65,7 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
     actions.push("force-publish");
   if (item.is_admin && item.is_live && item.status !== "in_review")
     actions.push("visibility");
-  if (!item.is_admin && !item.is_owner) return null;
+  if (!item.is_admin && !item.is_owner && !canReview) return null;
   async function execute() {
     if (!action) return;
     const version = ["offline", "new-draft", "visibility"].includes(action)
@@ -89,7 +91,13 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
             }
           : {}),
       });
-      client.setQueryData(["registry", "detail", item.slug], result);
+      if (item.is_review_view) {
+        client.removeQueries({ queryKey: ["registry", "files", item.slug] });
+        client.removeQueries({ queryKey: ["registry", "detail", item.slug] });
+        router.push("/hub/reviews");
+      } else {
+        client.setQueryData(["registry", "detail", item.slug], result);
+      }
       await client.invalidateQueries({ queryKey: ["registry"] });
       setAction(undefined);
       setReason("");
@@ -97,6 +105,10 @@ export function GovernanceControls({ item }: { item: CapabilityDetail }) {
         router.push(`/hub/registry/${item.slug}/edit`);
     } catch (e) {
       setError(e);
+      if (e instanceof APIError && (e.status === 403 || e.status === 404)) {
+        client.removeQueries({ queryKey: ["registry", "files", item.slug] });
+        void client.invalidateQueries({ queryKey: ["registry"] });
+      }
     } finally {
       setBusy(false);
     }

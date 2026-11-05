@@ -1,5 +1,6 @@
 -- name: GovernanceIdentity :one
 SELECT a.provider_user_id AS open_id, COALESCE(p.is_admin, false)::boolean AS is_admin,
+    COALESCE(p.is_reviewer, false)::boolean AS is_reviewer,
     COALESCE(p.department, '')::text AS department, COALESCE(p.revision, 0)::bigint AS revision,
     CASE WHEN m.expires_at>now() AND NOT a.reauth_required
         AND a.scopes @> ARRAY['contact:contact.base:readonly','contact:department.base:readonly','contact:user.base:readonly','contact:user.department:readonly']::text[]
@@ -73,6 +74,7 @@ ORDER BY created_at DESC, id DESC LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(pag
 
 -- name: ListPlatformProfiles :many
 SELECT a.provider_user_id AS open_id, u.display_name,
+    COALESCE(p.is_reviewer, false)::boolean AS is_reviewer,
     COALESCE(p.is_admin, false)::boolean AS is_admin, COALESCE(p.department,'')::text AS department,
     COALESCE(p.revision,0)::bigint AS revision
 FROM oauth_accounts a JOIN users u ON u.id=a.user_id
@@ -91,6 +93,33 @@ RETURNING *;
 
 -- name: IsPlatformAdmin :one
 SELECT EXISTS(SELECT 1 FROM platform_profiles WHERE open_id=$1 AND is_admin);
+
+-- name: LockGovernanceRole :one
+SELECT p.open_id FROM platform_profiles p
+JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=p.open_id
+WHERE a.user_id=$1 FOR SHARE OF p;
+
+-- name: LockGovernanceProfiles :many
+SELECT open_id FROM platform_profiles WHERE open_id=ANY($1::text[])
+ORDER BY open_id FOR UPDATE;
+
+-- name: SetReviewer :one
+INSERT INTO platform_profiles(open_id,is_reviewer)
+SELECT sqlc.arg(open_id),sqlc.arg(is_reviewer) WHERE EXISTS (
+    SELECT 1 FROM oauth_accounts WHERE provider='feishu' AND provider_user_id=sqlc.arg(open_id))
+AND (sqlc.arg(revision)::bigint=0 OR EXISTS(SELECT 1 FROM platform_profiles WHERE open_id=sqlc.arg(open_id) AND revision=sqlc.arg(revision)))
+ON CONFLICT(open_id) DO UPDATE SET is_reviewer=EXCLUDED.is_reviewer,revision=platform_profiles.revision+1,updated_at=now()
+WHERE platform_profiles.revision=sqlc.arg(revision)
+RETURNING *;
+
+-- name: ListReviewers :many
+SELECT p.open_id, u.display_name, p.is_admin
+FROM platform_profiles p
+JOIN oauth_accounts a ON a.provider='feishu' AND a.provider_user_id=p.open_id
+JOIN users u ON u.id=a.user_id
+WHERE (p.is_admin OR p.is_reviewer)
+ORDER BY p.is_admin DESC, u.display_name, p.open_id
+LIMIT sqlc.arg(page_limit) OFFSET sqlc.arg(page_offset);
 
 -- name: SetCapabilityVisibility :one
 UPDATE capabilities SET visibility=$2,department=$3,department_id=$4 WHERE id=$1 RETURNING *;

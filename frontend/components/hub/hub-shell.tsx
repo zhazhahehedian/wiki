@@ -60,6 +60,7 @@ export function HubShell({ children }: { children: ReactNode }) {
     queryKey: ["registry", "identity"],
     queryFn: ({ signal }) => getGovernanceIdentity(signal),
     enabled: !!user,
+    refetchInterval: 30_000,
   });
   const unauthorized =
     expired ||
@@ -100,7 +101,7 @@ export function HubShell({ children }: { children: ReactNode }) {
     {
       "/hub/reviews": "审核队列",
       "/hub/audit": "审计日志",
-      "/hub/profiles": "部门授权",
+      "/hub/profiles": "用户与审核授权",
     }[pathname] ??
     "能力中心";
   const isPlayground = pathname === "/hub/playground";
@@ -148,13 +149,15 @@ export function HubShell({ children }: { children: ReactNode }) {
           </Link>
         ))}
       </nav>
-      {governance.data?.is_admin && (
+      {(governance.data?.is_admin || governance.data?.is_reviewer) && (
         <div className="mx-6 mt-8 border-t border-zinc-200 pt-5">
           <p className="text-[10px] tracking-widest text-zinc-500">治理</p>
           {[
             { href: "/hub/reviews", label: "审核队列", icon: ShieldCheck },
-            { href: "/hub/audit", label: "审计日志", icon: ScrollText },
-            { href: "/hub/profiles", label: "部门授权", icon: Settings },
+            ...(governance.data?.is_admin ? [
+              { href: "/hub/audit", label: "审计日志", icon: ScrollText },
+              { href: "/hub/profiles", label: "用户与审核授权", icon: Settings },
+            ] : []),
           ].map(({ href, label, icon: Icon }) => (
             <Link
               key={href}

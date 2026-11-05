@@ -100,11 +100,16 @@ func validate(r *SaveRequest) error {
 		}
 		return nil
 	}
-	u, e := url.Parse(r.MCPEndpoint)
-	if e != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" || u.RawQuery != "" || len(r.MCPEndpoint) > 2048 {
+	if r.MCPEndpoint != "" {
+		u, e := url.Parse(r.MCPEndpoint)
+		if e != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" || u.RawQuery != "" || len(r.MCPEndpoint) > 2048 {
+			return ErrInvalid
+		}
+	}
+	if (r.MCPTransport != "streamable-http" && r.MCPTransport != "stdio") || (r.MCPAuthScheme != "none" && r.MCPAuthScheme != "bearer") || len(r.Tools) > 100 {
 		return ErrInvalid
 	}
-	if r.MCPTransport != "streamable-http" || (r.MCPAuthScheme != "none" && r.MCPAuthScheme != "bearer") || len(r.Tools) > 100 {
+	if r.MCPTransport == "stdio" && (r.MCPEndpoint != "" || r.MCPAuthScheme != "none") {
 		return ErrInvalid
 	}
 	seen = map[string]bool{}
@@ -150,25 +155,31 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 		return Detail{}, ErrConflict
 	}
 	uploaded := ""
-	if r.Type == "skill" {
-		if len(files) > 0 {
-			bundle, err := PackSkill(r.Slug, files)
-			if err != nil {
-				return Detail{}, err
-			}
-			uploaded = "registry/" + uuid.NewString() + ".zip"
-			v.BundleKey = uploaded
-			if err = s.storage.Put(ctx, uploaded, bytes.NewReader(bundle), int64(len(bundle)), "application/zip"); err != nil {
-				s.cleanupBundle(uploaded)
-				return Detail{}, fmt.Errorf("store skill bundle: %w", err)
-			}
+	if len(files) > 0 {
+		var bundle []byte
+		var err error
+		if r.Type == "skill" {
+			bundle, err = PackSkill(r.Slug, files)
+		} else {
+			bundle, err = validateMCPBundle(ctx, files)
 		}
+		if err != nil {
+			return Detail{}, err
+		}
+		uploaded = "registry/" + uuid.NewString() + ".zip"
+		v.BundleKey = uploaded
+		if err = s.storage.Put(ctx, uploaded, bytes.NewReader(bundle), int64(len(bundle)), "application/zip"); err != nil {
+			s.cleanupBundle(uploaded)
+			return Detail{}, fmt.Errorf("store capability bundle: %w", err)
+		}
+	}
+	if r.Type == "skill" {
 		if v.BundleKey == "" {
 			return Detail{}, ErrInvalid
 		}
 		v.SkillManifest, _ = json.Marshal(map[string]string{"name": r.Name, "description": r.Description})
-	} else if len(files) > 0 {
-		return Detail{}, ErrInvalid
+	} else if v.BundleKey == "" && v.MCPEndpoint == "" {
+		return Detail{}, ErrMCPPackage
 	}
 	saved, e := s.repo.Save(ctx, owner, slug, r, v)
 	if e != nil {

@@ -235,6 +235,7 @@ type PlatformProfile struct {
 	Department string    `json:"department"`
 	Revision   int64     `json:"revision"`
 	UpdatedAt  time.Time `json:"updated_at"`
+	IsReviewer bool      `json:"is_reviewer"`
 }
 
 type PublishingCredential struct {
