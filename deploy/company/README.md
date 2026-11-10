@@ -59,8 +59,10 @@ release/capability-hub-<TAG>/
 
 ## 5. 配置变更
 
-只改配置（不换镜像）时：先备份 `config/backend.env`，修改后执行 `sudo bash scripts/start-backend.sh`，compose 会因配置变化重建后端。常见项：
+只改配置（不换镜像）时：先备份 `config/backend.env`，修改后执行 `sudo bash scripts/start-backend.sh`，compose 会因配置变化重建后端。后端应用配置（模型、飞书等）只写 `config/backend.env`；`config/compose.env` 仅存镜像版本等编排变量，不会传入后端容器。改完用 `sudo /usr/local/bin/docker exec capability-hub-company-backend-1 env | grep -o '^变量名前缀[A-Z_]*'` 确认生效（只输出变量名）。常见项：
 
+- `KNOWLEDGE_VISION_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、`KNOWLEDGE_VISION_API_KEY`、`KNOWLEDGE_VISION_MODEL=qwen3.7-plus`：DOCX 图片识别，三项同时配置；未配置时图片只警告。配置后需对已失败文档「重试索引」。
+- `EMBEDDING_PROVIDER=openai`、`EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、`EMBEDDING_MODEL=text-embedding-v4`、`EMBEDDING_DIM=1024`：2026-11-10 起的 embedding 配置。更换 embedding 模型后旧知识库不可检索，需新建知识库并重新上传。
 - `PLAYGROUND_TRUSTED_ORIGINS=https://tokenhub.robosense.cn`：内网模型网关解析为私有地址，需要加入白名单才能在游乐场使用。
 - 前置网关（`capability-hub-gateway`，Caddy）：MCP 程序包网页分片上传每个请求约 8 MiB，请求体上限不能低于 9 MiB；程序包下载最长 15 分钟，读写超时不应更短。
 - `FEISHU_NOTIFY_ENABLED=true`：开放平台启用机器人与 `im:message:send_as_bot` 后开启，见 [飞书消息通知](../../docs/feishu-notifications.md)。

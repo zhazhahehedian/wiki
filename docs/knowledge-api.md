@@ -46,9 +46,11 @@ score 为最终排序信号，不是答案正确率，也不再统一表示余�
 
 新增可选配置 `KNOWLEDGE_OPTIMIZER_BASE_URL`、`KNOWLEDGE_OPTIMIZER_API_KEY`、`KNOWLEDGE_OPTIMIZER_MODEL`，三项同时设置，使用 Chat Completions 兼容端点（base 通常以 `/v1` 结尾），要求 JSON 文本及 `finish_reason=stop`。平台运营方须选择能处理内部问题和授权文档的模型服务，配置独立于人员游乐场。问题与候选仅用于本次请求，不持久化、不写日志，不发会话历史、不启用工具。发送候选前再次复核授权与活动版本。
 
-`EMBEDDING_PROVIDER` 默认为 `openai`，可选 `dashscope`。DashScope 适配当前限定为 `tongyi-embedding-vision-plus-2026-03-06` 的纯文本输入，base 为 `https://dashscope.aliyuncs.com/api/v1`，显式发送 `parameters.dimension`（支持 64/128/256/512/1024/1152）。请求按最多 20 条拆批，严格校验条数、索引唯一性、模态和维度，不跟随重定向，不记录上游错误正文。
+`EMBEDDING_PROVIDER` 默认为 `openai`，可选 `dashscope`。2026-11-10 起推荐百炼 `text-embedding-v4`：`openai` 适配，base 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，维度 1024。`openai` 适配按最多 10 条拆批（text-embedding-v4 的上限），`aliyuncs.com` 域名显式发送 `dimensions`；严格校验条数、索引唯一性和维度，响应上限 8 MiB，不跟随重定向，错误不含上游正文。该模型单条上限 8192 token，平台不设字节预算，按 1200 字符切片。`dashscope` 适配仍限定为 `tongyi-embedding-vision-plus-2026-03-06` 的纯文本输入，base 为 `https://dashscope.aliyuncs.com/api/v1`，显式发送 `parameters.dimension`（支持 64/128/256/512/1024/1152），按最多 20 条拆批。
 
-该视觉模型每条文本上限为 1024 token。本实现用完整输入不超过 768 UTF-8 字节的保守预算预切片（包括章节标题和换行），不是精确 tokenizer；普通段落保留重叠及引用位置，超限表格按行切分并重复表头，超限标题返回解析诊断。搜索原问题超限返回 `invalid_request`，改写超限按原问题降级。embedding 仍只接收文本；DOCX 图片由独立视觉模型转写为文本后再嵌入，见上文。DeepSeek 官方 `api.deepseek.com` 的 `deepseek-flash` 会发送 `thinking.type=disabled` 与 `response_format.type=json_object`；其他模型端点不附加这些提供商字段。参考：[百炼多模态接口](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
+知识库和文档版本记录建库/上传时的 embedding 模型。更换模型（即使维度相同）后，已有活动版本的知识库检索返回 `knowledge_not_ready`，按旧模型记录的待处理版本重试会以 `embedding_configuration_changed` 失败；须新建知识库并重新上传，平台不自动重建索引。
+
+`tongyi-embedding-vision-plus` 每条文本上限为 1024 token，使用该模型时以完整输入不超过 768 UTF-8 字节的保守预算预切片（包括章节标题和换行），不是精确 tokenizer；普通段落保留重叠及引用位置，超限表格按行切分并重复表头，超限标题返回解析诊断。搜索原问题超限返回 `invalid_request`，改写超限按原问题降级。embedding 只接收文本；DOCX 图片由独立视觉模型转写为文本后再嵌入，见上文。DeepSeek 官方 `api.deepseek.com` 的 `deepseek-flash` 会发送 `thinking.type=disabled` 与 `response_format.type=json_object`；其他模型端点不附加这些提供商字段。参考：[百炼多模态接口](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
 
 改写预算 3 秒，单路 embedding 8 秒，重排 5 秒，总请求仍为 25 秒。响应上限 64 KiB，禁重定向和自动重试。模型缺配时使用原问题混合召回及基础重排；模型超时/格式错误时退回对应基础路径，保留原始查询。原始 embedding 或数据库故障仍返回错误，不伪装成无答案。
 
