@@ -25,6 +25,7 @@ INFRA_NETWORK=1panel-network
 - 前端构建时将 `NEXT_PUBLIC_API_BASE_URL` 设为空，通过同源 `/api` 访问后端。不要把本机 `.env.local` 打包进镜像。
 - embedding 必须确定模型、接口地址、实际输出维度及密钥。0017 会固定向量维度；未配置 embedding 时知识路由不装配，但启动仍会运行数据库迁移。
 - 重排配置使用 Chat Completions 兼容接口，三项 `KNOWLEDGE_OPTIMIZER_*` 同时提供。
+- DOCX 图片识别可选，三项 `KNOWLEDGE_VISION_*` 同时提供：百炼北京 `KNOWLEDGE_VISION_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`、`KNOWLEDGE_VISION_MODEL=qwen3.7-plus`，密钥可与 embedding 共用同一个百炼 API Key。未配置时图片只给警告、不阻断发布。
 - 本次已选百炼北京 `tongyi-embedding-vision-plus-2026-03-06`：`EMBEDDING_PROVIDER=dashscope`、`EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/api/v1`、`EMBEDDING_DIM=1024`；原生接口适配只用于文本。优化模型为 `deepseek-flash`，base 为 `https://api.deepseek.com`。输入预算及限制见 [知识服务 API](../docs/knowledge-api.md)。先在隔离环境验证两套密钥，再启动业务库服务。
 
 ## 构建与上线

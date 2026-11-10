@@ -27,4 +27,6 @@ type Worker struct {
 func (w *Worker) Work(ctx context.Context, j *river.Job[Job]) error {
 	return w.Service.Process(ctx, j.Args.VersionID)
 }
-func (w *Worker) Timeout(*river.Job[Job]) time.Duration { return 10 * time.Minute }
+
+// Image recognition calls a vision model per DOCX image, so allow more time.
+func (w *Worker) Timeout(*river.Job[Job]) time.Duration { return 30 * time.Minute }

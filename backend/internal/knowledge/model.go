@@ -52,6 +52,29 @@ type Locator struct {
 type Block struct {
 	Content string  `json:"content"`
 	Locator Locator `json:"locator"`
+	// table keeps row boundaries so oversized tables split with their header.
+	table *table
+	// image is the 1-based Preview.images index of a pending image placeholder.
+	image int
+}
+type table struct {
+	header []string
+	rows   []tableRow
+}
+
+// tableRow start/end are source lines (Markdown) or paragraphs (DOCX).
+type tableRow struct {
+	text       string
+	start, end int
+}
+
+// docImage is one image occurrence in a DOCX body. Bytes stay in memory only
+// for the current indexing run and are never serialized into the preview.
+type docImage struct {
+	index, paragraph int
+	alt, key         string
+	data             []byte
+	problem          string
 }
 type Diagnostic struct {
 	Code     string `json:"code"`
@@ -63,6 +86,7 @@ type Preview struct {
 	Blocks      []Block      `json:"blocks"`
 	Diagnostics []Diagnostic `json:"diagnostics"`
 	Format      string       `json:"format"`
+	images      []docImage
 }
 type Version struct {
 	ID         string  `json:"id"`

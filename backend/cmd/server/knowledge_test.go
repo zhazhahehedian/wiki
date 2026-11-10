@@ -31,6 +31,16 @@ func TestKnowledgeRejectsPartialOptimizerConfiguration(t *testing.T) {
 	}
 }
 
+func TestKnowledgeRejectsPartialVisionConfiguration(t *testing.T) {
+	for _, key := range []string{"EMBEDDING_MODEL", "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY", "KNOWLEDGE_MIN_SCORE", "KNOWLEDGE_OPTIMIZER_BASE_URL", "KNOWLEDGE_OPTIMIZER_API_KEY", "KNOWLEDGE_OPTIMIZER_MODEL", "KNOWLEDGE_VISION_BASE_URL", "KNOWLEDGE_VISION_API_KEY"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("KNOWLEDGE_VISION_MODEL", "qwen3.7-plus")
+	if _, _, err := buildKnowledge(nil, nil); err == nil {
+		t.Fatal("partial vision config accepted")
+	}
+}
+
 func TestKnowledgeRejectsInvalidScoreConfiguration(t *testing.T) {
 	for _, key := range []string{"EMBEDDING_MODEL", "EMBEDDING_BASE_URL", "EMBEDDING_API_KEY"} {
 		t.Setenv(key, "")

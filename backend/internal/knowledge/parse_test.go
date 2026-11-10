@@ -5,11 +5,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
 
 func docxFixture(t *testing.T, body string) []byte {
+	return docxPackage(t, body, nil)
+}
+
+// docxPackage builds a minimal DOCX; extra holds additional parts such as
+// word/_rels/document.xml.rels and word/media files.
+func docxPackage(t *testing.T, body string, extra map[string][]byte) []byte {
 	t.Helper()
 	var b bytes.Buffer
 	z := zip.NewWriter(&b)
@@ -19,7 +26,19 @@ func docxFixture(t *testing.T, body string) []byte {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, _ = f.Write([]byte(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` + body + `</w:body></w:document>`))
+	_, _ = f.Write([]byte(`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:v="urn:schemas-microsoft-com:vml"><w:body>` + body + `</w:body></w:document>`))
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		w, e := z.Create(name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		_, _ = w.Write(extra[name])
+	}
 	if e = z.Close(); e != nil {
 		t.Fatal(e)
 	}
@@ -29,13 +48,18 @@ func TestStrictFormatsAndQuality(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body []byte
-	}{{"a.csv", []byte("a,b")}, {"a.xlsx", []byte("PK")}, {"a.doc", []byte("legacy")}, {"a.txt", []byte{0xff, 0x00}}, {"a.txt", nil}, {"a.pdf", []byte("not pdf")}, {"a.docx", []byte("not zip")}, {"a.md", []byte("正文\n![制度](image.png)")}} {
+	}{{"a.csv", []byte("a,b")}, {"a.xlsx", []byte("PK")}, {"a.doc", []byte("legacy")}, {"a.txt", []byte{0xff, 0x00}}, {"a.txt", nil}, {"a.pdf", []byte("not pdf")}, {"a.docx", []byte("not zip")}} {
 		t.Run(tc.name+fmt.Sprint(len(tc.body)), func(t *testing.T) {
 			p := Parse(context.Background(), tc.name, tc.body)
 			if p.Valid() {
 				t.Fatal("invalid content passed", p)
 			}
 		})
+	}
+	// Markdown image references are not fetched; the text is indexed with a warning.
+	p := Parse(context.Background(), "a.md", []byte("正文\n![制度](image.png)"))
+	if !p.Valid() || len(p.Diagnostics) != 1 || p.Diagnostics[0].Code != "images_not_extracted" || p.Diagnostics[0].Blocking {
+		t.Fatal(p)
 	}
 }
 func TestLocationsAndTableContext(t *testing.T) {
@@ -53,8 +77,8 @@ func TestLocationsAndTableContext(t *testing.T) {
 		t.Fatal(p)
 	}
 }
-func TestDOCXCorruptionAndEmbeddedContent(t *testing.T) {
-	for _, body := range []string{`<w:p><w:t>unterminated`, `<w:p><w:r><w:t>文字</w:t><w:drawing/></w:r></w:p>`} {
+func TestDOCXCorruptionAndUnsupportedContent(t *testing.T) {
+	for _, body := range []string{`<w:p><w:t>unterminated`, `<w:p><w:r><w:t>文字</w:t></w:r><w:r><w:footnoteReference w:id="1"/></w:r></w:p>`, `<w:p><w:ins><w:r><w:t>修订</w:t></w:r></w:ins></w:p>`} {
 		if p := Parse(context.Background(), "a.docx", docxFixture(t, body)); p.Valid() {
 			t.Fatal(p)
 		}
@@ -118,11 +142,11 @@ func TestEmbeddingByteBudgetPreservesTextAndLocations(t *testing.T) {
 	if string(reconstructed) != text {
 		t.Fatal("source text lost")
 	}
-	for _, body := range []string{strings.Repeat("a | b\n", 200)} {
-		p := Parse(context.Background(), "a.txt", []byte(body))
-		if _, err := splitWithInputLimit(p, 128); err == nil {
-			t.Fatal("oversized table split unsafely")
-		}
+	// Shell pipelines in plain text are ordinary text, not tables.
+	p = Parse(context.Background(), "a.txt", []byte(strings.Repeat("ps aux | grep java\n", 200)))
+	pieces, err := splitWithInputLimit(p, 128)
+	if err != nil || len(pieces) < 2 {
+		t.Fatal("piped command text rejected", err)
 	}
 	p.Blocks[0].Locator.Heading = strings.Repeat("标题", 200)
 	if _, err := splitWithInputLimit(p, 768); err == nil {

@@ -25,12 +25,14 @@ type Service struct {
 		ValidateSelection(context.Context, string, string, []string) (string, error)
 	}
 	Optimizer QueryOptimizer
-	Repo      Repository
-	storage   ports.ObjectStorage
-	embed     ports.Embedder
-	minScore  float32
-	mu        sync.Mutex
-	limits    map[string]*limit
+	// Vision is optional; without it DOCX images keep only alternative text.
+	Vision   ImageDescriber
+	Repo     Repository
+	storage  ports.ObjectStorage
+	embed    ports.Embedder
+	minScore float32
+	mu       sync.Mutex
+	limits   map[string]*limit
 }
 type limit struct {
 	window           time.Time
@@ -148,6 +150,9 @@ func (s *Service) Process(ctx context.Context, id string) error {
 		return fail("checksum_mismatch", false)
 	}
 	preview := Parse(ctx, v.Title, data)
+	if e = s.resolveImages(ctx, &preview); e != nil {
+		return fail("image_recognition_interrupted", true)
+	}
 	if e = s.Repo.RecordPreview(ctx, id, preview); e != nil {
 		return fail("preview_write_failed", true)
 	}

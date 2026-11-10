@@ -48,7 +48,7 @@ score 为最终排序信号，不是答案正确率，也不再统一表示余�
 
 `EMBEDDING_PROVIDER` 默认为 `openai`，可选 `dashscope`。DashScope 适配当前限定为 `tongyi-embedding-vision-plus-2026-03-06` 的纯文本输入，base 为 `https://dashscope.aliyuncs.com/api/v1`，显式发送 `parameters.dimension`（支持 64/128/256/512/1024/1152）。请求按最多 20 条拆批，严格校验条数、索引唯一性、模态和维度，不跟随重定向，不记录上游错误正文。
 
-该视觉模型每条文本上限为 1024 token。本实现用完整输入不超过 768 UTF-8 字节的保守预算预切片（包括章节标题和换行），不是精确 tokenizer；普通段落保留重叠及引用位置，超限表格/标题返回解析诊断，请拆分源文件。搜索原问题超限返回 `invalid_request`，改写超限按原问题降级。模型可处理图片不代表 K1 已支持图片摄入。DeepSeek 官方 `api.deepseek.com` 的 `deepseek-flash` 会发送 `thinking.type=disabled` 与 `response_format.type=json_object`；其他模型端点不附加这些提供商字段。参考：[百炼多模态接口](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
+该视觉模型每条文本上限为 1024 token。本实现用完整输入不超过 768 UTF-8 字节的保守预算预切片（包括章节标题和换行），不是精确 tokenizer；普通段落保留重叠及引用位置，超限表格按行切分并重复表头，超限标题返回解析诊断。搜索原问题超限返回 `invalid_request`，改写超限按原问题降级。embedding 仍只接收文本；DOCX 图片由独立视觉模型转写为文本后再嵌入，见上文。DeepSeek 官方 `api.deepseek.com` 的 `deepseek-flash` 会发送 `thinking.type=disabled` 与 `response_format.type=json_object`；其他模型端点不附加这些提供商字段。参考：[百炼多模态接口](https://help.aliyun.com/zh/model-studio/multimodal-embedding-api-reference)、[DeepSeek thinking](https://api-docs.deepseek.com/guides/thinking_mode/)。
 
 改写预算 3 秒，单路 embedding 8 秒，重排 5 秒，总请求仍为 25 秒。响应上限 64 KiB，禁重定向和自动重试。模型缺配时使用原问题混合召回及基础重排；模型超时/格式错误时退回对应基础路径，保留原始查询。原始 embedding 或数据库故障仍返回错误，不伪装成无答案。
 
@@ -81,15 +81,23 @@ score 为最终排序信号，不是答案正确率，也不再统一表示余�
 | `POST/DELETE /api/v1/knowledge/applications/{id}/credentials` | Admin 签发轮换 / 撤销；应用不存在返回 404 |
 | `GET /api/v1/knowledge/audit` | Admin 最近 100 次调用元数据 |
 
-知识库可见范围 `private/company/department/members`；新部门关联保存 `department_id`（飞书 open_department_id），`department` 为服务端查证的名称快照，成员保存飞书 Open ID。组织选择受当前登录人可见范围限制，部门访问权限来自本人真实部门归属，历史无 ID 的记录保留原可信平台部门名称规则。配置和重新授权见[飞书目录说明](feishu-directory-setup.md)。应用共享与人员可见范围独立，私有库不允许应用共享。关闭应用共享或删除库会在同一事务撤销该库的全部应用授权，重新开启共享后须由 Admin 再次显式授权。旧资料默认私有，未完成 K1 质量核验的旧索引不作为 K1 可检索版本；旧远程来源 ACL 未核验前不得共享给应用。
+知识库可见范围 `private/company/department/members`；新部门关联保存 `department_id`（飞书 open_department_id），`department` 为服务端查证的名称快照，成员保存飞书 Open ID。组织选择受当前登录人可见范围限制，部门访问权限来自本人真实部门归属（选择部门即包含其所有下级部门），历史无 ID 的记录保留原可信平台部门名称规则。配置和重新授权见[飞书目录说明](feishu-directory-setup.md)。应用共享与人员可见范围独立，私有库不允许应用共享。关闭应用共享或删除库会在同一事务撤销该库的全部应用授权，重新开启共享后须由 Admin 再次显式授权。旧资料默认私有，未完成 K1 质量核验的旧索引不作为 K1 可检索版本；旧远程来源 ACL 未核验前不得共享给应用。
 
 ## 摄入和质量边界
 
 上传上限 20 MiB，提取正文上限 2 MiB，PDF 上限 500 页，最多 3000 个片段。仅 UTF-8 TXT/Markdown、DOCX、文字型 PDF；旧 DOC、Excel、CSV、Sheets、多维表格均拒绝。
 
-解析预览保留原始位置；同章节相邻段落可合并以保留适用条件、单位和表头，最长 1200 字符，长段重叠 120 字符，PDF 不跨页合并。超大片段表格阻止索引，不截断表头。DOCX 合并/嵌套表格、未接受修订、无法核验的图片/嵌入内容，PDF 空白/扫描/失败页、多栏或明显表格间隔等保守阻止发布。页眉页脚不参与 DOCX 正文检索并明确警告。当前没有 OCR；不能承诺任意 DOCX/PDF 的版式都可可靠解析。
+解析预览保留原始位置；同章节相邻段落可合并以保留适用条件、单位和表头，最长 1200 字符，长段优先在换行处切分并以整行重叠（无合适换行时重叠 120 字符），PDF 不跨页合并。Markdown 管道表格（表头行加分隔行）和 DOCX 表格超出切片预算时按行切分，每个片段重复表头，行号/段落范围对应该片段的数据行；单行仍超限时按文本切分并在每段保留表头。正文中含 `|` 的命令行按普通文本处理。DOCX 横向/纵向合并单元格展开回填到所覆盖的列和行，`tblHeader` 标记的连续首行作为表头；嵌套表格、未接受修订、脚注/尾注引用、altChunk，PDF 空白/扫描/失败页、多栏或明显表格间隔、含图片页等保守阻止发布。页眉页脚不参与 DOCX 正文检索并明确警告。Markdown 引用的图片不下载，仅提示警告。不能承诺任意 DOCX/PDF 的版式都可可靠解析。
 
-上传写入 MinIO 独立对象，并在同一个数据库事务内创建待处理版本和 River 任务。checksum 去重限制在库内活动文档；版本对象校验 SHA-256 后才能解析。River `knowledge` 队列、4 个 worker、最多 3 次尝试、每次最长 10 分钟：依赖/写入失败采用 River 默认退避；永久质量失败记录诊断并结束任务，用户可上传修复版或显式重试。
+### DOCX 图片识别（2026-11-10）
+
+DOCX 正文中的图片（含表格单元格内图片、旧版 VML 图片和 OLE 对象预览图）按出现顺序编号。配置视觉模型后，平台把每张不同的图片以 data URL 发送给 `KNOWLEDGE_VISION_*` 指定的 Chat Completions 兼容端点，要求逐字转写图中文字并简述图片要点。识别结果作为独立片段放在图片所在段落之后，以 `[图片 N · 视觉模型识别]` 开头，若有 Word 替代文字一并保留；表格单元格中以 `[图片 N]` 标记位置。识别内容由模型生成，预览会提示人工核对，检索结果不区分其来源可信度，接入方需自行判断。
+
+同一图片在文档内只识别一次；限流和 5xx 等临时错误最多尝试 3 次，单张最多保留 4000 字。以下情况不阻断发布，以警告列出图片编号，有替代文字时只保留替代文字：未配置视觉模型、EMF/WMF 等不支持的格式、超过 10 MiB、外部链接图片、模型拒绝或多次失败、单文档超过 200 张。宽高均小于 32 像素的图标以及模型判定为装饰的图片直接省略。文本框文字并入所在段落；Word 图表和 SmartArt 只给出警告。若文档只有图片且都未识别，按“无正文”阻断。任务被取消时整次识别作废、不发布。PDF 图片和扫描件仍不识别。
+
+`KNOWLEDGE_VISION_BASE_URL`、`KNOWLEDGE_VISION_API_KEY`、`KNOWLEDGE_VISION_MODEL` 三项同时设置或都不设置。百炼北京使用 `https://dashscope.aliyuncs.com/compatible-mode/v1` 和 `qwen3.7-plus`；`aliyuncs.com` 域名会附加 `enable_thinking=false`。单次调用超时 120 秒，最多 4 张并发，响应上限 256 KiB，不跟随重定向，不记录上游正文。图片和识别结果只用于本次索引，图片不另行保存。
+
+上传写入 MinIO 独立对象，并在同一个数据库事务内创建待处理版本和 River 任务。checksum 去重限制在库内活动文档；版本对象校验 SHA-256 后才能解析。River `knowledge` 队列、4 个 worker、最多 3 次尝试、每次最长 30 分钟（含图片识别）：依赖/写入失败采用 River 默认退避；永久质量失败记录诊断并结束任务，用户可上传修复版或显式重试。
 
 只有全部片段 embedding 成功且数量、维度、有限非零向量均有效时，才事务性写入新版本全部片段并切换活动指针。失败保留旧活动版本；删除或新任务取代旧任务后，旧任务不能发布。旧对象/版本保留供追溯，物理清理不在 K1 自动执行；不存在自动删除历史知识数据的任务。
 

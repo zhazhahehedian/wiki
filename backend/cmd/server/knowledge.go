@@ -51,6 +51,15 @@ func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.Kno
 		}
 		optimizer = o
 	}
+	var vision knowledge.ImageDescriber
+	visionBase, visionKey, visionModel := os.Getenv("KNOWLEDGE_VISION_BASE_URL"), os.Getenv("KNOWLEDGE_VISION_API_KEY"), os.Getenv("KNOWLEDGE_VISION_MODEL")
+	if visionBase != "" || visionKey != "" || visionModel != "" {
+		v, err := knowledge.NewModelVision(visionBase, visionKey, visionModel)
+		if err != nil {
+			return nil, nil, fmt.Errorf("knowledge requires complete valid KNOWLEDGE_VISION configuration")
+		}
+		vision = v
+	}
 	if !configured {
 		return nil, nil, nil
 	}
@@ -86,6 +95,7 @@ func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.Kno
 	})
 	s := knowledge.New(r, storage, embedding, min)
 	s.Optimizer = optimizer
+	s.Vision = vision
 	workers := river.NewWorkers()
 	river.AddWorker(workers, &knowledge.Worker{Service: s})
 	rc, e := river.NewClient(riverpgxv5.New(pool), &river.Config{Workers: workers, Queues: map[string]river.QueueConfig{knowledge.Queue: {MaxWorkers: 4}}})

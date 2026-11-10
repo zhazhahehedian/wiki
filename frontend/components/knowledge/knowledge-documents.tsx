@@ -53,7 +53,7 @@ export function KnowledgeDocuments({ id }: { id: string }) {
       <h1 className="text-2xl font-semibold">{base?.name ?? "知识库文档"}</h1>
       <p className="text-sm text-zinc-500">
         支持 TXT、Markdown、DOCX、文字型 PDF，单文件最大 20
-        MiB。扫描件和正文缺失会阻止发布；更新失败时旧版仍可检索。
+        MiB。DOCX 中的图片由视觉模型识别为文字，请在预览中核对；扫描件和正文缺失会阻止发布；更新失败时旧版仍可检索。
       </p>
       <ErrorMessage
         error={upload.error || action.error || docs.error || bases.error}
