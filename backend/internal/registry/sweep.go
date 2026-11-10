@@ -8,8 +8,9 @@ import (
 
 const bundlePrefix = "registry/"
 
-// OrphanMinAge exceeds any upload request lifetime, so an object between
-// storage write and transaction commit is never mistaken for an orphan.
+// OrphanMinAge exceeds any upload request lifetime and UploadTTL, so neither an
+// object between storage write and transaction commit nor a completed part
+// upload awaiting its save is mistaken for an orphan.
 const OrphanMinAge = 24 * time.Hour
 
 type ObjectLister interface {
@@ -49,6 +50,11 @@ func (s *Service) RunOrphanSweeper(ctx context.Context, lister ObjectLister, int
 		case <-ctx.Done():
 			return
 		case <-timer.C:
+		}
+		if n, err := s.SweepExpiredUploads(ctx, time.Now()); err != nil && ctx.Err() == nil {
+			log.Print("registry: expired bundle upload sweep failed; retrying next interval")
+		} else if n > 0 {
+			log.Printf("registry: ended %d expired bundle uploads", n)
 		}
 		if n, err := s.SweepOrphanBundles(ctx, lister, time.Now()); err != nil && ctx.Err() == nil {
 			log.Print("registry: orphan bundle sweep failed; retrying next interval")

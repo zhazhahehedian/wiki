@@ -71,6 +71,19 @@ func (c *Client) Department(ctx context.Context, token, id string) (directory.De
 	e := c.Get(ctx, token, "/open-apis/contact/v3/departments/"+url.PathEscape(id), directoryQuery(""), &out)
 	return out.Department, directoryError(e)
 }
+func (c *Client) ParentDepartments(ctx context.Context, token, id, page string) (directory.Page[directory.Department], error) {
+	out := directory.Page[directory.Department]{Items: []directory.Department{}}
+	q := directoryQuery(page)
+	q.Set("department_id", id)
+	e := c.Get(ctx, token, "/open-apis/contact/v3/departments/parent", q, &out)
+	if out.Items == nil {
+		out.Items = []directory.Department{}
+	}
+	if e == nil && out.HasMore && (out.PageToken == "" || out.PageToken == page) {
+		return out, directory.ErrUnavailable
+	}
+	return out, directoryError(e)
+}
 func (c *Client) User(ctx context.Context, token, id string) (directory.User, error) {
 	var out struct {
 		User directory.User `json:"user"`

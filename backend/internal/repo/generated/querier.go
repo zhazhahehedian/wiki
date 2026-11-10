@@ -16,6 +16,13 @@ type Querier interface {
 	AddCapabilityAllowlist(ctx context.Context, arg AddCapabilityAllowlistParams) error
 	AuthenticatePublishingCredential(ctx context.Context, tokenHash []byte) (AuthenticatePublishingCredentialRow, error)
 	BootstrapPlatformAdmin(ctx context.Context, openID string) error
+	BundleUploadComplete(ctx context.Context, arg BundleUploadCompleteParams) (CapabilityBundleUpload, error)
+	// Caps unfinished sessions per user inside the insert to avoid a count race.
+	BundleUploadCreate(ctx context.Context, arg BundleUploadCreateParams) (CapabilityBundleUpload, error)
+	BundleUploadDelete(ctx context.Context, arg BundleUploadDeleteParams) error
+	BundleUploadDeleteExpired(ctx context.Context, arg BundleUploadDeleteExpiredParams) error
+	BundleUploadGet(ctx context.Context, arg BundleUploadGetParams) (CapabilityBundleUpload, error)
+	BundleUploadsExpired(ctx context.Context, expiresAt time.Time) ([]CapabilityBundleUpload, error)
 	ClearCapabilityAllowlist(ctx context.Context, capabilityID uuid.UUID) error
 	CountCapabilityDownloads(ctx context.Context, targetID string) (int64, error)
 	CreateCapability(ctx context.Context, arg CreateCapabilityParams) (Capability, error)

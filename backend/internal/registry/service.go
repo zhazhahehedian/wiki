@@ -29,6 +29,7 @@ type Service struct {
 	storage   ports.ObjectStorage
 	directory SelectionValidator
 	previews  chan struct{}
+	uploads   *uploads
 }
 
 type SelectionValidator interface {
@@ -158,7 +159,18 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 		return Detail{}, ErrConflict
 	}
 	uploaded := ""
-	if len(files) > 0 {
+	var upload *BundleUpload
+	if r.BundleUploadID != "" {
+		if r.Type != "mcp" || len(files) > 0 {
+			return Detail{}, ErrInvalid
+		}
+		u, err := s.readyUpload(ctx, user, r.BundleUploadID)
+		if err != nil {
+			return Detail{}, err
+		}
+		upload = &u
+		v.BundleKey, v.BundleSHA256, v.BundleSize, v.BundleFindings = u.ObjectKey, u.BundleSHA256, u.Size, u.BundleFindings
+	} else if len(files) > 0 {
 		var bundle []byte
 		var err error
 		if r.Type == "skill" {
@@ -185,6 +197,7 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 	} else if v.BundleKey == "" && v.MCPEndpoint == "" {
 		return Detail{}, ErrMCPPackage
 	}
+	// A failed save keeps a part upload so the user can retry without re-sending it.
 	saved, e := s.repo.Save(ctx, owner, slug, r, v)
 	if e != nil {
 		if uploaded != "" && !errors.Is(e, ErrCommitUnknown) {
@@ -192,9 +205,16 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 		}
 		return Detail{}, e
 	}
-	if uploaded != "" {
+	if upload != nil {
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := s.uploads.repo.DeleteUpload(c, user, upload.ID); err != nil {
+			log.Print("registry: consumed bundle upload record cleanup failed; it expires later")
+		}
+		cancel()
+	}
+	if uploaded != "" || upload != nil {
 		for _, previous := range old.Versions {
-			if previous.ID == old.DraftVersionID && previous.Version == r.Version && previous.BundleKey != "" {
+			if previous.ID == old.DraftVersionID && previous.Version == r.Version && previous.BundleKey != "" && previous.BundleKey != v.BundleKey {
 				s.cleanupBundle(previous.BundleKey)
 			}
 		}

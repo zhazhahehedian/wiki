@@ -154,7 +154,7 @@ export function KnowledgeBases() {
             />
           </label>
           {form.visibility === "department" && (
-            <div className="space-y-2"><p>可见部门</p><DirectoryPicker kind="department" value={form.department_id} label={form.department} onChange={(id,name)=>setForm({...form,department_id:id,department:name})} /></div>
+            <div className="space-y-2"><p>可见部门（含所有下级部门）</p><DirectoryPicker kind="department" value={form.department_id} label={form.department} onChange={(id,name)=>setForm({...form,department_id:id,department:name})} /></div>
           )}
           {form.visibility === "members" && (
             <div className="space-y-2"><p>可见成员</p><DirectoryPicker kind="users" max={100} value={memberText.split(",").filter(Boolean)} onChange={ids=>setMemberText(ids.join(","))} /></div>

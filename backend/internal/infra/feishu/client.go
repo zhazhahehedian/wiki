@@ -223,7 +223,7 @@ func httpErrorCode(status int) APIErrorCode {
 
 func feishuErrorCode(code int) APIErrorCode {
 	switch code {
-	case 99991663, 99991668, 99991661, 99991664, 99991672, 41050, 40004:
+	case 99991663, 99991668, 99991661, 99991664, 99991672, 41050, 40004, 40014:
 		return APIForbidden
 	case 1770002, 1254045:
 		return APINotFound

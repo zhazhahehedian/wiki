@@ -73,6 +73,8 @@ export interface CapabilityInput {
   mcp_transport: string;
   mcp_auth_scheme: string;
   tools: MCPTool[];
+  /** A completed browser part upload (MCP only), instead of a file in the request. */
+  bundle_upload_id?: string;
 }
 export interface RegistryFilter {
   type?: string;

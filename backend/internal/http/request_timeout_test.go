@@ -12,7 +12,12 @@ func TestRequestTimeoutExtendsOnlyTransfers(t *testing.T) {
 		method, path, contentType string
 		want                      time.Duration
 	}{
-		{"GET", "/api/v1/capabilities/demo/versions/v1/bundle", "", TransferTimeout},
+		{"GET", "/api/v1/capabilities/demo/versions/v1/bundle", "", DownloadTimeout},
+		{"GET", "/api/v1/open/capabilities/demo/versions/v1/bundle", "", DownloadTimeout},
+		{"PUT", "/api/v1/open/capabilities/demo", "multipart/form-data; boundary=x", TransferTimeout},
+		{"POST", "/api/v1/bundle-uploads/u1/complete", "", TransferTimeout},
+		{"PUT", "/api/v1/bundle-uploads/u1/parts/1", "application/octet-stream", time.Minute},
+		{"POST", "/api/v1/bundle-uploads", "application/json", time.Minute},
 		{"POST", "/api/v1/open/capabilities", "multipart/form-data; boundary=x", TransferTimeout},
 		{"PUT", "/api/v1/capabilities/demo", "application/json", time.Minute},
 		{"GET", "/api/v1/capabilities/demo", "", time.Minute},

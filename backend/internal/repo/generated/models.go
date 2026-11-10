@@ -50,6 +50,21 @@ type CapabilityAllowlist struct {
 	OpenID       string    `json:"open_id"`
 }
 
+type CapabilityBundleUpload struct {
+	ID              uuid.UUID          `json:"id"`
+	UserID          uuid.UUID          `json:"user_id"`
+	FileName        string             `json:"file_name"`
+	Size            int64              `json:"size"`
+	PartSize        int64              `json:"part_size"`
+	ObjectKey       string             `json:"object_key"`
+	StorageUploadID string             `json:"storage_upload_id"`
+	BundleSha256    *string            `json:"bundle_sha256"`
+	BundleFindings  []byte             `json:"bundle_findings"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt       time.Time          `json:"created_at"`
+	ExpiresAt       time.Time          `json:"expires_at"`
+}
+
 type CapabilityVersion struct {
 	ID             uuid.UUID          `json:"id"`
 	CapabilityID   uuid.UUID          `json:"capability_id"`

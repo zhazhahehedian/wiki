@@ -31,6 +31,20 @@ func TestDirectoryUsesUserTokenStableIDsAndPagination(t *testing.T) {
 				return
 			}
 			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"open_id":"ou-visible","name":"Visible","department_ids":["od-secret"],"email":"private@example.test"}]}}`))
+		case "/open-apis/contact/v3/departments/parent":
+			switch r.URL.Query().Get("department_id") {
+			case "od-child":
+				if r.URL.Query().Get("page_token") == "" {
+					_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"name":"Team","open_department_id":"od-team"}],"has_more":true,"page_token":"more"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"code":0,"data":{"items":[{"name":"Division","open_department_id":"od-division"}],"has_more":false}}`))
+			case "od-top":
+				_, _ = w.Write([]byte(`{"code":0,"data":{"has_more":false}}`))
+			default:
+				w.WriteHeader(403)
+				_, _ = w.Write([]byte(`{"code":40014,"msg":"SECRET no parent dept authority"}`))
+			}
 		case "/open-apis/contact/v3/users/ou-denied":
 			w.WriteHeader(400)
 			_, _ = w.Write([]byte(`{"code":41050,"msg":"SECRET provider error"}`))
@@ -59,6 +73,20 @@ func TestDirectoryUsesUserTokenStableIDsAndPagination(t *testing.T) {
 	}
 	if _, e = c.User(ctx, "user-token", "ou-denied"); !errors.Is(e, directory.ErrAuthorization) || e.Error() == "SECRET provider error" {
 		t.Fatal("unsafe/unclassified provider error", e)
+	}
+	parents, e := c.ParentDepartments(ctx, "user-token", "od-child", "")
+	if e != nil || !parents.HasMore || parents.Items[0].ID != "od-team" {
+		t.Fatal("parent page", parents, e)
+	}
+	parents, e = c.ParentDepartments(ctx, "user-token", "od-child", parents.PageToken)
+	if e != nil || parents.HasMore || parents.Items[0].ID != "od-division" {
+		t.Fatal("parent next page", parents, e)
+	}
+	if parents, e = c.ParentDepartments(ctx, "user-token", "od-top", ""); e != nil || parents.Items == nil || len(parents.Items) != 0 {
+		t.Fatal("top-level department must have no parents", parents, e)
+	}
+	if _, e = c.ParentDepartments(ctx, "user-token", "od-hidden", ""); !errors.Is(e, directory.ErrAuthorization) {
+		t.Fatal("hidden parent not classified as denied", e)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()

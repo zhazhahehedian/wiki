@@ -12,6 +12,10 @@ const (
 	maxConcurrentPreviews  = 2
 	maxPreviewFileBytes    = 256 << 10
 	maxPreviewContentBytes = 4 << 20
+	// Preview reads the ZIP directory and small files through ranged reads.
+	// Stop inlining once this much has been fetched; the listing stays complete.
+	previewWindow     = 1 << 20
+	maxPreviewFetched = 64 << 20
 )
 
 // mcpFiles lists a stored MCP package and inlines small UTF-8 files so
@@ -23,20 +27,21 @@ func (s *Service) mcpFiles(ctx context.Context, v Version) ([]ReviewFile, error)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	reader, err := s.storage.Get(ctx, v.BundleKey)
+	reader, err := s.objectReader(ctx, v.BundleKey, v.BundleSize, previewWindow)
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
-	data, err := io.ReadAll(io.LimitReader(reader, MaxMCPBundleBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > MaxMCPBundleBytes {
+	if reader.size > MaxMCPBundleBytes {
 		return nil, ErrInvalid
 	}
-	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	z, err := zip.NewReader(reader, reader.size)
+	if reader.failure != nil {
+		return nil, reader.failure
+	}
 	if err != nil || len(z.File) > MaxMCPBundleEntries {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, ErrInvalid
 	}
 	result := []ReviewFile{}
@@ -46,11 +51,14 @@ func (s *Service) mcpFiles(ctx context.Context, v Version) ([]ReviewFile, error)
 			continue
 		}
 		file := ReviewFile{Name: f.Name, Size: int(f.UncompressedSize64)}
-		if f.UncompressedSize64 <= maxPreviewFileBytes && inlined+int(f.UncompressedSize64) <= maxPreviewContentBytes {
+		if f.UncompressedSize64 <= maxPreviewFileBytes && inlined+int(f.UncompressedSize64) <= maxPreviewContentBytes && reader.fetched < maxPreviewFetched {
 			if content, ok := readPreview(ctx, f); ok {
 				inlined += len(content)
 				text := string(content)
 				file.Content = &text
+			}
+			if reader.failure != nil {
+				return nil, reader.failure
 			}
 		}
 		if err := ctx.Err(); err != nil {

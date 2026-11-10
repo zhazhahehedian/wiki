@@ -55,3 +55,29 @@ SELECT open_id FROM capability_allowlist WHERE capability_id=$1 ORDER BY open_id
 
 -- name: RegistryBundleReferenced :one
 SELECT EXISTS(SELECT 1 FROM capability_versions WHERE bundle_key = $1);
+
+-- name: BundleUploadCreate :one
+-- Caps unfinished sessions per user inside the insert to avoid a count race.
+INSERT INTO capability_bundle_uploads (id, user_id, file_name, size, part_size, object_key, storage_upload_id, expires_at)
+SELECT $1, $2, $3, $4, $5, $6, $7, $8
+WHERE (SELECT count(*) FROM capability_bundle_uploads
+       WHERE user_id = $2 AND completed_at IS NULL AND expires_at > now()) < sqlc.arg(max_active)::int
+RETURNING *;
+
+-- name: BundleUploadGet :one
+SELECT * FROM capability_bundle_uploads WHERE id = $1 AND user_id = $2;
+
+-- name: BundleUploadComplete :one
+UPDATE capability_bundle_uploads
+SET completed_at = now(), bundle_sha256 = $3, bundle_findings = $4
+WHERE id = $1 AND user_id = $2 AND completed_at IS NULL
+RETURNING *;
+
+-- name: BundleUploadDelete :exec
+DELETE FROM capability_bundle_uploads WHERE id = $1 AND user_id = $2;
+
+-- name: BundleUploadsExpired :many
+SELECT * FROM capability_bundle_uploads WHERE expires_at < $1 ORDER BY expires_at LIMIT 100;
+
+-- name: BundleUploadDeleteExpired :exec
+DELETE FROM capability_bundle_uploads WHERE id = $1 AND expires_at < $2;

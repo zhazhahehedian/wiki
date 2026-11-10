@@ -16,6 +16,8 @@ var (
 	ErrMCPPackage       = errors.New("invalid MCP package")
 	ErrForbidden        = errors.New("registry permission denied")
 	ErrIdentity         = errors.New("feishu identity required")
+	ErrUploadQuota      = errors.New("too many unfinished bundle uploads")
+	ErrUploadNotReady   = errors.New("bundle upload unfinished or expired")
 )
 
 type Capability struct {
@@ -90,6 +92,9 @@ type SaveRequest struct {
 	MCPTransport  string   `json:"mcp_transport"`
 	MCPAuthScheme string   `json:"mcp_auth_scheme"`
 	Tools         []Tool   `json:"tools"`
+	// BundleUploadID references a completed part upload instead of a file in
+	// the request; MCP only.
+	BundleUploadID string `json:"bundle_upload_id,omitempty"`
 }
 type File struct {
 	Name string

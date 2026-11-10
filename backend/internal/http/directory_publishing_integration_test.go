@@ -110,7 +110,7 @@ func TestDirectoryPublishingIntegration(t *testing.T) {
 	}
 	accounts := repo.NewAuthRepository(pool)
 	users := map[string]string{}
-	for _, name := range []string{"alice", "bob", "admin"} {
+	for _, name := range []string{"alice", "bob", "admin", "carol", "dave"} {
 		encrypted, _ := protector.Encrypt("expired-token")
 		refresh, _ := protector.Encrypt("refresh-ou_" + name)
 		user, _, e := accounts.UpsertOAuthIdentity(ctx, domain.FeishuIdentity{OpenID: "ou_" + name, TenantKey: "fixture", DisplayName: name}, domain.OAuthAccount{Provider: "feishu", TenantKey: "fixture", AccessTokenEncrypted: encrypted, RefreshTokenEncrypted: refresh, AccessTokenExpiresAt: time.Now().Add(-time.Hour), Scopes: directory.RequiredScopes})
@@ -149,6 +149,23 @@ func TestDirectoryPublishingIntegration(t *testing.T) {
 			_, _ = w.Write([]byte(`{"code":0,"data":{"user":{"open_id":"ou_alice","name":"Alice","department_ids":["od-sales"]}}}`))
 		case "/open-apis/contact/v3/users/ou_admin":
 			_, _ = w.Write([]byte(`{"code":0,"data":{"user":{"open_id":"ou_admin","name":"Admin","department_ids":[]}}}`))
+		case "/open-apis/contact/v3/users/ou_carol":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user":{"open_id":"ou_carol","name":"Carol","department_ids":["od-platform"]}}}`))
+		case "/open-apis/contact/v3/users/ou_dave":
+			_, _ = w.Write([]byte(`{"code":0,"data":{"user":{"open_id":"ou_dave","name":"Dave","department_ids":["od-design"]}}}`))
+		case "/open-apis/contact/v3/departments/parent":
+			// R&D > Engineering > Platform and R&D > Design. Others are hidden.
+			parents := map[string]string{
+				"od-platform":    `{"open_department_id":"od-engineering"},{"open_department_id":"od-rd"}`,
+				"od-engineering": `{"open_department_id":"od-rd"}`,
+				"od-design":      `{"open_department_id":"od-rd"}`,
+			}[r.URL.Query().Get("department_id")]
+			if parents == "" {
+				w.WriteHeader(403)
+				_, _ = w.Write([]byte(`{"code":40014,"msg":"SECRET"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"code":0,"data":{"items":[` + parents + `],"has_more":false}}`))
 		case "/open-apis/contact/v3/users/ou_bob":
 			if failBob.Load() {
 				w.WriteHeader(403)
@@ -283,6 +300,24 @@ func TestDirectoryPublishingIntegration(t *testing.T) {
 	if e != nil || len(who.DepartmentIDs) != 1 || who.DepartmentIDs[0] != "od-sales" {
 		t.Fatal("visibility became membership", who, e)
 	}
+	// Selecting a department includes everyone beneath it, but not its parents or
+	// siblings: Carol is in a child of Engineering, Dave in a sibling of it.
+	check(call("carol", "", "GET", "/api/v1/catalog/api-mcp", nil, nil, false), 200)
+	w = call("carol", "", "GET", "/api/v1/catalog", nil, nil, false)
+	check(w, 200)
+	if !strings.Contains(w.Body.String(), "api-mcp") {
+		t.Fatal("child department member missing from catalog")
+	}
+	check(call("dave", "", "GET", "/api/v1/catalog/api-mcp", nil, nil, false), 404)
+	w = call("dave", "", "GET", "/api/v1/catalog", nil, nil, false)
+	check(w, 200)
+	if strings.Contains(w.Body.String(), "api-mcp") {
+		t.Fatal("sibling department member saw the capability")
+	}
+	bobIdentity, e := registryService.Identity(ctx, users["bob"])
+	if e != nil || strings.Join(bobIdentity.DepartmentIDs, ",") != "od-engineering,od-rd" {
+		t.Fatal("parent department member must not inherit child departments", bobIdentity, e)
+	}
 	// Revoke actual membership, expire the snapshot, fail its refresh: no stale access.
 	if _, e = pool.Exec(ctx, `UPDATE feishu_memberships SET expires_at=now()-interval '1 second' WHERE account_id=(SELECT id FROM oauth_accounts WHERE user_id=$1)`, users["bob"]); e != nil {
 		t.Fatal(e)
@@ -311,6 +346,12 @@ func TestDirectoryPublishingIntegration(t *testing.T) {
 	kbs, e = kbRepo.ListKB(ctx, k.Principal{UserID: users["bob"]})
 	if e != nil || len(kbs) != 1 || kbs[0].ID != kb.ID || kbs[0].DepartmentID != "od-engineering" {
 		t.Fatal("knowledge ID permission mismatch", kbs, e)
+	}
+	if kbs, e = kbRepo.ListKB(ctx, k.Principal{UserID: users["carol"]}); e != nil || len(kbs) != 1 || kbs[0].ID != kb.ID {
+		t.Fatal("child department member missing department knowledge base", kbs, e)
+	}
+	if kbs, e = kbRepo.ListKB(ctx, k.Principal{UserID: users["dave"]}); e != nil || len(kbs) != 0 {
+		t.Fatal("sibling department member saw department knowledge base", kbs, e)
 	}
 	// Owner can make a new candidate without changing the published snapshot.
 	w = call("", alice.Token, "POST", root+"/api-mcp/new-draft", registry.ActionRequest{Revision: d.Revision, VersionID: d.CurrentVersionID}, nil, false)

@@ -112,7 +112,7 @@ func run() error {
 	if err := registryRepo.BootstrapAdmin(bootCtx, cfg.BootstrapAdminFeishuOpenID); err != nil {
 		return fmt.Errorf("bootstrap platform admin: %w", err)
 	}
-	registryService := registry.New(registryRepo, mc)
+	registryService := registry.New(registryRepo, mc).WithUploads(repo.NewBundleUploads(pool), mc)
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	defer sweepCancel()
 	go registryService.RunOrphanSweeper(sweepCtx, mc, 6*time.Hour)

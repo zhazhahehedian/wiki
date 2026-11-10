@@ -179,7 +179,7 @@
 ### 6.4 权限:`capability_allowlist` / 部门可见
 
 - `visibility=org`:全公司登录用户可见/可取凭证。
-- `visibility=department`：新关联以 `department_id` 与当前用户真实飞书部门 ID 匹配；组织架构可见范围只用于选择候选，不能当成部门归属。本人归属使用已有 OAuth 加密/刷新机制，缓存最多五分钟，过期或查询失败时不使用旧快照。历史空 `department_id` 记录保留 Admin 维护的 `platform_profiles.department` 规则，不自动按同名映射。权限和重新授权细节见 [2026-10-27 增补](2026-10-27-directory-and-publishing-api.md)。
+- `visibility=department`：新关联以 `department_id` 与当前用户真实飞书部门 ID 及其上级部门 ID 匹配（即包含所选部门的所有下级，见 2026-10-27 文档的 2026-11-06 变更）；组织架构可见范围只用于选择候选，不能当成部门归属。本人归属使用已有 OAuth 加密/刷新机制，缓存最多五分钟，过期或查询失败时不使用旧快照。历史空 `department_id` 记录保留 Admin 维护的 `platform_profiles.department` 规则，不自动按同名映射。权限和重新授权细节见 [2026-10-27 增补](2026-10-27-directory-and-publishing-api.md)。
 - `visibility=allowlist`:`capability_allowlist(capability_id, open_id)` 明确名单。
 - 账号绑定发布 API 复用 Owner/Admin 与以上审核规则；凭证按 read/write/submit 限权并强制到期，可撤销，摘要存储。提交只进入审核，不提供 API 直接上线。详见 [发布 API](../../publishing-api.md)。
 - Admin 始终可见/可管。

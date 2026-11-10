@@ -34,7 +34,11 @@ func registryHTTPError(w http.ResponseWriter, r *http.Request, e error) {
 	}
 	switch {
 	case errors.Is(e, registry.ErrMCPPackage):
-		WriteError(w, r, NewAPIError(400, "invalid_mcp_package", "请上传一个有效的 MCP ZIP 程序包（不超过 100 MiB、2000 条目、解压后 500 MiB）；不支持加密包、链接或不安全路径。未填写 Endpoint 时必须有程序包。"))
+		WriteError(w, r, NewAPIError(400, "invalid_mcp_package", "请上传一个有效的 MCP ZIP 程序包（网页分片上传不超过 500 MiB、单次请求上传不超过 100 MiB；最多 20000 条目、解压后 2 GiB）；不支持加密包、链接或不安全路径。未填写 Endpoint 时必须有程序包。"))
+	case errors.Is(e, registry.ErrUploadQuota):
+		WriteError(w, r, NewAPIError(429, "bundle_upload_quota", "未完成的程序包上传过多；请先完成或取消其他上传。"))
+	case errors.Is(e, registry.ErrUploadNotReady):
+		WriteError(w, r, NewAPIError(409, "bundle_upload_not_ready", "程序包尚未上传完成或已过期（12 小时）；请继续上传或重新选择文件。"))
 	case errors.Is(e, registry.ErrSkillPublication):
 		WriteError(w, r, NewAPIError(400, "invalid_skill_publication", "Skill 发布格式不完整：SKILL.md 需包含与标识一致的 name（最长 64）和非空 description（最长 1024）的 YAML 文件头、正文，且包内文件引用必须存在。请编辑完整包后重新提交。"))
 	case errors.Is(e, registry.ErrInvalid):
@@ -97,7 +101,7 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, registry.MaxMCPBundleBytes+512*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, registry.MaxMCPRequestBytes+512*1024)
 	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err == nil && media == "application/json" {
 		r.Body = http.MaxBytesReader(w, r.Body, 300*1024)
 		var input registry.SaveRequest
@@ -157,7 +161,7 @@ func (h *RegistryHandler) Save(w http.ResponseWriter, r *http.Request) {
 				registryHTTPError(w, r, registry.ErrInvalid)
 				return
 			}
-			limit := registry.MaxMCPBundleBytes
+			limit := registry.MaxMCPRequestBytes
 			if hasMetadata && input.Type == "skill" {
 				limit = registry.MaxBundleBytes
 			}
@@ -215,4 +219,88 @@ func (h *RegistryHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = io.Copy(w, body)
+}
+
+// CreateUpload starts a part upload for a large MCP package.
+func (h *RegistryHandler) CreateUpload(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4*1024)
+	var input struct {
+		FileName string `json:"file_name"`
+		Size     int64  `json:"size"`
+	}
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if d.Decode(&input) != nil {
+		registryHTTPError(w, r, registry.ErrInvalid)
+		return
+	}
+	upload, e := h.service.CreateUpload(r.Context(), user, input.FileName, input.Size)
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	WriteJSON(w, 201, upload)
+}
+
+// Upload reports received parts so the browser can resume.
+func (h *RegistryHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	upload, e := h.service.Upload(r.Context(), user, chi.URLParam(r, "uploadID"))
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	WriteJSON(w, 200, upload)
+}
+
+// UploadPart receives one raw part body (application/octet-stream).
+func (h *RegistryHandler) UploadPart(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	part, e := strconv.Atoi(chi.URLParam(r, "part"))
+	if e != nil {
+		registryHTTPError(w, r, registry.ErrInvalid)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, registry.UploadPartSize+1)
+	if e = h.service.UploadPart(r.Context(), user, chi.URLParam(r, "uploadID"), part, r.Body); e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// CompleteUpload assembles and validates the package.
+func (h *RegistryHandler) CompleteUpload(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	upload, e := h.service.CompleteUpload(r.Context(), user, chi.URLParam(r, "uploadID"))
+	if e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	WriteJSON(w, 200, upload)
+}
+
+func (h *RegistryHandler) CancelUpload(w http.ResponseWriter, r *http.Request) {
+	user, ok := registryUser(w, r)
+	if !ok {
+		return
+	}
+	if e := h.service.CancelUpload(r.Context(), user, chi.URLParam(r, "uploadID")); e != nil {
+		registryHTTPError(w, r, e)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

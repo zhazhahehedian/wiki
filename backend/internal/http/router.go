@@ -160,6 +160,11 @@ func newRouter(h Handlers) http.Handler {
 				r.Get("/capabilities/{slug}", h.Registry.Get)
 				r.Put("/capabilities/{slug}", h.Registry.Save)
 				r.Get("/capabilities/{slug}/versions/{versionID}/bundle", h.Registry.Download)
+				r.Post("/bundle-uploads", h.Registry.CreateUpload)
+				r.Get("/bundle-uploads/{uploadID}", h.Registry.Upload)
+				r.Put("/bundle-uploads/{uploadID}/parts/{part}", h.Registry.UploadPart)
+				r.Post("/bundle-uploads/{uploadID}/complete", h.Registry.CompleteUpload)
+				r.Delete("/bundle-uploads/{uploadID}", h.Registry.CancelUpload)
 			}
 
 			if h.SkillBuilder != nil {
@@ -171,26 +176,38 @@ func newRouter(h Handlers) http.Handler {
 	return r
 }
 
-// TransferTimeout covers bundle and document transfers on slow office links;
-// MCP packages are expected to stay well below the 100 MiB hard limit.
+// TransferTimeout covers single-request uploads (at most 100 MiB) and the
+// inspection of an assembled part upload. Browsers send large packages in
+// 8 MiB parts, each within the default timeout.
 const TransferTimeout = 3 * time.Minute
+
+// DownloadTimeout lets a 500 MiB package download finish on a slow office link.
+const DownloadTimeout = 15 * time.Minute
 
 func requestTimeout(next http.Handler) http.Handler {
 	normal := middleware.Timeout(time.Minute)(next)
 	transfer := middleware.Timeout(TransferTimeout)(next)
+	download := middleware.Timeout(DownloadTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isTransfer(r) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/bundle"):
+			download.ServeHTTP(w, r)
+		case isTransfer(r):
 			transfer.ServeHTTP(w, r)
-			return
+		default:
+			normal.ServeHTTP(w, r)
 		}
-		normal.ServeHTTP(w, r)
 	})
 }
 
 func isTransfer(r *http.Request) bool {
-	if r.Method == http.MethodGet {
-		return strings.HasSuffix(r.URL.Path, "/bundle")
+	if r.Method != http.MethodPost {
+		return r.Method == http.MethodPut && isMultipart(r)
 	}
+	return isMultipart(r) || (strings.HasPrefix(r.URL.Path, "/api/v1/bundle-uploads/") && strings.HasSuffix(r.URL.Path, "/complete"))
+}
+
+func isMultipart(r *http.Request) bool {
 	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	return media == "multipart/form-data"
 }

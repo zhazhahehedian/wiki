@@ -3,6 +3,8 @@ package directory
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -15,6 +17,9 @@ type fixture struct {
 	self                 User
 	fail                 error
 	tokens, users, saves int
+	parents              map[string][]Page[Department]
+	parentErr            map[string]error
+	parentCalls          int
 }
 
 func (f *fixture) FeishuAccount(context.Context, string) (domain.OAuthAccount, error) {
@@ -38,6 +43,20 @@ func (f *fixture) Users(context.Context, string, string, string) (Page[User], er
 }
 func (f *fixture) Department(context.Context, string, string) (Department, error) {
 	return Department{ID: "od-visible", Name: "Visible"}, f.fail
+}
+func (f *fixture) ParentDepartments(_ context.Context, _, id, page string) (Page[Department], error) {
+	f.parentCalls++
+	if e := f.parentErr[id]; e != nil {
+		return Page[Department]{}, e
+	}
+	pages := f.parents[id]
+	if len(pages) == 0 {
+		return Page[Department]{Items: []Department{}}, nil
+	}
+	if page == "" {
+		return pages[0], nil
+	}
+	return pages[1], nil
 }
 func (f *fixture) User(_ context.Context, _ string, id string) (User, error) {
 	f.users++
@@ -75,6 +94,99 @@ func TestVisibleDirectoryDoesNotGrantMembership(t *testing.T) {
 	}
 	if len(f.membership.DepartmentIDs) != 0 || f.membership.ExpiresAt.After(time.Now()) {
 		t.Fatal("failed refresh retained access")
+	}
+}
+func TestMembershipIncludesAncestorsOfOwnDepartments(t *testing.T) {
+	s, f := newFixture()
+	f.self.DepartmentIDs = []string{"od-actual", "od-second"}
+	f.parents = map[string][]Page[Department]{
+		"od-actual": {
+			{Items: []Department{{ID: "od-team"}, {ID: "0"}, {ID: "../bad"}}, HasMore: true, PageToken: "more"},
+			{Items: []Department{{ID: "od-division"}}},
+		},
+		"od-second": {{Items: []Department{{ID: "od-division"}, {ID: "od-second"}}}},
+	}
+	if e := s.EnsureMembership(context.Background(), "user"); e != nil {
+		t.Fatal(e)
+	}
+	if !slices.Equal(f.membership.DepartmentIDs, []string{"od-actual", "od-second", "od-team", "od-division"}) {
+		t.Fatal("wrong membership", f.membership.DepartmentIDs)
+	}
+	if ttl := time.Until(f.membership.ExpiresAt); ttl <= membershipRetryTTL || ttl > membershipTTL {
+		t.Fatal("complete lookup should use the normal TTL", ttl)
+	}
+}
+func TestAncestorFailureKeepsOnlyVerifiedDepartments(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		long bool
+	}{{"hidden by policy", ErrAuthorization, true}, {"not found", ErrInvalid, true}, {"unavailable", ErrUnavailable, false}, {"timeout", context.DeadlineExceeded, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := newFixture()
+			f.parentErr = map[string]error{"od-actual": tc.err}
+			if e := s.EnsureMembership(context.Background(), "user"); e != nil {
+				t.Fatal(e)
+			}
+			if !slices.Equal(f.membership.DepartmentIDs, []string{"od-actual"}) {
+				t.Fatal("direct department lost or ancestor invented", f.membership.DepartmentIDs)
+			}
+			if long := time.Until(f.membership.ExpiresAt) > membershipRetryTTL; long != tc.long {
+				t.Fatal("wrong retry behavior", f.membership.ExpiresAt)
+			}
+		})
+	}
+}
+func TestStaleAncestorsAreReplacedOnRefresh(t *testing.T) {
+	s, f := newFixture()
+	f.parents = map[string][]Page[Department]{"od-actual": {{Items: []Department{{ID: "od-old-parent"}}}}}
+	ctx := context.Background()
+	if e := s.EnsureMembership(ctx, "user"); e != nil {
+		t.Fatal(e)
+	}
+	// The department moved in Feishu: the old parent stops granting access.
+	f.membership.ExpiresAt = time.Now().Add(-time.Second)
+	f.parents = map[string][]Page[Department]{"od-actual": {{Items: []Department{{ID: "od-new-parent"}}}}}
+	if e := s.EnsureMembership(ctx, "user"); e != nil {
+		t.Fatal(e)
+	}
+	if !slices.Equal(f.membership.DepartmentIDs, []string{"od-actual", "od-new-parent"}) {
+		t.Fatal("stale ancestor kept", f.membership.DepartmentIDs)
+	}
+}
+func TestAncestorLookupIsBounded(t *testing.T) {
+	s, f := newFixture()
+	many := make([]Department, maxMembershipIDs+50)
+	for i := range many {
+		many[i].ID = fmt.Sprintf("od-%d", i)
+	}
+	f.parents = map[string][]Page[Department]{"od-actual": {{Items: many}}}
+	if e := s.EnsureMembership(context.Background(), "user"); e != nil {
+		t.Fatal(e)
+	}
+	if len(f.membership.DepartmentIDs) != maxMembershipIDs {
+		t.Fatal("membership not capped", len(f.membership.DepartmentIDs))
+	}
+	// A provider that never stops paginating cannot hold the request.
+	s, f = newFixture()
+	f.parents = map[string][]Page[Department]{"od-actual": {
+		{Items: []Department{{ID: "od-a"}}, HasMore: true, PageToken: "more"},
+		{Items: []Department{{ID: "od-b"}}, HasMore: true, PageToken: "more2"},
+	}}
+	if e := s.EnsureMembership(context.Background(), "user"); e != nil {
+		t.Fatal(e)
+	}
+	if f.parentCalls != maxAncestorPages {
+		t.Fatal("pagination not bounded", f.parentCalls)
+	}
+}
+func TestBrowsingAndSelectionDoNotQueryAncestors(t *testing.T) {
+	s, f := newFixture()
+	ctx := context.Background()
+	_, _ = s.Departments(ctx, "user", "0", "")
+	_, _ = s.ValidateSelection(ctx, "user", "od-visible", nil)
+	if f.parentCalls != 0 || f.saves != 0 {
+		t.Fatal("browsing touched membership", f.parentCalls, f.saves)
 	}
 }
 func TestMembershipRequiresExactSubjectAndDepartmentField(t *testing.T) {

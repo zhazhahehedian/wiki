@@ -5,7 +5,25 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { CapabilityEditor } from "./capability-editor";
 import { saveCapability, type CapabilityDetail } from "@/lib/api/registry";
 import { APIError } from "@/lib/api/client";
+import { forgetBundleUpload, uploadBundle, type BundleUpload } from "@/lib/api/bundle-upload";
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("@/lib/api/bundle-upload", async (original) => ({
+  ...(await original<typeof import("@/lib/api/bundle-upload")>()),
+  uploadBundle: vi.fn(),
+  forgetBundleUpload: vi.fn(),
+  discardBundleUpload: vi.fn(),
+}));
+const completed: BundleUpload = {
+  id: "upload-1",
+  file_name: "server.zip",
+  size: 11,
+  part_size: 8 << 20,
+  part_count: 1,
+  received_parts: [],
+  completed: true,
+  bundle_sha256: "ab".repeat(32),
+  expires_at: "2026-11-07T00:00:00Z",
+};
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 vi.mock("@/lib/api/registry", () => ({
   saveCapability: vi.fn(),
@@ -53,6 +71,8 @@ function mount(d?: CapabilityDetail) {
 }
 beforeEach(() => {
   vi.mocked(saveCapability).mockReset();
+  vi.mocked(uploadBundle).mockReset();
+  vi.mocked(forgetBundleUpload).mockReset();
   push.mockReset();
 });
 it("saves the loaded revision and clears hidden allowlist when visibility changes", async () => {
@@ -155,17 +175,49 @@ it("keeps field labels stable when editing prefilled multiline content", () => {
   );
 });
 
-it("uploads an MCP package without requiring a deployed endpoint", async () => {
+it("uploads an MCP package in parts and saves it by upload ID without an endpoint", async () => {
   const user = userEvent.setup();
   vi.mocked(saveCapability).mockResolvedValue(detail);
+  let finish: (u: BundleUpload) => void = () => {};
+  vi.mocked(uploadBundle).mockImplementation((_file, onProgress) => {
+    onProgress({ uploadedBytes: 5, totalBytes: 11, phase: "uploading" });
+    return new Promise((resolve) => (finish = resolve));
+  });
   mount(detail);
   await user.click(screen.getByRole("combobox", { name: "传输协议" }));
   await user.click(await screen.findByRole("option", { name: "stdio · 本地进程" }));
   expect(screen.queryByLabelText(/Endpoint/)).not.toBeInTheDocument();
   const zip = new File(["zip fixture"], "server.zip", { type: "application/zip" });
   await user.upload(screen.getByLabelText("MCP 程序包（ZIP）"), zip);
+  expect(uploadBundle).toHaveBeenCalledWith(zip, expect.any(Function), expect.any(AbortSignal));
+  expect(screen.getByRole("progressbar", { name: "程序包上传进度" })).toHaveAttribute("aria-valuenow", "45");
+  // Saving waits for the upload to finish.
   await user.click(screen.getByRole("button", { name: "保存草稿" }));
-  await waitFor(() => expect(saveCapability).toHaveBeenCalledWith(expect.objectContaining({mcp_endpoint:"", mcp_transport:"stdio", mcp_auth_scheme:"none"}), [zip], "search"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("尚未上传完成");
+  expect(saveCapability).not.toHaveBeenCalled();
+  finish(completed);
+  expect(await screen.findByText(/已上传并校验/)).toBeInTheDocument();
+  expect(screen.queryByText(/尚未上传完成/)).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "保存草稿" }));
+  await waitFor(() => expect(saveCapability).toHaveBeenCalledWith(expect.objectContaining({mcp_endpoint:"", mcp_transport:"stdio", mcp_auth_scheme:"none", bundle_upload_id:"upload-1"}), [], "search"));
+  expect(forgetBundleUpload).toHaveBeenCalledWith(zip);
+});
+
+it("pauses and resumes an MCP package upload", async () => {
+  const user = userEvent.setup();
+  vi.mocked(uploadBundle).mockImplementation((_file, onProgress, signal) => {
+    onProgress({ uploadedBytes: 3, totalBytes: 11, phase: "uploading" });
+    return new Promise((_, reject) => signal.addEventListener("abort", () => reject(signal.reason)));
+  });
+  mount(detail);
+  const zip = new File(["zip fixture"], "server.zip", { type: "application/zip" });
+  await user.upload(screen.getByLabelText("MCP 程序包（ZIP）"), zip);
+  await user.click(screen.getByRole("button", { name: "暂停" }));
+  expect(await screen.findByText(/已暂停/)).toBeInTheDocument();
+  vi.mocked(uploadBundle).mockResolvedValue(completed);
+  await user.click(screen.getByRole("button", { name: "继续上传" }));
+  expect(await screen.findByText(/已上传并校验/)).toBeInTheDocument();
+  expect(uploadBundle).toHaveBeenCalledTimes(2);
 });
 
 it("retains an existing MCP draft package but requires a package for the next version", async () => {
@@ -186,9 +238,11 @@ it("rejects MCP ZIPs above the limit before saving", async () => {
   const user = userEvent.setup();
   mount(detail);
   const zip = new File(["small"], "large.zip", {type:"application/zip"});
-  Object.defineProperty(zip, "size", {value:100*1024*1024+1});
+  Object.defineProperty(zip, "size", {value:500*1024*1024+1});
   await user.upload(screen.getByLabelText("MCP 程序包（ZIP）"), zip);
+  expect(screen.getByRole("alert")).toHaveTextContent("500 MiB");
   await user.click(screen.getByRole("button", { name: "保存草稿" }));
-  expect(await screen.findByRole("alert")).toHaveTextContent("100 MiB");
+  await waitFor(() => expect(screen.getAllByRole("alert")).toHaveLength(2));
+  expect(uploadBundle).not.toHaveBeenCalled();
   expect(saveCapability).not.toHaveBeenCalled();
 });

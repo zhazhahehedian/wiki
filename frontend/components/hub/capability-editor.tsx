@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Save } from "lucide-react";
 import { Select } from "@/components/ui/select";
@@ -14,7 +14,9 @@ import {
   type MCPTool,
 } from "@/lib/api/registry";
 import { APIError } from "@/lib/api/client";
+import { forgetBundleUpload } from "@/lib/api/bundle-upload";
 import { DirectoryPicker } from "./directory-picker";
+import { PackageUploadStatus, usePackageUpload, validPackageFile } from "./package-upload";
 import {
   Field,
   fieldClass,
@@ -23,6 +25,7 @@ import {
   RegistryError,
 } from "./registry-shared";
 
+const pending = "程序包尚未上传完成，请等待上传和校验结束后再保存。";
 const blank: CapabilityInput = {
   slug: "",
   type: "mcp",
@@ -96,6 +99,10 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
   );
   const [allowlist, setAllowlist] = useState(form.allowlist.join("\n"));
   const [files, setFiles] = useState<File[]>([]);
+  const pkg = usePackageUpload();
+  useEffect(() => {
+    if (pkg.state.status === "done") setLocalError((e) => (e === pending ? "" : e));
+  }, [pkg.state.status]);
   const [error, setError] = useState<unknown>();
   const [localError, setLocalError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -151,14 +158,15 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
       return;
     }
     if (form.type === "mcp") {
-      if (
-        files.length > 1 ||
-        files.some((f) => !f.name.toLowerCase().endsWith(".zip") || f.size > 100 * 1024 * 1024)
-      ) {
-        setLocalError("请选择一个不超过 100 MiB 的 MCP ZIP 程序包。");
+      if (pkg.file && !validPackageFile(pkg.file)) {
+        setLocalError("请选择一个不超过 500 MiB 的 MCP ZIP 程序包。");
         return;
       }
-      if (!form.mcp_endpoint && files.length === 0 && !retainsBundle) {
+      if (pkg.file && pkg.state.status !== "done") {
+        setLocalError(pending);
+        return;
+      }
+      if (!form.mcp_endpoint && !pkg.file && !retainsBundle) {
         setLocalError("请上传 MCP ZIP 程序包，或填写已部署服务的 Endpoint；新版本需要重新上传程序包。");
         return;
       }
@@ -183,6 +191,8 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
           ? allowlist.split(/[\s,，]+/).filter(Boolean)
           : [],
     };
+    if (form.type === "mcp" && pkg.state.status === "done")
+      input.bundle_upload_id = pkg.state.upload.id;
     if (form.type === "skill")
       Object.assign(input, {
         mcp_endpoint: "",
@@ -194,9 +204,10 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
     try {
       const saved = await saveCapability(
         input,
-        files,
+        form.type === "skill" ? files : [],
         detail?.slug,
       );
+      if (pkg.file) forgetBundleUpload(pkg.file);
       client.setQueryData(["registry", "detail", saved.slug], saved);
       await client.invalidateQueries({ queryKey: ["registry"] });
       router.push(`/hub/registry/${saved.slug}`);
@@ -269,6 +280,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                   onValueChange={(value) => {
                     set("type", value as CapabilityInput["type"]);
                     setFiles([]);
+                    pkg.discard();
                   }}
                   options={[
                     { value: "mcp", label: "MCP 服务" },
@@ -301,7 +313,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
               <>
                 <Field
                   label="MCP 程序包（ZIP）"
-                  hint="上传一个 ZIP，最大 100 MiB，最多 2000 条目、解压后 500 MiB。建议包含 README、依赖、启动命令和配置示例。审核发布后，有权限的用户可直接下载并自行运行。"
+                  hint="上传一个 ZIP，最大 500 MiB，最多 20000 条目、解压后 2 GiB。选择后立即分片上传，中断后可继续。建议包含 README、依赖、启动命令和配置示例。审核发布后，有权限的用户可直接下载并自行运行。"
                 >
                   <input
                     key="mcp-package"
@@ -309,16 +321,18 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                     accept=".zip,application/zip"
                     disabled={saving}
                     className={fieldClass}
-                    onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+                    onChange={(e) => pkg.select(e.target.files?.[0])}
                   />
                 </Field>
+                {pkg.file ? (
+                  <PackageUploadStatus file={pkg.file} state={pkg.state} onPause={pkg.pause} onResume={pkg.resume} />
+                ) : (
                 <p className="text-xs leading-6 text-zinc-500">
-                  {files[0]
-                    ? `已选择：${files[0].name}（${(files[0].size / 1024 / 1024).toFixed(2)} MiB），保存后替换该版本的完整程序包。`
-                    : retainsBundle
+                  {retainsBundle
                       ? "当前草稿已有程序包；不选择文件将保留原包。新版本需要重新上传。"
                       : "尚未选择程序包。没有已部署服务地址时，必须上传程序包。"}
                 </p>
+                )}
                 <Field label="传输协议">
                   <Select
                     className={fieldClass}
@@ -431,7 +445,7 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
                   onChange={(e) => set("version", e.target.value)}
                 />
               </Field>
-              <Field label="上线后可见范围">
+              <Field label="上线后可见范围" hint="指定部门时，该部门及其所有下级部门的成员可见，上级和平级部门不可见。">
                 <Select
                   className={fieldClass}
                   value={form.visibility}

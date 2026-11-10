@@ -146,6 +146,12 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 	}
 	repository := repo.NewRegistryRepository(pool)
 	service := registry.New(repository, objectStorage)
+	// Part uploads need real multipart storage.
+	uploads := false
+	if mc, ok := objectStorage.(*storage.MinioClient); ok {
+		service.WithUploads(repo.NewBundleUploads(pool), mc)
+		uploads = true
+	}
 	// Objects created by this test have random keys. Track surviving references
 	// before dropping the database; never delete shared prefixes or existing data.
 	defer func() {
@@ -177,6 +183,9 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 		users := verifyGovernanceIntegration(t, pool, service, repository, alice, bob)
 		verifyReviewerIntegration(t, db, pool, service, repository, users)
 		verifyMCPPackageIntegration(t, db, service, users)
+		if uploads {
+			verifyBundleUploadIntegration(t, db, service, users)
+		}
 		verifyGovernanceEvents(t, service, repository, users)
 		if os.Getenv("REGISTRY_BROWSER_CHECK") == "1" {
 			model := verifySkillBuilderIntegration(t, pool, service, alice, bob)
@@ -346,6 +355,9 @@ func runRegistryCloudIntegration(t *testing.T, governanceOnly bool) {
 	governanceUsers := verifyGovernanceIntegration(t, pool, service, repository, alice, bob)
 	verifyReviewerIntegration(t, db, pool, service, repository, governanceUsers)
 	verifyMCPPackageIntegration(t, db, service, governanceUsers)
+	if uploads {
+		verifyBundleUploadIntegration(t, db, service, governanceUsers)
+	}
 	verifyGovernanceEvents(t, service, repository, governanceUsers)
 	model := verifySkillBuilderIntegration(t, pool, service, alice, bob)
 	if os.Getenv("REGISTRY_BROWSER_CHECK") == "1" {

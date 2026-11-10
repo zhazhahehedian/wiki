@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/cenkalti/backoff/v4"
+	"github.com/zenith-wang/it-wiki/backend/internal/domain/ports"
 )
 
 type MinioConfig struct {
@@ -138,4 +139,105 @@ func (m *MinioClient) ListOlder(ctx context.Context, prefix string, cutoff time.
 		}
 	}
 	return keys, nil
+}
+
+// GetRange reads length bytes starting at offset.
+func (m *MinioClient) GetRange(ctx context.Context, key string, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("s3 range %s: invalid range", key)
+	}
+	out, err := m.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(m.cfg.Bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("s3 range get %s: %w", key, err)
+	}
+	return out.Body, nil
+}
+
+func (m *MinioClient) CreateMultipart(ctx context.Context, key, contentType string) (string, error) {
+	out, err := m.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:      aws.String(m.cfg.Bucket),
+		Key:         aws.String(key),
+		ContentType: aws.String(contentType),
+	})
+	if err != nil {
+		return "", fmt.Errorf("s3 create multipart %s: %w", key, err)
+	}
+	if out.UploadId == nil || *out.UploadId == "" {
+		return "", fmt.Errorf("s3 create multipart %s: empty upload id", key)
+	}
+	return *out.UploadId, nil
+}
+
+// UploadPart needs a seekable body: the SDK signs and may retry the payload.
+func (m *MinioClient) UploadPart(ctx context.Context, key, uploadID string, number int32, body io.ReadSeeker, size int64) error {
+	_, err := m.client.UploadPart(ctx, &s3.UploadPartInput{
+		Bucket:        aws.String(m.cfg.Bucket),
+		Key:           aws.String(key),
+		UploadId:      aws.String(uploadID),
+		PartNumber:    aws.Int32(number),
+		Body:          body,
+		ContentLength: aws.Int64(size),
+	})
+	if err != nil {
+		return fmt.Errorf("s3 upload part %s #%d: %w", key, number, err)
+	}
+	return nil
+}
+
+func (m *MinioClient) ListParts(ctx context.Context, key, uploadID string) ([]ports.StoragePart, error) {
+	var parts []ports.StoragePart
+	pages := s3.NewListPartsPaginator(m.client, &s3.ListPartsInput{Bucket: aws.String(m.cfg.Bucket), Key: aws.String(key), UploadId: aws.String(uploadID)})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("s3 list parts %s: %w", key, err)
+		}
+		for _, p := range page.Parts {
+			if p.PartNumber == nil || p.Size == nil || p.ETag == nil {
+				continue
+			}
+			parts = append(parts, ports.StoragePart{Number: *p.PartNumber, Size: *p.Size, ETag: *p.ETag})
+		}
+	}
+	return parts, nil
+}
+
+func (m *MinioClient) CompleteMultipart(ctx context.Context, key, uploadID string, parts []ports.StoragePart) error {
+	completed := make([]s3types.CompletedPart, 0, len(parts))
+	for _, p := range parts {
+		completed = append(completed, s3types.CompletedPart{PartNumber: aws.Int32(p.Number), ETag: aws.String(p.ETag)})
+	}
+	_, err := m.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          aws.String(m.cfg.Bucket),
+		Key:             aws.String(key),
+		UploadId:        aws.String(uploadID),
+		MultipartUpload: &s3types.CompletedMultipartUpload{Parts: completed},
+	})
+	if err != nil {
+		return fmt.Errorf("s3 complete multipart %s: %w", key, err)
+	}
+	return nil
+}
+
+func (m *MinioClient) AbortMultipart(ctx context.Context, key, uploadID string) error {
+	_, err := m.client.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{Bucket: aws.String(m.cfg.Bucket), Key: aws.String(key), UploadId: aws.String(uploadID)})
+	if err != nil {
+		return fmt.Errorf("s3 abort multipart %s: %w", key, err)
+	}
+	return nil
+}
+
+func (m *MinioClient) ObjectSize(ctx context.Context, key string) (int64, error) {
+	out, err := m.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(m.cfg.Bucket), Key: aws.String(key)})
+	if err != nil {
+		return 0, fmt.Errorf("s3 head %s: %w", key, err)
+	}
+	if out.ContentLength == nil {
+		return 0, fmt.Errorf("s3 head %s: missing length", key)
+	}
+	return *out.ContentLength, nil
 }

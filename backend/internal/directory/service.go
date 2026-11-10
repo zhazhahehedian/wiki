@@ -3,6 +3,7 @@ package directory
 import (
 	"context"
 	"errors"
+	"log"
 	"regexp"
 	"slices"
 	"time"
@@ -18,6 +19,15 @@ var (
 
 var RequiredScopes = []string{"contact:contact.base:readonly", "contact:department.base:readonly", "contact:user.base:readonly", "contact:user.department:readonly"}
 var idPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_@.\-]{0,127}$`)
+
+const (
+	membershipTTL = 5 * time.Minute
+	// A transient ancestor failure keeps direct departments and retries soon.
+	membershipRetryTTL    = 30 * time.Second
+	ancestorLookupTimeout = 10 * time.Second
+	maxMembershipIDs      = 200
+	maxAncestorPages      = 5
+)
 
 func ValidID(id string) bool { return idPattern.MatchString(id) }
 
@@ -41,6 +51,9 @@ type Client interface {
 	Departments(context.Context, string, string, string) (Page[Department], error)
 	Users(context.Context, string, string, string) (Page[User], error)
 	Department(context.Context, string, string) (Department, error)
+	// ParentDepartments lists every ancestor visible to the token's user,
+	// excluding the organization root.
+	ParentDepartments(context.Context, string, string, string) (Page[Department], error)
 	User(context.Context, string, string) (User, error)
 }
 type Accounts interface {
@@ -194,6 +207,8 @@ func (s *Service) ValidateSelection(ctx context.Context, user, department string
 }
 
 // EnsureMembership never imports membership from a list of visible departments.
+// Membership is the user's own departments plus their ancestors, so selecting a
+// department includes everyone beneath it but not its parents or siblings.
 // A failed refresh replaces expired data with an empty, expired record.
 func (s *Service) EnsureMembership(ctx context.Context, user string) error {
 	a, e := s.accounts.FeishuAccount(ctx, user)
@@ -225,11 +240,50 @@ func (s *Service) EnsureMembership(ctx context.Context, user string) error {
 					ids = append(ids, id)
 				}
 			}
-			return s.repo.SaveMembership(ctx, a.ID, ids, s.now().Add(5*time.Minute))
+			ids, ttl := s.withAncestors(ctx, token, ids)
+			return s.repo.SaveMembership(ctx, a.ID, ids, s.now().Add(ttl))
 		}
 	}
 	if saveErr := s.repo.SaveMembership(ctx, a.ID, []string{}, s.now()); saveErr != nil {
 		return saveErr
 	}
 	return e
+}
+
+// withAncestors adds the ancestors of the user's direct departments. Ancestor
+// lookups only ever widen direct membership: on failure the user keeps the
+// direct departments. A department hidden by the tenant's visibility policy is
+// stable and cached normally; anything else is retried after a short TTL.
+func (s *Service) withAncestors(ctx context.Context, token string, direct []string) ([]string, time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, ancestorLookupTimeout)
+	defer cancel()
+	ids := slices.Clone(direct)
+	for _, id := range direct {
+		page := ""
+		for range maxAncestorPages {
+			out, e := s.client.ParentDepartments(ctx, token, id, page)
+			if errors.Is(e, ErrAuthorization) || errors.Is(e, ErrInvalid) {
+				log.Print("directory: department ancestors not visible to this account; only readable departments apply")
+				break
+			}
+			if e != nil {
+				log.Print("directory: department ancestor lookup failed; retrying shortly")
+				return ids, membershipRetryTTL
+			}
+			for _, d := range out.Items {
+				if len(ids) >= maxMembershipIDs {
+					log.Print("directory: department membership limit reached")
+					return ids, membershipTTL
+				}
+				if d.ID != "0" && ValidID(d.ID) && !slices.Contains(ids, d.ID) {
+					ids = append(ids, d.ID)
+				}
+			}
+			if !out.HasMore {
+				break
+			}
+			page = out.PageToken
+		}
+	}
+	return ids, membershipTTL
 }

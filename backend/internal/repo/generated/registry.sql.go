@@ -7,6 +7,7 @@ package generated
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -24,6 +25,190 @@ type AddCapabilityAllowlistParams struct {
 func (q *Queries) AddCapabilityAllowlist(ctx context.Context, arg AddCapabilityAllowlistParams) error {
 	_, err := q.db.Exec(ctx, addCapabilityAllowlist, arg.CapabilityID, arg.OpenID)
 	return err
+}
+
+const bundleUploadComplete = `-- name: BundleUploadComplete :one
+UPDATE capability_bundle_uploads
+SET completed_at = now(), bundle_sha256 = $3, bundle_findings = $4
+WHERE id = $1 AND user_id = $2 AND completed_at IS NULL
+RETURNING id, user_id, file_name, size, part_size, object_key, storage_upload_id, bundle_sha256, bundle_findings, completed_at, created_at, expires_at
+`
+
+type BundleUploadCompleteParams struct {
+	ID             uuid.UUID `json:"id"`
+	UserID         uuid.UUID `json:"user_id"`
+	BundleSha256   *string   `json:"bundle_sha256"`
+	BundleFindings []byte    `json:"bundle_findings"`
+}
+
+func (q *Queries) BundleUploadComplete(ctx context.Context, arg BundleUploadCompleteParams) (CapabilityBundleUpload, error) {
+	row := q.db.QueryRow(ctx, bundleUploadComplete,
+		arg.ID,
+		arg.UserID,
+		arg.BundleSha256,
+		arg.BundleFindings,
+	)
+	var i CapabilityBundleUpload
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.Size,
+		&i.PartSize,
+		&i.ObjectKey,
+		&i.StorageUploadID,
+		&i.BundleSha256,
+		&i.BundleFindings,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const bundleUploadCreate = `-- name: BundleUploadCreate :one
+INSERT INTO capability_bundle_uploads (id, user_id, file_name, size, part_size, object_key, storage_upload_id, expires_at)
+SELECT $1, $2, $3, $4, $5, $6, $7, $8
+WHERE (SELECT count(*) FROM capability_bundle_uploads
+       WHERE user_id = $2 AND completed_at IS NULL AND expires_at > now()) < $9::int
+RETURNING id, user_id, file_name, size, part_size, object_key, storage_upload_id, bundle_sha256, bundle_findings, completed_at, created_at, expires_at
+`
+
+type BundleUploadCreateParams struct {
+	ID              uuid.UUID `json:"id"`
+	UserID          uuid.UUID `json:"user_id"`
+	FileName        string    `json:"file_name"`
+	Size            int64     `json:"size"`
+	PartSize        int64     `json:"part_size"`
+	ObjectKey       string    `json:"object_key"`
+	StorageUploadID string    `json:"storage_upload_id"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	MaxActive       int32     `json:"max_active"`
+}
+
+// Caps unfinished sessions per user inside the insert to avoid a count race.
+func (q *Queries) BundleUploadCreate(ctx context.Context, arg BundleUploadCreateParams) (CapabilityBundleUpload, error) {
+	row := q.db.QueryRow(ctx, bundleUploadCreate,
+		arg.ID,
+		arg.UserID,
+		arg.FileName,
+		arg.Size,
+		arg.PartSize,
+		arg.ObjectKey,
+		arg.StorageUploadID,
+		arg.ExpiresAt,
+		arg.MaxActive,
+	)
+	var i CapabilityBundleUpload
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.Size,
+		&i.PartSize,
+		&i.ObjectKey,
+		&i.StorageUploadID,
+		&i.BundleSha256,
+		&i.BundleFindings,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const bundleUploadDelete = `-- name: BundleUploadDelete :exec
+DELETE FROM capability_bundle_uploads WHERE id = $1 AND user_id = $2
+`
+
+type BundleUploadDeleteParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) BundleUploadDelete(ctx context.Context, arg BundleUploadDeleteParams) error {
+	_, err := q.db.Exec(ctx, bundleUploadDelete, arg.ID, arg.UserID)
+	return err
+}
+
+const bundleUploadDeleteExpired = `-- name: BundleUploadDeleteExpired :exec
+DELETE FROM capability_bundle_uploads WHERE id = $1 AND expires_at < $2
+`
+
+type BundleUploadDeleteExpiredParams struct {
+	ID        uuid.UUID `json:"id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+func (q *Queries) BundleUploadDeleteExpired(ctx context.Context, arg BundleUploadDeleteExpiredParams) error {
+	_, err := q.db.Exec(ctx, bundleUploadDeleteExpired, arg.ID, arg.ExpiresAt)
+	return err
+}
+
+const bundleUploadGet = `-- name: BundleUploadGet :one
+SELECT id, user_id, file_name, size, part_size, object_key, storage_upload_id, bundle_sha256, bundle_findings, completed_at, created_at, expires_at FROM capability_bundle_uploads WHERE id = $1 AND user_id = $2
+`
+
+type BundleUploadGetParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) BundleUploadGet(ctx context.Context, arg BundleUploadGetParams) (CapabilityBundleUpload, error) {
+	row := q.db.QueryRow(ctx, bundleUploadGet, arg.ID, arg.UserID)
+	var i CapabilityBundleUpload
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.Size,
+		&i.PartSize,
+		&i.ObjectKey,
+		&i.StorageUploadID,
+		&i.BundleSha256,
+		&i.BundleFindings,
+		&i.CompletedAt,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const bundleUploadsExpired = `-- name: BundleUploadsExpired :many
+SELECT id, user_id, file_name, size, part_size, object_key, storage_upload_id, bundle_sha256, bundle_findings, completed_at, created_at, expires_at FROM capability_bundle_uploads WHERE expires_at < $1 ORDER BY expires_at LIMIT 100
+`
+
+func (q *Queries) BundleUploadsExpired(ctx context.Context, expiresAt time.Time) ([]CapabilityBundleUpload, error) {
+	rows, err := q.db.Query(ctx, bundleUploadsExpired, expiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CapabilityBundleUpload{}
+	for rows.Next() {
+		var i CapabilityBundleUpload
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FileName,
+			&i.Size,
+			&i.PartSize,
+			&i.ObjectKey,
+			&i.StorageUploadID,
+			&i.BundleSha256,
+			&i.BundleFindings,
+			&i.CompletedAt,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const clearCapabilityAllowlist = `-- name: ClearCapabilityAllowlist :exec
