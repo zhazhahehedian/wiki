@@ -27,18 +27,17 @@ type Principal struct {
 	CredentialID  string
 }
 type KB struct {
-	HasActive         bool     `json:"-"`
-	ID                string   `json:"id"`
-	Name              string   `json:"name"`
-	Description       string   `json:"description"`
-	Visibility        string   `json:"visibility"`
-	Department        string   `json:"department"`
-	DepartmentID      string   `json:"department_id"`
-	Members           []string `json:"members"`
-	Manage            bool     `json:"manage"`
-	ApplicationShared bool     `json:"application_shared"`
-	Model             string   `json:"model"`
-	Dim               int      `json:"dim"`
+	HasActive    bool     `json:"-"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Visibility   string   `json:"visibility"`
+	Department   string   `json:"department"`
+	DepartmentID string   `json:"department_id"`
+	Members      []string `json:"members"`
+	Manage       bool     `json:"manage"`
+	Model        string   `json:"model"`
+	Dim          int      `json:"dim"`
 }
 type Locator struct {
 	Page         int    `json:"page,omitempty"`
@@ -129,6 +128,7 @@ type Application struct {
 	Name       string     `json:"name"`
 	Enabled    bool       `json:"enabled"`
 	KBIDs      []string   `json:"knowledge_base_ids"`
+	OwnerName  string     `json:"owner_name"`
 	Prefix     string     `json:"credential_prefix"`
 	ExpiresAt  *time.Time `json:"expires_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`

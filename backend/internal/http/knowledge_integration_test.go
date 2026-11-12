@@ -210,7 +210,7 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	}
 	owner := k.Principal{UserID: alice}
 	administrator := k.Principal{UserID: admin}
-	kb, e := service.SaveKB(ctx, owner, "", k.KB{Name: "财务制度", Visibility: "department", Department: "Finance", ApplicationShared: true})
+	kb, e := service.SaveKB(ctx, owner, "", k.KB{Name: "财务制度", Visibility: "department", Department: "Finance"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -377,11 +377,11 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	if e != nil || updated.ActiveVersion != second.PendingVersion {
 		t.Fatal("stale job overwrote latest")
 	}
-	app, e := service.SaveApplication(ctx, administrator, "", k.ApplicationInput{Name: "应用 A", Enabled: true, KBIDs: []string{kb.ID}})
+	app, e := service.SaveApplication(ctx, owner, "", k.ApplicationInput{Name: "应用 A", Enabled: true, KBIDs: []string{kb.ID}})
 	if e != nil {
 		t.Fatal(e)
 	}
-	credential, e := service.Rotate(ctx, administrator, app.ID)
+	credential, e := service.Rotate(ctx, owner, app.ID)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -512,8 +512,55 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 		t.Fatal(e)
 	}
 	call(credential.Token, string(input), 401)
-	if _, e = service.SaveApplication(ctx, owner, "", k.ApplicationInput{Name: "unauthorized", Enabled: true}); !errors.Is(e, k.ErrForbidden) {
-		t.Fatal("owner issued app", e)
+	// Owner self-service: only the application's owner or an admin manages it,
+	// and new grants require managing the base.
+	stranger := k.Principal{UserID: bob}
+	if _, e = service.SaveApplication(ctx, stranger, "", k.ApplicationInput{Name: "越权", Enabled: true, KBIDs: []string{kb.ID}}); !errors.Is(e, k.ErrForbidden) {
+		t.Fatal("non-manager granted a base", e)
+	}
+	if _, e = service.SaveApplication(ctx, stranger, app.ID, k.ApplicationInput{Name: "越权", Enabled: true}); !errors.Is(e, k.ErrForbidden) {
+		t.Fatal("non-owner edited an application", e)
+	}
+	if _, e = service.Rotate(ctx, stranger, app.ID); !errors.Is(e, k.ErrForbidden) {
+		t.Fatal("non-owner rotated a credential", e)
+	}
+	if _, e = service.Rotate(ctx, owner, appB.ID); !errors.Is(e, k.ErrForbidden) {
+		t.Fatal("owner rotated another owner's credential", e)
+	}
+	if _, e = service.SaveApplication(ctx, owner, app.ID, k.ApplicationInput{Name: app.Name, Enabled: false, KBIDs: []string{kb.ID, legacy}}); !errors.Is(e, k.ErrForbidden) {
+		t.Fatal("owner granted a base they do not manage", e)
+	}
+	// An admin-added grant may be kept or removed by the owner, not re-added.
+	if _, e = service.SaveApplication(ctx, administrator, app.ID, k.ApplicationInput{Name: app.Name, Enabled: false, KBIDs: []string{kb.ID, legacy}}); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = service.SaveApplication(ctx, owner, app.ID, k.ApplicationInput{Name: "应用 A2", Enabled: false, KBIDs: []string{kb.ID, legacy}}); e != nil {
+		t.Fatal("owner could not keep an admin grant", e)
+	}
+	if _, e = service.SaveApplication(ctx, owner, app.ID, k.ApplicationInput{Name: app.Name, Enabled: false, KBIDs: []string{kb.ID}}); e != nil {
+		t.Fatal(e)
+	}
+	ownApps, e := repository.Applications(ctx, owner)
+	if e != nil || len(ownApps) != 1 || ownApps[0].ID != app.ID {
+		t.Fatal("owner listing not limited to own applications", e)
+	}
+	if strangerApps, e := repository.Applications(ctx, stranger); e != nil || len(strangerApps) != 0 {
+		t.Fatal("stranger saw other applications", e)
+	}
+	if allApps, e := repository.Applications(ctx, administrator); e != nil || len(allApps) != 2 {
+		t.Fatal("admin oversight listing incomplete", e)
+	}
+	if ownAudit, e := repository.AuditEntries(ctx, owner); e != nil || len(ownAudit) == 0 {
+		t.Fatal("owner cannot see own application calls", e)
+	} else {
+		for _, entry := range ownAudit {
+			if entry.ApplicationID != app.ID {
+				t.Fatal("owner saw another application's calls")
+			}
+		}
+	}
+	if strangerAudit, e := repository.AuditEntries(ctx, stranger); e != nil || len(strangerAudit) != 0 {
+		t.Fatal("stranger saw application calls", e)
 	}
 	// Delete during retrieval, then run a late replacement job: nothing can revive it.
 	pending, e := service.Upload(ctx, owner, kb.ID, doc.ID, "late.txt", []byte("报销已删除"))
@@ -536,32 +583,20 @@ func TestKnowledgeCloudIntegration(t *testing.T) {
 	if e != nil || len(docs) != 1 || docs[0].ID != complex.ID {
 		t.Fatal("deleted document revived", e)
 	}
-	// Removing the sharing boundary revokes grants permanently; toggling it back
-	// must not silently resurrect an administrator's old application grants.
-	kb.ApplicationShared = false
+	// No separate sharing switch: an owner's grant alone shares the base, even a
+	// private one, and visibility edits leave existing grants intact.
+	kb.Visibility, kb.Department, kb.DepartmentID = "private", "", ""
 	if _, e = service.SaveKB(ctx, owner, kb.ID, kb); e != nil {
 		t.Fatal(e)
 	}
-	kb.ApplicationShared = true
-	if _, e = service.SaveKB(ctx, owner, kb.ID, kb); e != nil {
+	if _, e = service.SaveApplication(ctx, owner, app.ID, k.ApplicationInput{Name: app.Name, Enabled: true, KBIDs: []string{kb.ID}}); e != nil {
 		t.Fatal(e)
 	}
-	apps, e := repository.Applications(ctx, administrator)
-	if e != nil {
-		t.Fatal(e)
-	}
-	for _, a := range apps {
-		if a.ID == app.ID && len(a.KBIDs) != 0 {
-			t.Fatal("unsharing resurrected grants")
-		}
-	}
-	if _, e = service.SaveApplication(ctx, administrator, app.ID, k.ApplicationInput{Name: app.Name, Enabled: true, KBIDs: []string{kb.ID}}); e != nil {
-		t.Fatal(e)
-	}
+	call(credential.Token, string(input), 200)
 	if e = repository.DeleteKB(ctx, owner, kb.ID); e != nil {
 		t.Fatal(e)
 	}
-	apps, e = repository.Applications(ctx, administrator)
+	apps, e := repository.Applications(ctx, administrator)
 	if e != nil {
 		t.Fatal(e)
 	}

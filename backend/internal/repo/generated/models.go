@@ -136,10 +136,11 @@ type FeishuMembership struct {
 }
 
 type KnowledgeApplication struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Enabled   bool      `json:"enabled"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          uuid.UUID   `json:"id"`
+	Name        string      `json:"name"`
+	Enabled     bool        `json:"enabled"`
+	CreatedAt   time.Time   `json:"created_at"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
 }
 
 type KnowledgeBase struct {

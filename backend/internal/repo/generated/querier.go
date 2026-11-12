@@ -45,9 +45,12 @@ type Querier interface {
 	IsPlatformAdmin(ctx context.Context, openID string) (bool, error)
 	KnowledgeActivate(ctx context.Context, arg KnowledgeActivateParams) (int64, error)
 	KnowledgeActiveDocuments(ctx context.Context, arg KnowledgeActiveDocumentsParams) ([]KnowledgeActiveDocumentsRow, error)
-	KnowledgeApplications(ctx context.Context) ([]KnowledgeApplication, error)
+	// A NULL owner filter lists every application (admins).
+	KnowledgeApplications(ctx context.Context, ownerUserID pgtype.UUID) ([]KnowledgeApplicationsRow, error)
 	KnowledgeAudit(ctx context.Context, arg KnowledgeAuditParams) error
-	KnowledgeAuditEntries(ctx context.Context) ([]KnowledgeAuditEntriesRow, error)
+	// A NULL owner filter returns every entry (admins); otherwise only calls made
+	// by applications that user owns.
+	KnowledgeAuditEntries(ctx context.Context, ownerUserID pgtype.UUID) ([]KnowledgeAuditEntriesRow, error)
 	KnowledgeBaseReadiness(ctx context.Context, kbID uuid.UUID) (KnowledgeBaseReadinessRow, error)
 	KnowledgeClearGrants(ctx context.Context, applicationID uuid.UUID) error
 	KnowledgeCreateDocument(ctx context.Context, arg KnowledgeCreateDocumentParams) (Document, error)
@@ -68,13 +71,14 @@ type Querier interface {
 	KnowledgeIssue(ctx context.Context, arg KnowledgeIssueParams) error
 	KnowledgeLatestCredential(ctx context.Context, applicationID uuid.UUID) (KnowledgeLatestCredentialRow, error)
 	KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, error)
-	KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
+	KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (KnowledgeLockApplicationRow, error)
 	KnowledgeLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)
 	KnowledgeLockDocument(ctx context.Context, id uuid.UUID) (Document, error)
 	KnowledgePreview(ctx context.Context, arg KnowledgePreviewParams) error
 	KnowledgeRetryDocument(ctx context.Context, arg KnowledgeRetryDocumentParams) (int64, error)
 	KnowledgeRevoke(ctx context.Context, applicationID uuid.UUID) error
 	KnowledgeRevokeBaseGrants(ctx context.Context, kbID uuid.UUID) error
+	// The owner is set on creation only; updates never transfer ownership.
 	KnowledgeSaveApplication(ctx context.Context, arg KnowledgeSaveApplicationParams) (KnowledgeApplication, error)
 	KnowledgeSaveBase(ctx context.Context, arg KnowledgeSaveBaseParams) (KnowledgeBase, error)
 	KnowledgeShareLockBase(ctx context.Context, id uuid.UUID) (KnowledgeBase, error)

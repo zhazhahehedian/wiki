@@ -14,7 +14,7 @@ Content-Type: application/json
 
 凭证在管理员签发/轮换时显示一次，服务端只存 SHA-256 摘要和前缀；有效期 90 天。轮换撤销该应用现存凭证，禁用、撤销、过期和移除 scope 后立即失效。业务后端持有凭证，不放到前端或 URL 中。
 
-- `knowledge_base_ids`：1–10 个 UUID，服务端去重；混入任何无权库整次 403。全公司可见不等于应用授权；Owner 须先确认整库可共享，Admin 再显式授权。
+- `knowledge_base_ids`：1–10 个 UUID，服务端去重；混入任何无权库整次 403。人员可见范围不等于应用授权；应用只能检索其显式授权的库，授权由库的管理者（Owner/Admin）在应用中勾选完成，见下文「应用自助接入」。
 - `query`：1–4000 个 Unicode 字符；`top_k` 默认 5，范围 1–20，所有库合计。未知字段（含 `user_id`、`department`、聊天历史）拒绝。
 - 请求体上限 32 KiB；每个片段最多 1200 字符，最多 20 个片段，内容量最多约 96 KiB UTF-8。客户端不能覆盖模型、scope 或授权主体。
 - 每个应用每分钟最多 60 次、最多 4 个并发；人员检索单独按用户限制。当前沿用单 Go 实例的进程内限制，重启重置；多副本部署前须改为共享配额，不能将此限制宣传为跨实例配额。
@@ -71,19 +71,25 @@ score 为最终排序信号，不是答案正确率，也不再统一表示余�
 | 路由 | 操作 |
 |---|---|
 | `GET/POST /api/v1/knowledge/bases` | 可见库列表 / 创建 |
-| `PUT/DELETE /api/v1/knowledge/bases/{id}` | Owner/Admin 编辑范围、成员、应用共享 / 逻辑删除 |
+| `PUT/DELETE /api/v1/knowledge/bases/{id}` | Owner/Admin 编辑范围、成员 / 逻辑删除 |
 | `GET/POST /api/v1/knowledge/bases/{id}/documents` | 文档列表 / multipart `file` 上传 |
 | `POST /api/v1/knowledge/bases/{id}/documents/{documentID}/versions` | 上传替换版本 |
 | `DELETE /api/v1/knowledge/documents/{id}` | 立即逻辑不可见 |
 | `POST /api/v1/knowledge/documents/{id}/retry` | 重试当前失败待处理版本 |
 | `GET /api/v1/knowledge/versions/{id}` | 预览、定位和质量诊断；非活动版本仅管理者可见 |
 | `POST /api/v1/knowledge/test-search` | 当前人员权限检索，参数与机器检索一致 |
-| `GET/POST /api/v1/knowledge/applications` | Admin 列表 / 创建 |
-| `PUT /api/v1/knowledge/applications/{id}` | Admin 名称、启停和显式授权集合 |
-| `POST/DELETE /api/v1/knowledge/applications/{id}/credentials` | Admin 签发轮换 / 撤销；应用不存在返回 404 |
-| `GET /api/v1/knowledge/audit` | Admin 最近 100 次调用元数据 |
+| `GET/POST /api/v1/knowledge/applications` | 本人创建的应用列表（Admin 看全部）/ 创建 |
+| `PUT /api/v1/knowledge/applications/{id}` | 应用 Owner 或 Admin：名称、启停和显式授权集合 |
+| `POST/DELETE /api/v1/knowledge/applications/{id}/credentials` | 应用 Owner 或 Admin 签发轮换 / 撤销；应用不存在返回 404 |
+| `GET /api/v1/knowledge/audit` | 最近 100 次调用元数据；普通用户仅本人应用，Admin 全部 |
 
-知识库可见范围 `private/company/department/members`；新部门关联保存 `department_id`（飞书 open_department_id），`department` 为服务端查证的名称快照，成员保存飞书 Open ID。组织选择受当前登录人可见范围限制，部门访问权限来自本人真实部门归属（选择部门即包含其所有下级部门），历史无 ID 的记录保留原可信平台部门名称规则。配置和重新授权见[飞书目录说明](feishu-directory-setup.md)。应用共享与人员可见范围独立，私有库不允许应用共享。关闭应用共享或删除库会在同一事务撤销该库的全部应用授权，重新开启共享后须由 Admin 再次显式授权。旧资料默认私有，未完成 K1 质量核验的旧索引不作为 K1 可检索版本；旧远程来源 ACL 未核验前不得共享给应用。
+知识库可见范围 `private/company/department/members`；新部门关联保存 `department_id`（飞书 open_department_id），`department` 为服务端查证的名称快照，成员保存飞书 Open ID。组织选择受当前登录人可见范围限制，部门访问权限来自本人真实部门归属（选择部门即包含其所有下级部门），历史无 ID 的记录保留原可信平台部门名称规则。配置和重新授权见[飞书目录说明](feishu-directory-setup.md)。应用授权与人员可见范围独立，私有库也可授权给应用。删除库会在同一事务撤销该库的全部应用授权。旧资料默认私有，未完成 K1 质量核验的旧索引不作为 K1 可检索版本；旧远程来源 ACL 未核验前不得共享给应用。
+
+### 应用自助接入（2026-11-11）
+
+任何登录用户可在 `/hub/knowledge/applications` 创建应用、签发/轮换/撤销凭证，并只能授权自己可管理（Owner，或 Admin）的知识库；勾选即视为 Owner 确认该库全部文档可提供给该应用，不再有单独的“允许应用共享”开关，`application_shared` 字段已从接口移除。含旧远程来源文档的库仍不能新增授权（409）。编辑应用时，已有的、非本人管理的库授权可以保留或移除，不能新增。
+
+应用归创建人所有（迁移 0024 新增 `knowledge_applications.owner_user_id`），只有创建人和 Admin 能修改或管理凭证；此前由 Admin 创建的应用无归属，仍只由 Admin 管理。Admin 不参与日常开通，但能查看全部应用及创建人、停用应用、撤销凭证和查看全部调用记录，用于出问题时止损。0024 回滚会丢弃归属，旧代码同时要求库开启共享，因此授权给未共享或私有库的应用回滚后被拒绝（失败关闭，不扩大访问）。
 
 ## 摄入和质量边界
 

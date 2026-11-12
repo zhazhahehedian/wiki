@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import { KnowledgeApplications } from "./knowledge-applications";
 import { KnowledgeBases } from "./knowledge-bases";
 import { KnowledgeDocuments } from "./knowledge-documents";
@@ -17,13 +18,14 @@ vi.mock("@/lib/api/knowledge", async (importOriginal) => ({
     search: vi.fn(),
     upload: vi.fn(),
     retry: vi.fn(),
+    deleteDocument: vi.fn(),
     applications: vi.fn(),
     saveApplication: vi.fn(),
     audit: vi.fn(),
   },
 }));
-vi.mock("@/components/hub/governance-pages", () => ({
-  AdminGate: ({ children }: { children: React.ReactNode }) => children,
+vi.mock("@/lib/api/registry", () => ({
+  getGovernanceIdentity: vi.fn().mockResolvedValue({ is_admin: false }),
 }));
 function mount(node: React.ReactNode) {
   return render(
@@ -49,7 +51,6 @@ const kb = {
   department: "",
   members: [],
   manage: true,
-  application_shared: false,
   model: "fixture",
   dim: 4,
 };
@@ -71,17 +72,20 @@ describe("knowledge pages", () => {
         name: "财务制度",
         description: "",
         visibility: "private",
-        application_shared: false,
       }),
     );
   });
-  it("lets an admin remove a grant whose knowledge base is no longer shared", async () => {
+  it("lets a base manager grant their own base and only remove other grants", async () => {
+    vi.mocked(knowledge.bases).mockResolvedValue([
+      kb,
+      { ...kb, id: "other", name: "人事制度", manage: false },
+    ]);
     vi.mocked(knowledge.applications).mockResolvedValue([
       {
         id: "app",
         name: "报销助手",
         enabled: true,
-        knowledge_base_ids: ["kb", "gone"],
+        knowledge_base_ids: ["other", "gone"],
         credential_prefix: "",
       },
     ]);
@@ -89,23 +93,25 @@ describe("knowledge pages", () => {
     vi.mocked(knowledge.saveApplication).mockImplementation(async (id, body) => ({ ...body, id, credential_prefix: "" }));
     mount(<KnowledgeApplications />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "编辑授权 / 禁用" }),
+      await screen.findByRole("button", { name: "更多操作：报销助手" }),
     );
-    const unshared = await screen.findByRole("checkbox", {
-      name: /财务制度（已取消共享或已删除）/,
-    });
-    expect(unshared).toBeChecked();
-    fireEvent.click(unshared);
     fireEvent.click(
-      screen.getByRole("checkbox", { name: /gone（已取消共享或已删除）/ }),
+      await screen.findByRole("menuitem", { name: "编辑授权 / 停用" }),
     );
-    expect(screen.queryByText(/已取消共享或已删除/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "保存授权" }));
+    const own = await screen.findByRole("checkbox", { name: "财务制度" });
+    expect(own).not.toBeChecked();
+    fireEvent.click(own);
+    const foreign = screen.getByRole("checkbox", { name: /人事制度（非你管理或已删除/ });
+    expect(foreign).toBeChecked();
+    fireEvent.click(foreign);
+    fireEvent.click(screen.getByRole("checkbox", { name: /gone（非你管理或已删除/ }));
+    expect(screen.queryByText(/非你管理或已删除/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
     await waitFor(() =>
       expect(knowledge.saveApplication).toHaveBeenCalledWith("app", {
         name: "报销助手",
         enabled: true,
-        knowledge_base_ids: [],
+        knowledge_base_ids: ["kb"],
       }),
     );
   });
@@ -122,12 +128,51 @@ describe("knowledge pages", () => {
     ]);
     mount(<KnowledgeDocuments id="kb" />);
     expect(await screen.findByText(/更新失败，旧版仍可用/)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "查看可检索版本" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "预览" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "重试索引" }),
     ).toBeInTheDocument();
+  });
+  it("deletes a document only after the confirm dialog is accepted", async () => {
+    vi.mocked(knowledge.documents).mockResolvedValue([
+      {
+        id: "d",
+        title: "制度.pdf",
+        status: "ready",
+        error: "",
+        active_version_id: "v1",
+        pending_version_id: "",
+      },
+    ]);
+    vi.mocked(knowledge.deleteDocument).mockResolvedValue(undefined);
+    mount(
+      <>
+        <KnowledgeDocuments id="kb" />
+        <ConfirmDialogHost />
+      </>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "更多操作：制度.pdf" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "删除文档" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("删除“制度.pdf”？");
+    fireEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    expect(knowledge.deleteDocument).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "更多操作：制度.pdf" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "删除文档" }));
+    fireEvent.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: "删除",
+      }),
+    );
+    await waitFor(() =>
+      expect(knowledge.deleteDocument).toHaveBeenCalledWith("d"),
+    );
   });
   it("shows blocking page diagnostics with source positions", async () => {
     vi.mocked(knowledge.preview).mockResolvedValue({
@@ -150,7 +195,7 @@ describe("knowledge pages", () => {
         blocks: [{ content: "可提取正文", locator: { page: 1 } }],
       },
     });
-    mount(<VersionPreview id="v" close={() => {}} />);
+    mount(<VersionPreview id="v" />);
     expect(await screen.findByText(/阻止索引：第 2 页/)).toBeInTheDocument();
     expect(screen.getByText("第 1 页")).toBeInTheDocument();
   });

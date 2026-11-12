@@ -77,23 +77,36 @@ func (q *Queries) KnowledgeActiveDocuments(ctx context.Context, arg KnowledgeAct
 }
 
 const knowledgeApplications = `-- name: KnowledgeApplications :many
-SELECT id, name, enabled, created_at FROM knowledge_applications ORDER BY created_at DESC
+SELECT a.id,a.name,a.enabled,a.owner_user_id,COALESCE(u.display_name,'')::text AS owner_name
+FROM knowledge_applications a LEFT JOIN users u ON u.id=a.owner_user_id
+WHERE $1::uuid IS NULL OR a.owner_user_id=$1::uuid
+ORDER BY a.created_at DESC
 `
 
-func (q *Queries) KnowledgeApplications(ctx context.Context) ([]KnowledgeApplication, error) {
-	rows, err := q.db.Query(ctx, knowledgeApplications)
+type KnowledgeApplicationsRow struct {
+	ID          uuid.UUID   `json:"id"`
+	Name        string      `json:"name"`
+	Enabled     bool        `json:"enabled"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+	OwnerName   string      `json:"owner_name"`
+}
+
+// A NULL owner filter lists every application (admins).
+func (q *Queries) KnowledgeApplications(ctx context.Context, ownerUserID pgtype.UUID) ([]KnowledgeApplicationsRow, error) {
+	rows, err := q.db.Query(ctx, knowledgeApplications, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []KnowledgeApplication{}
+	items := []KnowledgeApplicationsRow{}
 	for rows.Next() {
-		var i KnowledgeApplication
+		var i KnowledgeApplicationsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
 			&i.Enabled,
-			&i.CreatedAt,
+			&i.OwnerUserID,
+			&i.OwnerName,
 		); err != nil {
 			return nil, err
 		}
@@ -135,7 +148,10 @@ func (q *Queries) KnowledgeAudit(ctx context.Context, arg KnowledgeAuditParams) 
 
 const knowledgeAuditEntries = `-- name: KnowledgeAuditEntries :many
 SELECT request_id,application_id,status,result_count,duration_ms,created_at,knowledge_base_ids
-FROM knowledge_search_audit ORDER BY id DESC LIMIT 100
+FROM knowledge_search_audit
+WHERE $1::uuid IS NULL
+   OR application_id IN (SELECT id FROM knowledge_applications WHERE owner_user_id=$1::uuid)
+ORDER BY id DESC LIMIT 100
 `
 
 type KnowledgeAuditEntriesRow struct {
@@ -148,8 +164,10 @@ type KnowledgeAuditEntriesRow struct {
 	KnowledgeBaseIds []uuid.UUID `json:"knowledge_base_ids"`
 }
 
-func (q *Queries) KnowledgeAuditEntries(ctx context.Context) ([]KnowledgeAuditEntriesRow, error) {
-	rows, err := q.db.Query(ctx, knowledgeAuditEntries)
+// A NULL owner filter returns every entry (admins); otherwise only calls made
+// by applications that user owns.
+func (q *Queries) KnowledgeAuditEntries(ctx context.Context, ownerUserID pgtype.UUID) ([]KnowledgeAuditEntriesRow, error) {
+	rows, err := q.db.Query(ctx, knowledgeAuditEntries, ownerUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -640,13 +658,19 @@ func (q *Queries) KnowledgeListBases(ctx context.Context) ([]KnowledgeBase, erro
 }
 
 const knowledgeLockApplication = `-- name: KnowledgeLockApplication :one
-SELECT id FROM knowledge_applications WHERE id=$1 FOR UPDATE
+SELECT id,owner_user_id FROM knowledge_applications WHERE id=$1 FOR UPDATE
 `
 
-func (q *Queries) KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+type KnowledgeLockApplicationRow struct {
+	ID          uuid.UUID   `json:"id"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
+}
+
+func (q *Queries) KnowledgeLockApplication(ctx context.Context, id uuid.UUID) (KnowledgeLockApplicationRow, error) {
 	row := q.db.QueryRow(ctx, knowledgeLockApplication, id)
-	err := row.Scan(&id)
-	return id, err
+	var i KnowledgeLockApplicationRow
+	err := row.Scan(&i.ID, &i.OwnerUserID)
+	return i, err
 }
 
 const knowledgeLockBase = `-- name: KnowledgeLockBase :one
@@ -769,24 +793,32 @@ func (q *Queries) KnowledgeRevokeBaseGrants(ctx context.Context, kbID uuid.UUID)
 }
 
 const knowledgeSaveApplication = `-- name: KnowledgeSaveApplication :one
-INSERT INTO knowledge_applications(id,name,enabled) VALUES($1,$2,$3)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled RETURNING id, name, enabled, created_at
+INSERT INTO knowledge_applications(id,name,enabled,owner_user_id) VALUES($1,$2,$3,$4)
+ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled RETURNING id, name, enabled, created_at, owner_user_id
 `
 
 type KnowledgeSaveApplicationParams struct {
-	ID      uuid.UUID `json:"id"`
-	Name    string    `json:"name"`
-	Enabled bool      `json:"enabled"`
+	ID          uuid.UUID   `json:"id"`
+	Name        string      `json:"name"`
+	Enabled     bool        `json:"enabled"`
+	OwnerUserID pgtype.UUID `json:"owner_user_id"`
 }
 
+// The owner is set on creation only; updates never transfer ownership.
 func (q *Queries) KnowledgeSaveApplication(ctx context.Context, arg KnowledgeSaveApplicationParams) (KnowledgeApplication, error) {
-	row := q.db.QueryRow(ctx, knowledgeSaveApplication, arg.ID, arg.Name, arg.Enabled)
+	row := q.db.QueryRow(ctx, knowledgeSaveApplication,
+		arg.ID,
+		arg.Name,
+		arg.Enabled,
+		arg.OwnerUserID,
+	)
 	var i KnowledgeApplication
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Enabled,
 		&i.CreatedAt,
+		&i.OwnerUserID,
 	)
 	return i, err
 }

@@ -58,7 +58,7 @@ func (r *KnowledgeRepository) mutate(ctx context.Context, fn func(*generated.Que
 	return tx.Commit(ctx)
 }
 func base(b generated.KnowledgeBase, manage bool) k.KB {
-	return k.KB{ID: b.ID.String(), Name: b.Name, Description: b.Description, Visibility: b.Visibility, Department: b.Department, DepartmentID: b.DepartmentID, Members: b.Members, Manage: manage, ApplicationShared: b.ApplicationShared, Model: b.EmbedModel, Dim: int(b.EmbedDim)}
+	return k.KB{ID: b.ID.String(), Name: b.Name, Description: b.Description, Visibility: b.Visibility, Department: b.Department, DepartmentID: b.DepartmentID, Members: b.Members, Manage: manage, Model: b.EmbedModel, Dim: int(b.EmbedDim)}
 }
 
 // viewer is a principal's resolved authority, loaded once per operation.
@@ -89,10 +89,10 @@ func loadViewer(ctx context.Context, q *generated.Queries, p k.Principal) (viewe
 }
 
 // can reports read authority over b, or write authority when manage is set.
-// Applications never manage and only read granted, application-shared bases.
+// Applications never manage and only read bases granted to them.
 func (v viewer) can(b generated.KnowledgeBase, manage bool) bool {
 	if v.app {
-		return !manage && b.ApplicationShared && slices.Contains(v.grants, b.ID)
+		return !manage && slices.Contains(v.grants, b.ID)
 	}
 	if v.who.IsAdmin || ks(b.OwnerUserID) == v.userID {
 		return true
@@ -113,15 +113,29 @@ func access(ctx context.Context, q *generated.Queries, p k.Principal, b generate
 	}
 	return nil
 }
-func admin(ctx context.Context, q *generated.Queries, p k.Principal) error {
+
+// appManager resolves a signed-in person who may manage knowledge
+// applications. Application principals never manage applications.
+func appManager(ctx context.Context, q *generated.Queries, p k.Principal) (viewer, error) {
 	if p.ApplicationID != "" {
-		return k.ErrForbidden
+		return viewer{}, k.ErrForbidden
 	}
-	who, e := identity(ctx, q, p.UserID)
-	if e != nil || !who.IsAdmin {
-		return k.ErrForbidden
+	return loadViewer(ctx, q, p)
+}
+
+// ownsApp reports whether v manages an application with this owner: admins
+// manage every application, others only the ones they created. Applications
+// without an owner predate owner self-service and stay admin-managed.
+func (v viewer) ownsApp(owner pgtype.UUID) bool {
+	return v.who.IsAdmin || (owner.Valid && ks(owner) == v.userID)
+}
+
+// ownerFilter limits listings to v's own applications unless v is an admin.
+func (v viewer) ownerFilter() pgtype.UUID {
+	if v.who.IsAdmin {
+		return pgtype.UUID{}
 	}
-	return nil
+	return kn(v.userID)
 }
 func (r *KnowledgeRepository) ListKB(ctx context.Context, p k.Principal) ([]k.KB, error) {
 	q := generated.New(r.pool)
@@ -161,6 +175,9 @@ func (r *KnowledgeRepository) AuthorizeManage(ctx context.Context, p k.Principal
 func (r *KnowledgeRepository) SaveKB(ctx context.Context, p k.Principal, id string, in k.KB, model string, dim int) (out k.KB, e error) {
 	e = r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
 		owner := kn(p.UserID)
+		// application_shared is no longer part of the model (grants confirm
+		// sharing); updates keep the stored value so a rollback fails closed.
+		shared := false
 		if id != "" {
 			b, e := q.KnowledgeLockBase(ctx, ku(id))
 			if e != nil {
@@ -170,6 +187,7 @@ func (r *KnowledgeRepository) SaveKB(ctx context.Context, p k.Principal, id stri
 				return e
 			}
 			owner = b.OwnerUserID
+			shared = b.ApplicationShared
 			model = b.EmbedModel
 			dim = int(b.EmbedDim)
 		} else {
@@ -178,34 +196,14 @@ func (r *KnowledgeRepository) SaveKB(ctx context.Context, p k.Principal, id stri
 			}
 			id = uuid.NewString()
 		}
-		if in.ApplicationShared && in.Visibility == "private" {
-			return k.ErrInvalid
-		}
-		// Legacy remote documents have unverified source ACLs and cannot be shared.
-		if in.ApplicationShared {
-			docs, e := q.KnowledgeDocuments(ctx, ku(id))
-			if e != nil {
-				return e
-			}
-			for _, d := range docs {
-				if d.SourceType != "local-upload" || !d.ActiveVersionID.Valid {
-					return k.ErrConflict
-				}
-			}
-		}
 		if in.Members == nil {
 			in.Members = []string{}
 		}
-		b, e := q.KnowledgeSaveBase(ctx, generated.KnowledgeSaveBaseParams{ID: ku(id), Name: in.Name, Description: in.Description, OwnerUserID: owner, EmbedModel: model, EmbedDim: int32(dim), Visibility: in.Visibility, Department: in.Department, DepartmentID: in.DepartmentID, Members: in.Members, ApplicationShared: in.ApplicationShared})
+		b, e := q.KnowledgeSaveBase(ctx, generated.KnowledgeSaveBaseParams{ID: ku(id), Name: in.Name, Description: in.Description, OwnerUserID: owner, EmbedModel: model, EmbedDim: int32(dim), Visibility: in.Visibility, Department: in.Department, DepartmentID: in.DepartmentID, Members: in.Members, ApplicationShared: shared})
 		if e != nil {
 			return e
 		}
 		out = base(b, true)
-		if !b.ApplicationShared {
-			if e = q.KnowledgeRevokeBaseGrants(ctx, b.ID); e != nil {
-				return e
-			}
-		}
 		return knowledgeAdminAudit(ctx, q, p, "knowledge.base.save", id)
 	})
 	return
@@ -482,10 +480,11 @@ func (r *KnowledgeRepository) Authenticate(ctx context.Context, digest []byte) (
 }
 func (r *KnowledgeRepository) Applications(ctx context.Context, p k.Principal) ([]k.Application, error) {
 	q := generated.New(r.pool)
-	if e := admin(ctx, q, p); e != nil {
+	who, e := appManager(ctx, q, p)
+	if e != nil {
 		return nil, e
 	}
-	rows, e := q.KnowledgeApplications(ctx)
+	rows, e := q.KnowledgeApplications(ctx, who.ownerFilter())
 	if e != nil {
 		return nil, e
 	}
@@ -495,7 +494,7 @@ func (r *KnowledgeRepository) Applications(ctx context.Context, p k.Principal) (
 		if e != nil {
 			return nil, e
 		}
-		v := k.Application{ID: a.ID.String(), Name: a.Name, Enabled: a.Enabled, KBIDs: []string{}}
+		v := k.Application{ID: a.ID.String(), Name: a.Name, Enabled: a.Enabled, KBIDs: []string{}, OwnerName: a.OwnerName}
 		for _, id := range ids {
 			v.KBIDs = append(v.KBIDs, id.String())
 		}
@@ -515,24 +514,58 @@ func (r *KnowledgeRepository) Applications(ctx context.Context, p k.Principal) (
 }
 func (r *KnowledgeRepository) SaveApplication(ctx context.Context, p k.Principal, id string, in k.ApplicationInput) (out k.Application, e error) {
 	e = r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
-		if e := admin(ctx, q, p); e != nil {
+		v, e := appManager(ctx, q, p)
+		if e != nil {
 			return e
 		}
+		owner := kn(p.UserID)
+		var current []uuid.UUID
 		if id == "" {
 			id = uuid.NewString()
+		} else {
+			a, e := q.KnowledgeLockApplication(ctx, ku(id))
+			if e != nil {
+				return ke(e)
+			}
+			if !v.ownsApp(a.OwnerUserID) {
+				return k.ErrForbidden
+			}
+			owner = a.OwnerUserID
+			if current, e = q.KnowledgeGrants(ctx, a.ID); e != nil {
+				return e
+			}
 		}
-		// FOR SHARE orders this against a concurrent unshare/delete of the base,
-		// whose grant revocation then sees (and removes) the grant written here.
+		// FOR SHARE orders this against a concurrent delete of the base, whose
+		// grant revocation then sees (and removes) the grant written here.
 		for _, kbID := range in.KBIDs {
 			b, e := q.KnowledgeShareLockBase(ctx, ku(kbID))
-			if errors.Is(e, pgx.ErrNoRows) || (e == nil && !b.ApplicationShared) {
+			if errors.Is(e, pgx.ErrNoRows) {
 				return k.ErrForbidden
 			}
 			if e != nil {
 				return e
 			}
+			// Kept grants need no fresh authority, so an owner can edit an
+			// application an admin granted other bases to; new grants require
+			// managing the base, which is the owner's confirmation to share it.
+			if slices.Contains(current, b.ID) {
+				continue
+			}
+			if !v.can(b, true) {
+				return k.ErrForbidden
+			}
+			// Legacy remote documents have unverified source ACLs and cannot be shared.
+			docs, e := q.KnowledgeDocuments(ctx, b.ID)
+			if e != nil {
+				return e
+			}
+			for _, d := range docs {
+				if d.SourceType != "local-upload" {
+					return k.ErrConflict
+				}
+			}
 		}
-		a, e := q.KnowledgeSaveApplication(ctx, generated.KnowledgeSaveApplicationParams{ID: ku(id), Name: in.Name, Enabled: in.Enabled})
+		a, e := q.KnowledgeSaveApplication(ctx, generated.KnowledgeSaveApplicationParams{ID: ku(id), Name: in.Name, Enabled: in.Enabled, OwnerUserID: owner})
 		if e != nil {
 			return e
 		}
@@ -550,14 +583,21 @@ func (r *KnowledgeRepository) SaveApplication(ctx context.Context, p k.Principal
 	return
 }
 
-// lockApplication requires an admin and an existing application, and holds the
+// lockApplication requires the application's owner or an admin, and holds the
 // application row so concurrent rotations cannot leave two live credentials.
 func lockApplication(ctx context.Context, q *generated.Queries, p k.Principal, id string) error {
-	if e := admin(ctx, q, p); e != nil {
+	v, e := appManager(ctx, q, p)
+	if e != nil {
 		return e
 	}
-	_, e := q.KnowledgeLockApplication(ctx, ku(id))
-	return ke(e)
+	a, e := q.KnowledgeLockApplication(ctx, ku(id))
+	if e != nil {
+		return ke(e)
+	}
+	if !v.ownsApp(a.OwnerUserID) {
+		return k.ErrForbidden
+	}
+	return nil
 }
 func (r *KnowledgeRepository) Rotate(ctx context.Context, p k.Principal, id string, digest []byte, prefix string, expiry time.Time) error {
 	return r.mutate(ctx, func(q *generated.Queries, tx pgx.Tx) error {
@@ -595,10 +635,11 @@ func (r *KnowledgeRepository) Audit(ctx context.Context, p k.Principal, kbIDs []
 }
 func (r *KnowledgeRepository) AuditEntries(ctx context.Context, p k.Principal) ([]k.AuditEntry, error) {
 	q := generated.New(r.pool)
-	if e := admin(ctx, q, p); e != nil {
+	v, e := appManager(ctx, q, p)
+	if e != nil {
 		return nil, e
 	}
-	rows, e := q.KnowledgeAuditEntries(ctx)
+	rows, e := q.KnowledgeAuditEntries(ctx, v.ownerFilter())
 	if e != nil {
 		return nil, e
 	}

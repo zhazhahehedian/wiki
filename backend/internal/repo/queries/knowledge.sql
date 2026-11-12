@@ -86,13 +86,18 @@ UPDATE documents SET status='failed',error_message=$2,updated_at=now() WHERE pen
 UPDATE documents SET deleted_at=now(),pending_version_id=NULL WHERE id=$1;
 
 -- name: KnowledgeLockApplication :one
-SELECT id FROM knowledge_applications WHERE id=$1 FOR UPDATE;
+SELECT id,owner_user_id FROM knowledge_applications WHERE id=$1 FOR UPDATE;
 
 -- name: KnowledgeApplications :many
-SELECT * FROM knowledge_applications ORDER BY created_at DESC;
+-- A NULL owner filter lists every application (admins).
+SELECT a.id,a.name,a.enabled,a.owner_user_id,COALESCE(u.display_name,'')::text AS owner_name
+FROM knowledge_applications a LEFT JOIN users u ON u.id=a.owner_user_id
+WHERE sqlc.narg(owner_user_id)::uuid IS NULL OR a.owner_user_id=sqlc.narg(owner_user_id)::uuid
+ORDER BY a.created_at DESC;
 
 -- name: KnowledgeSaveApplication :one
-INSERT INTO knowledge_applications(id,name,enabled) VALUES($1,$2,$3)
+-- The owner is set on creation only; updates never transfer ownership.
+INSERT INTO knowledge_applications(id,name,enabled,owner_user_id) VALUES($1,$2,$3,$4)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,enabled=excluded.enabled RETURNING *;
 
 -- name: KnowledgeGrants :many
@@ -134,5 +139,10 @@ INSERT INTO knowledge_search_audit(application_id,user_id,request_id,status,resu
 VALUES(sqlc.narg(application_id)::uuid,sqlc.narg(user_id)::uuid,sqlc.arg(request_id),sqlc.arg(status),sqlc.arg(result_count),sqlc.arg(duration_ms),sqlc.arg(knowledge_base_ids));
 
 -- name: KnowledgeAuditEntries :many
+-- A NULL owner filter returns every entry (admins); otherwise only calls made
+-- by applications that user owns.
 SELECT request_id,application_id,status,result_count,duration_ms,created_at,knowledge_base_ids
-FROM knowledge_search_audit ORDER BY id DESC LIMIT 100;
+FROM knowledge_search_audit
+WHERE sqlc.narg(owner_user_id)::uuid IS NULL
+   OR application_id IN (SELECT id FROM knowledge_applications WHERE owner_user_id=sqlc.narg(owner_user_id)::uuid)
+ORDER BY id DESC LIMIT 100;

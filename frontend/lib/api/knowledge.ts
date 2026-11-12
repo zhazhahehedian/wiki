@@ -8,7 +8,6 @@ export interface KnowledgeBase {
   department_id?: string;
   members: string[];
   manage: boolean;
-  application_shared: boolean;
   model: string;
   dim: number;
 }
@@ -70,6 +69,7 @@ export interface Application {
   name: string;
   enabled: boolean;
   knowledge_base_ids: string[];
+  owner_name?: string;
   credential_prefix: string;
   expires_at?: string;
   last_used_at?: string;
