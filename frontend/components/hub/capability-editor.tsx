@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Save } from "lucide-react";
 import { Select } from "@/components/ui/select";
+import { confirm } from "@/components/ui/confirm-dialog";
 import {
   getCapability,
   saveCapability,
@@ -114,8 +115,15 @@ export function CapabilityEditor({ detail }: { detail?: CapabilityDetail }) {
   ) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
-  function reload() {
-    if (window.confirm("重新加载将丢弃当前未保存的表单内容，是否继续？"))
+  async function reload() {
+    if (
+      await confirm({
+        title: "重新加载页面？",
+        description: "当前未保存的表单内容将被丢弃。",
+        confirmText: "重新加载",
+        destructive: true,
+      })
+    )
       window.location.reload();
   }
   async function submit(e: FormEvent) {

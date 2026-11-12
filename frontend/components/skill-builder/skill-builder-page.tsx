@@ -19,6 +19,7 @@ import {
 import { GenerationProgress } from "./generation-progress";
 import { useModelConnection } from "@/components/playground/playground-provider";
 import { Select } from "@/components/ui/select";
+import { confirm } from "@/components/ui/confirm-dialog";
 import {
   Field,
   fieldClass,
@@ -100,10 +101,15 @@ export function SkillBuilderPage({ template }: { template?: SkillTemplate }) {
     setBusy(null);
     setNotice("已停止生成，原草案已保留。需求文字保留，可修改后重试。");
   }
-  function reset() {
+  async function reset() {
     if (
       (messages.length || draft || input || material) &&
-      !window.confirm("开始新建将清除本页未保存的对话与草案，是否继续？")
+      !(await confirm({
+        title: "开始新建？",
+        description: "本页未保存的对话与草案将被清除。",
+        confirmText: "清除并新建",
+        destructive: true,
+      }))
     )
       return;
     materialRead.current++;

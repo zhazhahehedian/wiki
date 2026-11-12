@@ -5,6 +5,7 @@ import { ThemeProvider } from "next-themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import { AuthSessionBoundary } from "@/components/auth/auth-session-boundary";
+import { ConfirmDialogHost } from "@/components/ui/confirm-dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -29,6 +30,7 @@ export function Providers({ children }: { children: ReactNode }) {
           <AuthSessionBoundary>
             {children}
             <Toaster richColors position="top-right" />
+            <ConfirmDialogHost />
             <ReactQueryDevtools initialIsOpen={false} />
           </AuthSessionBoundary>
         </QueryClientProvider>
