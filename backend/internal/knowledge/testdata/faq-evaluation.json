@@ -1,0 +1,5 @@
+[
+  {"id":"faq-materials","query":"报销材料怎么准备？","title":"faq.md","evidence":["发票和审批单"],"line":1},
+  {"id":"faq-isolation","query":"物料隔离怎么处理？","title":"faq.md","evidence":["先进先出","卡控"],"line":5,"first":true},
+  {"id":"faq-no-answer","query":"董事会成员名单是什么？","no_answer":true}
+]

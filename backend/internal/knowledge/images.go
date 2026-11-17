@@ -127,6 +127,11 @@ func (s *Service) resolveImages(ctx context.Context, p *Preview) error {
 			continue
 		case o.text != "":
 			recognized++
+			text := o.text
+			if runes := []rune(text); len(runes) > 400 {
+				text = string(runes[:400])
+				o.truncated = true
+			}
 			if o.truncated {
 				truncated = append(truncated, img.index)
 			}
@@ -134,7 +139,7 @@ func (s *Service) resolveImages(ctx context.Context, p *Preview) error {
 			if img.alt != "" {
 				b.Content += "替代文字：" + img.alt + "\n"
 			}
-			b.Content += o.text
+			b.Content += text
 		default:
 			problems[o.problem] = append(problems[o.problem], img.index)
 			if img.alt == "" {
