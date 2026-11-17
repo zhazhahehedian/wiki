@@ -19,20 +19,25 @@ func TestKnowledgeActiveDocumentsCloud(t *testing.T) {
 	if os.Getenv("KNOWLEDGE_TEST_DISPOSABLE") != "1" {
 		t.Skip("isolated writes not requested")
 	}
-	f, e := os.Open("../../../.env")
-	if e != nil {
-		t.Fatal("configuration unavailable")
-	}
-	defer f.Close()
-	scanner := bufio.NewScanner(f)
-	dsn := ""
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "DATABASE_URL=") {
-			dsn = strings.Trim(strings.TrimPrefix(line, "DATABASE_URL="), "\"'")
+	dsn := os.Getenv("KNOWLEDGE_TEST_DATABASE_URL")
+	if dsn == "" {
+		f, e := os.Open("../../../.env")
+		if e != nil {
+			t.Fatal("configuration unavailable")
+		}
+		defer f.Close()
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "DATABASE_URL=") {
+				dsn = strings.Trim(strings.TrimPrefix(line, "DATABASE_URL="), "\"'")
+			}
+		}
+		if scanner.Err() != nil {
+			t.Fatal("database config unavailable")
 		}
 	}
-	if scanner.Err() != nil || dsn == "" {
+	if dsn == "" {
 		t.Fatal("database config unavailable")
 	}
 	u, e := url.Parse(dsn)
