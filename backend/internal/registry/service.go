@@ -246,12 +246,15 @@ func (s *Service) Downloaders(ctx context.Context, user, slug string, f Filter) 
 	return s.repo.Downloaders(ctx, user, slug, f)
 }
 
-// Download returns the version metadata with its bundle. Every successful
-// download is audited; an audit failure withholds the bundle.
-func (s *Service) Download(ctx context.Context, user, slug, versionID string) (Version, io.ReadCloser, error) {
+// Download copies one bundle into dst. The download audit is written only after
+// every byte has been copied. prepare runs after the object is opened and
+// before the first byte is written, so an HTTP caller can set headers without
+// committing a success status. A short copy or a read/write error returns
+// before RecordDownload. An audit failure after a complete copy is ErrAudit.
+func (s *Service) Download(ctx context.Context, user, slug, versionID string, dst io.Writer, prepare func(Version) error) (Version, error) {
 	detail, e := s.Get(ctx, user, slug)
 	if e != nil {
-		return Version{}, nil, e
+		return Version{}, e
 	}
 	for _, v := range detail.Versions {
 		if v.ID != versionID || v.BundleKey == "" {
@@ -259,13 +262,25 @@ func (s *Service) Download(ctx context.Context, user, slug, versionID string) (V
 		}
 		body, e := s.storage.Get(ctx, v.BundleKey)
 		if e != nil {
-			return Version{}, nil, e
+			return Version{}, e
+		}
+		defer body.Close()
+		if prepare != nil {
+			if e = prepare(v); e != nil {
+				return Version{}, e
+			}
+		}
+		n, e := io.Copy(dst, body)
+		if e != nil {
+			return Version{}, e
+		}
+		if v.BundleSize > 0 && n != v.BundleSize {
+			return Version{}, fmt.Errorf("incomplete bundle: %w", io.ErrUnexpectedEOF)
 		}
 		if e = s.repo.RecordDownload(ctx, user, detail.ID, v.ID); e != nil {
-			_ = body.Close()
-			return Version{}, nil, e
+			return v, fmt.Errorf("%w: %w", ErrAudit, e)
 		}
-		return v, body, nil
+		return v, nil
 	}
-	return Version{}, nil, ErrNotFound
+	return Version{}, ErrNotFound
 }
