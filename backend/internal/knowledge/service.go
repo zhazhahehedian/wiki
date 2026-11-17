@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"math"
 	"path/filepath"
 	"strings"
@@ -123,6 +124,7 @@ func (s *Service) Process(ctx context.Context, id string) error {
 		return nil
 	}
 	fail := func(code string, transient bool) error {
+		slog.ErrorContext(ctx, "knowledge index failed", "version_id", id, "failure_code", code, "request_id", indexRequestID(ctx))
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if e := s.Repo.Fail(c, id, code); e != nil {
