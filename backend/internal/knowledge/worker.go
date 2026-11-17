@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -12,6 +13,7 @@ const Queue = "knowledge"
 
 type Job struct {
 	VersionID string `json:"version_id"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 func (Job) Kind() string { return "knowledge_index_v1" }
@@ -25,7 +27,12 @@ type Worker struct {
 }
 
 func (w *Worker) Work(ctx context.Context, j *river.Job[Job]) error {
-	return w.Service.Process(ctx, j.Args.VersionID)
+	slog.InfoContext(ctx, "knowledge index started", "version_id", j.Args.VersionID, "request_id", j.Args.RequestID)
+	err := w.Service.Process(ctx, j.Args.VersionID)
+	if err != nil {
+		slog.ErrorContext(ctx, "knowledge index failed", "version_id", j.Args.VersionID, "request_id", j.Args.RequestID, "error", err.Error())
+	}
+	return err
 }
 
 // Image recognition calls a vision model per DOCX image, so allow more time.

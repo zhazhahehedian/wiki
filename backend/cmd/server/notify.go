@@ -26,7 +26,7 @@ func buildNotifier(cfg *config.Config, pool *pgxpool.Pool, registryRepo *repo.Re
 func newNotifier(pool *pgxpool.Pool, registryRepo *repo.RegistryRepository, origin string, sender notify.Sender) (*river.Client[pgx.Tx], error) {
 	var rc *river.Client[pgx.Tx]
 	registryRepo.WithEvents(func(ctx context.Context, tx pgx.Tx, event registry.Event) error {
-		_, err := rc.InsertTx(ctx, tx, notify.EventJob{Event: event}, nil)
+		_, err := rc.InsertTx(ctx, tx, notify.EventJob{Event: event, RequestID: registry.RequestID(ctx)}, nil)
 		return err
 	})
 	workers := river.NewWorkers()

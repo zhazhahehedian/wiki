@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
@@ -90,7 +91,7 @@ func buildKnowledge(pool *pgxpool.Pool, storage ports.ObjectStorage) (*httpx.Kno
 	// so the client is captured by the enqueue closure after construction.
 	var rc *river.Client[pgx.Tx]
 	r := repo.NewKnowledgeRepository(pool, func(ctx context.Context, tx pgx.Tx, id string) error {
-		_, e := rc.InsertTx(ctx, tx, knowledge.Job{VersionID: id}, nil)
+		_, e := rc.InsertTx(ctx, tx, knowledge.Job{VersionID: id, RequestID: middleware.GetReqID(ctx)}, nil)
 		return e
 	})
 	s := knowledge.New(r, storage, embedding, min)

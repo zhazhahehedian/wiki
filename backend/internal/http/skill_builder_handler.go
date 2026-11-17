@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -63,7 +63,7 @@ func (h *SkillBuilderHandler) Turn(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	reply, e := h.service.Turn(r.Context(), user, input)
 	// Never log conversation text, material, generated content or credentials.
-	log.Printf("skill generation finished request_id=%s model=%q success=%t duration=%s", middleware.GetReqID(r.Context()), input.Model, e == nil, time.Since(started))
+	slog.Info("skill generation finished", "request_id", middleware.GetReqID(r.Context()), "model", input.Model, "success", e == nil, "duration", time.Since(started).String())
 	if e != nil {
 		skillBuilderError(w, r, e)
 		return

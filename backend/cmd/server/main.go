@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	stdhttp "net/http"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	httpx "github.com/zenith-wang/it-wiki/backend/internal/http"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/feishu"
 	"github.com/zenith-wang/it-wiki/backend/internal/infra/storage"
+	"github.com/zenith-wang/it-wiki/backend/internal/logx"
 	"github.com/zenith-wang/it-wiki/backend/internal/playground"
 	"github.com/zenith-wang/it-wiki/backend/internal/publishing"
 	"github.com/zenith-wang/it-wiki/backend/internal/registry"
@@ -38,6 +40,9 @@ func run() error {
 	cfg, err := config.LoadPlatform()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	if err := logx.Setup(os.Stdout, cfg.LogLevel); err != nil {
+		return fmt.Errorf("log setup: %w", err)
 	}
 
 	bootCtx, bootCancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -75,7 +80,7 @@ func run() error {
 	if err := mc.EnsureBucket(bootCtx); err != nil {
 		return fmt.Errorf("ensure bucket: %w", err)
 	}
-	fmt.Printf("[main] minio bucket %q ready\n", cfg.S3Bucket)
+	slog.Info("minio bucket ready", "bucket", cfg.S3Bucket)
 
 	authHandler, authService, err := buildAuthRuntime(cfg, pool, stdhttp.DefaultClient)
 	if err != nil {
@@ -96,7 +101,7 @@ func run() error {
 		return err
 	}
 	if notifier == nil {
-		fmt.Println("[server] Feishu notifications disabled: FEISHU_NOTIFY_ENABLED is not true")
+		slog.Info("feishu notifications disabled")
 	} else {
 		notifyCtx, notifyCancel := context.WithCancel(context.Background())
 		defer notifyCancel()
@@ -132,7 +137,7 @@ func run() error {
 		knowledgeHandler.WithDirectory(directoryService)
 	}
 	if knowledgeWorker == nil {
-		fmt.Println("[server] knowledge service disabled: EMBEDDING_* not configured")
+		slog.Info("knowledge service disabled", "reason", "EMBEDDING_* not configured")
 	} else {
 		workerCtx, workerCancel := context.WithCancel(context.Background())
 		defer workerCancel()
@@ -163,7 +168,7 @@ func run() error {
 
 	serveErr := make(chan error, 1)
 	go func() {
-		fmt.Printf("[server] listening on :%s\n", cfg.Port)
+		slog.Info("listening", "port", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
 			serveErr <- err
 		}
@@ -173,7 +178,7 @@ func run() error {
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	select {
 	case sig := <-stop:
-		fmt.Printf("[server] received %v, shutting down\n", sig)
+		slog.Info("shutting down", "signal", sig.String())
 	case err := <-serveErr:
 		return fmt.Errorf("http listen: %w", err)
 	}

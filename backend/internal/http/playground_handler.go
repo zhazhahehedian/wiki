@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -41,7 +41,7 @@ func playgroundError(w http.ResponseWriter, r *http.Request, err error) {
 		case 400, 404, 422:
 			message = fmt.Sprintf("模型服务不接受本次请求（HTTP %d），请检查模型名称、最大输出 Tokens、采样参数和输入长度", status)
 		}
-		log.Printf("model upstream rejected request_id=%s upstream_status=%d", middleware.GetReqID(r.Context()), status)
+		slog.Warn("model upstream rejected", "request_id", middleware.GetReqID(r.Context()), "upstream_status", status)
 		WriteError(w, r, WithDetails(NewAPIError(502, "model_upstream_rejected", message), map[string]any{"upstream_status": status}))
 	case errors.Is(err, playground.ErrUpstream):
 		WriteError(w, r, NewAPIError(502, "model_service_failed", "模型服务失败或响应在完成前中断，请重试；若反复出现，请检查接口配置或中转服务"))

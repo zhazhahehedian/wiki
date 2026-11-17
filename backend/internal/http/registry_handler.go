@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
@@ -234,7 +234,7 @@ func (h *RegistryHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body was fully written; the audit is the only failure left.
 	if errors.Is(err, registry.ErrAudit) {
-		log.Printf("registry: bundle download completed but audit failed version=%s", version.ID)
+		slog.Error("bundle download completed but audit failed", "request_id", middleware.GetReqID(r.Context()), "version_id", version.ID)
 		return
 	}
 	// No bytes left the handler, so the status line is still available.
