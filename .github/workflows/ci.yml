@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: hub
+          POSTGRES_PASSWORD: hub
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hub -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      # quay.io/minio/minio requires registry auth (401). S3Mock is a public
+      # path-style S3 stand-in and is enough for the storage integration tests.
+      s3:
+        image: adobe/s3mock:latest
+        env:
+          COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS: capability-hub-ci
+        ports:
+          - 9090:9090
+        options: >-
+          --health-cmd "wget --spider -q http://localhost:9090/favicon.ico"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # setup-go reads backend/go.mod. Keep the toolchain local so tests and
+      # govulncheck do not download a different Go than that file requests.
+      GOTOOLCHAIN: local
+      DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
+      REGISTRY_TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
+      PLAYGROUND_TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
+      DIRECTORY_TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
+      KNOWLEDGE_TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
+      KNOWLEDGE_TEST_DISPOSABLE: "1"
+      KNOWLEDGE_READONLY_CHECK: "1"
+      EMBEDDING_DIM: "1024"
+      STORAGE_TEST_S3: "1"
+      S3_ENDPOINT: http://127.0.0.1:9090
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: capability-hub-ci
+      S3_REGION: us-east-1
+      S3_USE_PATH_STYLE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+      - name: Migrate admin database for the read-only inventory
+        working-directory: backend
+        run: go run ./cmd/migrate up
+      - name: go vet
+        working-directory: backend
+        run: go vet ./...
+      - name: go test
+        working-directory: backend
+        run: go test ./...
+      - name: govulncheck
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Test
+        working-directory: frontend
+        run: pnpm test
+      - name: Typecheck
+        working-directory: frontend
+        run: pnpm typecheck
+      - name: Build
+        working-directory: frontend
+        run: pnpm build
