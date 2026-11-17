@@ -18,6 +18,8 @@ var (
 	ErrIdentity         = errors.New("feishu identity required")
 	ErrUploadQuota      = errors.New("too many unfinished bundle uploads")
 	ErrUploadNotReady   = errors.New("bundle upload unfinished or expired")
+	// ErrAudit means the bytes were transferred and the audit write failed.
+	ErrAudit = errors.New("download audit failed")
 )
 
 type Capability struct {
