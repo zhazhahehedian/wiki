@@ -188,10 +188,7 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 	d = act("owner", "submit", d)
 	download("reviewer", v1, small)
 	check(call("consumer", "GET", bundlePath(v1), nil, nil, false), 404)
-	if _, body, err := s.Download(registry.WithCredentialID(ctx, "fixture"), users["reviewer"], input.Slug, v1); !errors.Is(err, registry.ErrNotFound) {
-		if body != nil {
-			body.Close()
-		}
+	if _, err := s.Download(registry.WithCredentialID(ctx, "fixture"), users["reviewer"], input.Slug, v1, io.Discard, nil); !errors.Is(err, registry.ErrNotFound) {
 		t.Fatal("API credential inherited reviewer access", err)
 	}
 	d = act("reviewer", "approve", d)
@@ -242,13 +239,8 @@ func verifyMCPPackageIntegration(t *testing.T, db *sql.DB, s *registry.Service, 
 	d = act("reviewer", "approve", d)
 	_ = d
 	// Verify storage reads also work through the service without public bucket URLs.
-	_, r, err := s.Download(ctx, users["owner"], input.Slug, v2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer r.Close()
-	b, err := io.ReadAll(r)
-	if err != nil || !bytes.Equal(b, newBytes) {
+	var got bytes.Buffer
+	if _, err := s.Download(ctx, users["owner"], input.Slug, v2, &got, nil); err != nil || !bytes.Equal(got.Bytes(), newBytes) {
 		t.Fatal("stored package changed", err)
 	}
 	var audited int

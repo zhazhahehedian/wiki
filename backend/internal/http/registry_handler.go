@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strconv"
@@ -197,28 +198,56 @@ func (h *RegistryHandler) saveResult(w http.ResponseWriter, r *http.Request, use
 	}
 	WriteJSON(w, status, detail)
 }
+
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
 func (h *RegistryHandler) Download(w http.ResponseWriter, r *http.Request) {
 	user, ok := registryUser(w, r)
 	if !ok {
 		return
 	}
 	slug := chi.URLParam(r, "slug")
-	version, body, e := h.service.Download(r.Context(), user, slug, chi.URLParam(r, "versionID"))
-	if e != nil {
-		registryHTTPError(w, r, e)
+	copied := &countingWriter{w: w}
+	version, err := h.service.Download(r.Context(), user, slug, chi.URLParam(r, "versionID"), copied, func(v registry.Version) error {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": slug + "-" + v.Version + ".zip"}))
+		if v.BundleSize > 0 {
+			w.Header().Set("Content-Length", strconv.FormatInt(v.BundleSize, 10))
+		}
+		if v.BundleSHA256 != "" {
+			w.Header().Set("X-Bundle-SHA256", v.BundleSHA256)
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		return nil
+	})
+	if err == nil {
 		return
 	}
-	defer body.Close()
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": slug + "-" + version.Version + ".zip"}))
-	if version.BundleSize > 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(version.BundleSize, 10))
+	// The body was fully written; the audit is the only failure left.
+	if errors.Is(err, registry.ErrAudit) {
+		log.Printf("registry: bundle download completed but audit failed version=%s", version.ID)
+		return
 	}
-	if version.BundleSHA256 != "" {
-		w.Header().Set("X-Bundle-SHA256", version.BundleSHA256)
+	// No bytes left the handler, so the status line is still available.
+	if copied.n == 0 {
+		w.Header().Del("Content-Length")
+		w.Header().Del("Content-Disposition")
+		w.Header().Del("X-Bundle-SHA256")
+		registryHTTPError(w, r, err)
+		return
 	}
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = io.Copy(w, body)
+	// A partial body already went out with an implicit 200. Abort the
+	// connection instead of finishing that response as a successful download.
+	panic(http.ErrAbortHandler)
 }
 
 // CreateUpload starts a part upload for a large MCP package.
