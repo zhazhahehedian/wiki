@@ -18,7 +18,7 @@
 
 ## 本地开发
 
-Go 版本以 `backend/go.mod` 为准（当前要求 1.25.7）；Node.js、pnpm 与依赖以 `frontend/package.json` 和 lockfile 为准（pnpm 9.12.0）。
+Go 版本以 `backend/go.mod` 为准（当前要求 1.26.11）；Node.js、pnpm 与依赖以 `frontend/package.json` 和 lockfile 为准（pnpm 9.12.0）。
 
 1. 首次配置时复制 `.env.example` 为本地 `.env`，已有配置不要覆盖。填写 `DATABASE_URL`、`S3_ENDPOINT`、`S3_ACCESS_KEY`、`S3_SECRET_KEY`、`S3_BUCKET` 等基础设施变量。
 2. 填写 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_REDIRECT_URL` 和 `FRONTEND_ORIGIN`。可选 `FEISHU_TENANT_KEY` 用于限制租户。用 `openssl rand -hex 16` 生成私有随机字符串填入 `OAUTH_ENCRYPTION_KEY`，不可使用模板值。
