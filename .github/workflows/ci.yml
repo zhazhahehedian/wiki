@@ -36,6 +36,9 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
+      # setup-go reads backend/go.mod. Keep the toolchain local so tests and
+      # govulncheck do not download a different Go than that file requests.
+      GOTOOLCHAIN: local
       DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
       REGISTRY_TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
       PLAYGROUND_TEST_DATABASE_URL: postgres://hub:hub@127.0.0.1:5432/postgres?sslmode=disable
@@ -65,12 +68,8 @@ jobs:
       - name: go test
         working-directory: backend
         run: go test ./...
-      # This branch is still on Go 1.25.7. govulncheck reports the stdlib/chi
-      # findings fixed by the toolchain upgrade PR, so it must not fail the job
-      # until that upgrade is on this branch.
       - name: govulncheck
         working-directory: backend
-        continue-on-error: true
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
