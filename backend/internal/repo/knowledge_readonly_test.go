@@ -19,21 +19,28 @@ func TestKnowledgeReadOnlyInventory(t *testing.T) {
 	if os.Getenv("KNOWLEDGE_READONLY_CHECK") != "1" {
 		t.Skip("read-only external inventory not requested")
 	}
-	f, e := os.Open("../../../.env")
-	if e != nil {
-		t.Fatal("configuration file unavailable")
+	if os.Getenv("KNOWLEDGE_TEST_DATABASE_URL") != "" {
+		t.Setenv("DATABASE_URL", os.Getenv("KNOWLEDGE_TEST_DATABASE_URL"))
+	} else {
+		f, e := os.Open("../../../.env")
+		if e != nil {
+			t.Fatal("configuration file unavailable")
+		}
+		defer f.Close()
+		scan := bufio.NewScanner(f)
+		for scan.Scan() {
+			s := strings.TrimSpace(scan.Text())
+			if s == "" || strings.HasPrefix(s, "#") {
+				continue
+			}
+			key, value, ok := strings.Cut(s, "=")
+			if ok {
+				t.Setenv(strings.TrimSpace(key), strings.Trim(strings.TrimSpace(value), "\"'"))
+			}
+		}
 	}
-	defer f.Close()
-	scan := bufio.NewScanner(f)
-	for scan.Scan() {
-		s := strings.TrimSpace(scan.Text())
-		if s == "" || strings.HasPrefix(s, "#") {
-			continue
-		}
-		key, value, ok := strings.Cut(s, "=")
-		if ok {
-			t.Setenv(strings.TrimSpace(key), strings.Trim(strings.TrimSpace(value), "\"'"))
-		}
+	if os.Getenv("DATABASE_URL") == "" || os.Getenv("S3_ENDPOINT") == "" || os.Getenv("S3_BUCKET") == "" {
+		t.Fatal("database and object storage configuration unavailable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Setenv("HTTP_PROXY", "")
