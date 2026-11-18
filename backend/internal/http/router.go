@@ -39,7 +39,7 @@ func newRouter(h Handlers) http.Handler {
 	}
 
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
+	r.Use(RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(SanitizedAccessLogger)
 	r.Use(middleware.Recoverer)

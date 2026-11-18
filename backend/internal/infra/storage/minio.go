@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -63,14 +63,14 @@ func (m *MinioClient) EnsureBucket(ctx context.Context) error {
 
 		var notFound *s3types.NotFound
 		if errors.As(err, &notFound) {
-			log.Printf("[minio] bucket %q not found, creating...", m.cfg.Bucket)
+			slog.Info("minio bucket not found, creating", "bucket", m.cfg.Bucket)
 			_, cerr := m.client.CreateBucket(ctx, &s3.CreateBucketInput{
 				Bucket: aws.String(m.cfg.Bucket),
 			})
 			if cerr != nil {
 				return fmt.Errorf("create bucket: %w", cerr)
 			}
-			log.Printf("[minio] bucket %q created", m.cfg.Bucket)
+			slog.Info("minio bucket created", "bucket", m.cfg.Bucket)
 			return nil
 		}
 

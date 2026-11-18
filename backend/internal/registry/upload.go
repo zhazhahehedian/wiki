@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -317,7 +317,7 @@ func (s *Service) discardUpload(user string, u BundleUpload) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := s.uploads.repo.DeleteUpload(ctx, user, u.ID); err != nil {
-		log.Print("registry: bundle upload record cleanup failed; it expires later")
+		slog.Warn("bundle upload record cleanup failed; it expires later")
 	}
 }
 
@@ -359,7 +359,7 @@ func (s *Service) SweepExpiredUploads(ctx context.Context, now time.Time) (int, 
 		for _, u := range expired {
 			if !u.Completed {
 				if err := s.uploads.store.AbortMultipart(ctx, u.ObjectKey, u.StorageUploadID); err != nil && ctx.Err() == nil {
-					log.Print("registry: abort of expired bundle upload failed; storage expiry reclaims it")
+					slog.Warn("abort of expired bundle upload failed; storage expiry reclaims it")
 				}
 			}
 			if err := s.uploads.repo.DeleteExpiredUpload(ctx, u.ID, now); err != nil {

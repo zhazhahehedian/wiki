@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/url"
 	"regexp"
 	"strings"
@@ -208,7 +208,7 @@ func (s *Service) Save(ctx context.Context, user, slug string, r SaveRequest, fi
 	if upload != nil {
 		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := s.uploads.repo.DeleteUpload(c, user, upload.ID); err != nil {
-			log.Print("registry: consumed bundle upload record cleanup failed; it expires later")
+			slog.Warn("consumed bundle upload record cleanup failed; it expires later")
 		}
 		cancel()
 	}
@@ -229,12 +229,12 @@ func (s *Service) cleanupBundle(key string) {
 	defer cancel()
 	used, e := s.repo.BundleReferenced(ctx, key)
 	if e != nil {
-		log.Print("registry: bundle reference check failed; cleanup deferred")
+		slog.Warn("bundle reference check failed; cleanup deferred")
 		return
 	}
 	if !used {
 		if e = s.storage.Delete(ctx, key); e != nil {
-			log.Print("registry: unreferenced bundle cleanup failed")
+			slog.Warn("unreferenced bundle cleanup failed")
 		}
 	}
 }

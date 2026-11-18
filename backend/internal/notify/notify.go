@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 	"time"
@@ -19,7 +20,8 @@ import (
 const Queue = "notify"
 
 type EventJob struct {
-	Event registry.Event `json:"event"`
+	Event     registry.Event `json:"event"`
+	RequestID string         `json:"request_id,omitempty"`
 }
 
 func (EventJob) Kind() string { return "registry_event_v1" }
@@ -154,6 +156,7 @@ type EventWorker struct {
 }
 
 func (w *EventWorker) Work(ctx context.Context, job *river.Job[EventJob]) error {
+	slog.InfoContext(ctx, "registry notification planned", "request_id", job.Args.RequestID, "action", job.Args.Event.Action, "slug", job.Args.Event.Slug)
 	messages, err := Plan(ctx, w.Recipients, w.Origin, job.Args.Event)
 	if err != nil || len(messages) == 0 {
 		return err

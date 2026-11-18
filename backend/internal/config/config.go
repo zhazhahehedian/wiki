@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/zenith-wang/it-wiki/backend/internal/logx"
 )
 
 type Config struct {
@@ -53,6 +55,10 @@ func LoadPlatform() (*Config, error) {
 	if sessionTTL <= 0 {
 		return nil, fmt.Errorf("invalid SESSION_TTL: must be positive")
 	}
+	logLevel := getEnv("LOG_LEVEL", "info")
+	if _, err := logx.ParseLevel(logLevel); err != nil {
+		return nil, err
+	}
 
 	feishuValues := map[string]string{
 		"FEISHU_APP_ID":        getEnv("FEISHU_APP_ID", ""),
@@ -99,7 +105,7 @@ func LoadPlatform() (*Config, error) {
 	}
 	cfg := &Config{
 		Port:             getEnv("PORT", "8080"),
-		LogLevel:         getEnv("LOG_LEVEL", "info"),
+		LogLevel:         logLevel,
 		DatabaseURL:      mustEnv("DATABASE_URL"),
 		DatabaseProxyURL: os.Getenv("DATABASE_PROXY_URL"),
 		S3Endpoint:       mustEnv("S3_ENDPOINT"),

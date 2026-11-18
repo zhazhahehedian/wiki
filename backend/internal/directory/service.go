@@ -3,7 +3,7 @@ package directory
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"regexp"
 	"slices"
 	"time"
@@ -263,16 +263,16 @@ func (s *Service) withAncestors(ctx context.Context, token string, direct []stri
 		for range maxAncestorPages {
 			out, e := s.client.ParentDepartments(ctx, token, id, page)
 			if errors.Is(e, ErrAuthorization) || errors.Is(e, ErrInvalid) {
-				log.Print("directory: department ancestors not visible to this account; only readable departments apply")
+				slog.Info("directory ancestors not visible; only readable departments apply")
 				break
 			}
 			if e != nil {
-				log.Print("directory: department ancestor lookup failed; retrying shortly")
+				slog.Warn("directory ancestor lookup failed; retrying shortly")
 				return ids, membershipRetryTTL
 			}
 			for _, d := range out.Items {
 				if len(ids) >= maxMembershipIDs {
-					log.Print("directory: department membership limit reached")
+					slog.Warn("directory membership limit reached")
 					return ids, membershipTTL
 				}
 				if d.ID != "0" && ValidID(d.ID) && !slices.Contains(ids, d.ID) {

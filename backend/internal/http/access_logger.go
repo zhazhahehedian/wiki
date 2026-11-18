@@ -1,7 +1,7 @@
 package http
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -13,14 +13,13 @@ func SanitizedAccessLogger(next http.Handler) http.Handler {
 		wrapped := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
 		startedAt := time.Now()
 		defer func() {
-			log.Printf(
-				"method=%s path=%s status=%d bytes=%d duration=%s request_id=%s",
-				r.Method,
-				r.URL.Path,
-				wrapped.Status(),
-				wrapped.BytesWritten(),
-				time.Since(startedAt),
-				middleware.GetReqID(r.Context()),
+			slog.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", wrapped.Status(),
+				"bytes", wrapped.BytesWritten(),
+				"duration", time.Since(startedAt).String(),
+				"request_id", middleware.GetReqID(r.Context()),
 			)
 		}()
 		next.ServeHTTP(wrapped, r)

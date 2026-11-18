@@ -141,6 +141,14 @@ func TestLoadRejectsNonPositiveSessionTTL(t *testing.T) {
 	}
 }
 
+func TestLoadPlatformRejectsInvalidLogLevel(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("LOG_LEVEL", "verbose")
+	if _, err := LoadPlatform(); err == nil {
+		t.Fatal("LoadPlatform accepted invalid LOG_LEVEL")
+	}
+}
+
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 	clearFeishuEnv(t)

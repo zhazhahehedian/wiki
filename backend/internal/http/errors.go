@@ -3,7 +3,8 @@ package http
 import (
 	"encoding/json"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -44,10 +45,10 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	reqID := middleware.GetReqID(r.Context())
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
-		log.Printf("request failed request_id=%s error_type=%T", reqID, err)
+		slog.Error("request failed", "request_id", reqID, "error_type", fmt.Sprintf("%T", err))
 		apiErr = internalServerAPIError()
 	} else if apiErr.HTTPStatus >= http.StatusInternalServerError {
-		log.Printf("request failed request_id=%s error_category=%s", reqID, apiErr.Code)
+		slog.Error("request failed", "request_id", reqID, "error_category", apiErr.Code)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

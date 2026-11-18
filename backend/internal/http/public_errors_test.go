@@ -2,7 +2,7 @@ package http
 
 import (
 	"bytes"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,9 +19,9 @@ func (secretPublicError) Error() string { return publicErrorSecret }
 
 func TestWriteErrorRedactsUnmappedErrorsAndLogsSafeContext(t *testing.T) {
 	var logs bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(previous) })
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
 
 	recorder := httptest.NewRecorder()
 	handler := middleware.RequestID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

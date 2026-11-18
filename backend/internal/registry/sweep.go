@@ -2,7 +2,7 @@ package registry
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -52,14 +52,14 @@ func (s *Service) RunOrphanSweeper(ctx context.Context, lister ObjectLister, int
 		case <-timer.C:
 		}
 		if n, err := s.SweepExpiredUploads(ctx, time.Now()); err != nil && ctx.Err() == nil {
-			log.Print("registry: expired bundle upload sweep failed; retrying next interval")
+			slog.Warn("expired bundle upload sweep failed; retrying next interval")
 		} else if n > 0 {
-			log.Printf("registry: ended %d expired bundle uploads", n)
+			slog.Info("ended expired bundle uploads", "count", n)
 		}
 		if n, err := s.SweepOrphanBundles(ctx, lister, time.Now()); err != nil && ctx.Err() == nil {
-			log.Print("registry: orphan bundle sweep failed; retrying next interval")
+			slog.Warn("orphan bundle sweep failed; retrying next interval")
 		} else if n > 0 {
-			log.Printf("registry: removed %d orphan bundles", n)
+			slog.Info("removed orphan bundles", "count", n)
 		}
 		timer.Reset(interval)
 	}
