@@ -46,9 +46,13 @@ func Evaluate(ctx context.Context, search func(context.Context, string) ([]Match
 }
 func EvaluateSuite(ctx context.Context, search func(context.Context, string) ([]Match, error), suite string) (EvaluationReport, error) {
 	file := "testdata/evaluation.json"
-	if suite == "optimization" {
+	switch suite {
+	case "baseline":
+	case "optimization":
 		file = "testdata/optimization-evaluation.json"
-	} else if suite != "baseline" {
+	case "faq":
+		file = "testdata/faq-evaluation.json"
+	default:
 		return EvaluationReport{}, fmt.Errorf("unknown evaluation suite")
 	}
 	raw, err := EvaluationData.ReadFile(file)

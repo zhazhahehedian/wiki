@@ -38,7 +38,10 @@ type SendJob struct {
 
 func (SendJob) Kind() string { return "feishu_message_v1" }
 func (SendJob) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{Queue: Queue, MaxAttempts: 8}
+	// Identical sends (same recipient, text, and idempotency key) collapse while
+	// an earlier copy is still queued or already completed, so an event retry
+	// does not deliver the message twice.
+	return river.InsertOpts{Queue: Queue, MaxAttempts: 8, UniqueOpts: river.UniqueOpts{ByArgs: true}}
 }
 
 type Recipients interface {
