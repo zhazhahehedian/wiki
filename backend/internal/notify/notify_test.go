@@ -113,3 +113,10 @@ func TestWorkersFanOutAndCancelPermanentFailures(t *testing.T) {
 		t.Fatal("transient failure not retried", err)
 	}
 }
+
+func TestSendJobDedupesIdenticalArgs(t *testing.T) {
+	opts := (SendJob{}).InsertOpts()
+	if !opts.UniqueOpts.ByArgs || opts.Queue != Queue {
+		t.Fatalf("%+v", opts)
+	}
+}
