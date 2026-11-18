@@ -37,8 +37,30 @@ var (
 	markdownHeading        = regexp.MustCompile(`^ {0,3}(#{1,6})[\t ]+(.+?)\s*#*\s*$`)
 	markdownTableSeparator = regexp.MustCompile(`^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$`)
 	markdownMedia          = regexp.MustCompile(`(?i)!\[|<(img|video|audio|iframe|object|svg|canvas)(\s|>)`)
+	questionLead           = regexp.MustCompile(`^(?:【\s*(?:Q|q|问)[^】]{0,40}】|(?:Q|q)\s*\d+(?:\.\d+)*|问\s*[:：])`)
 	errPartTooLarge        = errors.New("part too large")
 )
+
+// questionTitle reports a FAQ-style label at the start of a paragraph. Bold
+// Word text that is not a heading style still matches, as do Markdown lines.
+func questionTitle(s string) (string, bool) {
+	line := strings.TrimSpace(s)
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	line = strings.Trim(line, "* \t")
+	if line == "" || !questionLead.MatchString(line) {
+		return "", false
+	}
+	if utf8.RuneCountInString(line) > 120 {
+		line = string([]rune(line)[:120])
+	}
+	return line, true
+}
+
+func imageChunk(b Block) bool {
+	return strings.HasPrefix(strings.TrimSpace(b.Content), "[图片 ")
+}
 
 func Supported(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
@@ -126,6 +148,9 @@ func Parse(ctx context.Context, name string, data []byte) (p Preview) {
 			if h := markdownHeading.FindStringSubmatch(line); len(h) > 0 && p.Format != "txt" && fence == "" {
 				flush()
 				headingPath, heading = appendHeading(headingPath, len(h[1]), h[2])
+			} else if title, ok := questionTitle(trimmed); ok && p.Format != "txt" && fence == "" {
+				flush()
+				heading = title
 			}
 			if len(paragraph) == 0 {
 				start = i + 1
@@ -665,6 +690,8 @@ func parseDOCX(ctx context.Context, data []byte, p *Preview) {
 				s := strings.TrimSpace(paragraph.String())
 				if isHeading {
 					headingPath, heading = appendHeading(headingPath, headingLevel, s)
+				} else if title, ok := questionTitle(s); ok && tableDepth == 0 {
+					heading = title
 				}
 				if s != "" {
 					if tableDepth > 0 {
@@ -762,7 +789,8 @@ func splitWithInputLimit(p Preview, maxInputBytes int) ([]Block, error) {
 	for _, b := range p.Blocks {
 		n := len(groups)
 		fitsBytes := n > 0 && (maxInputBytes <= 0 || len(b.Locator.Heading)+1+len(groups[n-1].Content)+2+len(b.Content) <= maxInputBytes)
-		if fitsBytes && b.Locator.Page == 0 && groups[n-1].Locator.Page == 0 && b.Locator.Heading == groups[n-1].Locator.Heading && len([]rune(groups[n-1].Content))+len([]rune(b.Content))+2 <= chunkRunes {
+		_, question := questionTitle(b.Content)
+		if fitsBytes && !imageChunk(b) && !imageChunk(groups[n-1]) && !question && b.Locator.Page == 0 && groups[n-1].Locator.Page == 0 && b.Locator.Heading == groups[n-1].Locator.Heading && len([]rune(groups[n-1].Content))+len([]rune(b.Content))+2 <= chunkRunes {
 			groups[n-1].Content += "\n\n" + b.Content
 			groups[n-1].Locator.LineEnd = b.Locator.LineEnd
 			groups[n-1].Locator.ParagraphEnd = b.Locator.ParagraphEnd
